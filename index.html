@@ -1141,7 +1141,8 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 }
                 
                 const data = await response.json();
-                state.selectedModel = data;
+                // Ensure dataModelId is preserved (spec may not include it)
+                state.selectedModel = { ...data, dataModelId: dataModelId };
                 state.originalJson = JSON.stringify(data, null, 2);
                 
                 // Update UI
@@ -1191,21 +1192,24 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 return;
             }
             
+            const dataModelId = state.selectedModel.dataModelId;
             const btn = document.getElementById('refreshSigmaBtn');
             btn.disabled = true;
             btn.innerHTML = '<div class="spinner" style="width: 14px; height: 14px;"></div>';
             
             try {
-                const response = await fetch(`${state.baseUrl}/v3alpha/datamodels/${state.selectedModel.dataModelId}/spec`, {
+                const response = await fetch(`${state.baseUrl}/v3alpha/datamodels/${dataModelId}/spec`, {
                     headers: { 'Authorization': `Bearer ${state.accessToken}` }
                 });
                 
                 if (!response.ok) throw new Error('Failed to fetch from Sigma');
                 
                 const spec = await response.json();
-                state.selectedModel = spec;
+                // Preserve the dataModelId (spec may not include it)
+                state.selectedModel = { ...spec, dataModelId: dataModelId };
                 state.originalJson = JSON.stringify(spec, null, 2);
                 document.getElementById('jsonEditor').value = state.originalJson;
+                document.getElementById('editorTitle').textContent = spec.name || 'Untitled Data Model';
                 
                 showToast('Refreshed from Sigma', 'success');
                 
@@ -1235,13 +1239,14 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 return;
             }
             
+            const dataModelId = state.selectedModel.dataModelId;
             const btn = document.getElementById('saveBtn');
             btn.disabled = true;
             btn.innerHTML = '<div class="spinner"></div><span>Saving...</span>';
             updateStatus('loading', 'Saving changes...');
             
             try {
-                const response = await fetch(`${state.baseUrl}/v3alpha/datamodels/${state.selectedModel.dataModelId}/spec`, {
+                const response = await fetch(`${state.baseUrl}/v3alpha/datamodels/${dataModelId}/spec`, {
                     method: 'PUT',
                     headers: {
                         'Authorization': `Bearer ${state.accessToken}`,
@@ -1256,9 +1261,13 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 }
                 
                 const result = await response.json();
-                state.selectedModel = result;
+                // Preserve the dataModelId (response may not include it)
+                state.selectedModel = { ...result, dataModelId: dataModelId };
                 state.originalJson = JSON.stringify(result, null, 2);
                 editor.value = state.originalJson;
+                
+                // Update the title bar with new name
+                document.getElementById('editorTitle').textContent = result.name || jsonData.name || 'Untitled Data Model';
                 
                 updateStatus('connected', 'Changes saved successfully');
                 showToast('Data model saved to Sigma!', 'success');
