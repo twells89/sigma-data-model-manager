@@ -1,0 +1,1553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sigma Data Model Manager (Standalone)</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+        
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-tertiary: #1a1a25;
+            --bg-hover: #222230;
+            --border: #2a2a3a;
+            --border-focus: #5865f2;
+            --text-primary: #f0f0f5;
+            --text-secondary: #9090a0;
+            --text-muted: #606070;
+            --accent: #5865f2;
+            --accent-hover: #6875f3;
+            --success: #43b581;
+            --warning: #faa61a;
+            --error: #f04747;
+            --json-key: #79c0ff;
+            --json-string: #a5d6ff;
+            --json-number: #d2a8ff;
+            --json-boolean: #ff7b72;
+            --json-null: #8b949e;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+        
+        .app-container {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            min-height: 100vh;
+        }
+        
+        /* Sidebar */
+        .sidebar {
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .sidebar-header {
+            padding: 24px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+        
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 18px;
+        }
+        
+        .logo-text {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+        
+        .logo-subtitle {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-left: 48px;
+        }
+        
+        /* Credentials Section */
+        .credentials-section {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .section-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+        }
+        
+        .form-group {
+            margin-bottom: 14px;
+        }
+        
+        .form-group:last-child {
+            margin-bottom: 0;
+        }
+        
+        label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            transition: all 0.15s ease;
+        }
+        
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--border-focus);
+            box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.15);
+        }
+        
+        input::placeholder {
+            color: var(--text-muted);
+        }
+        
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+            width: 100%;
+        }
+        
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+        
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+        }
+        
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+        
+        .btn-success:hover {
+            filter: brightness(1.1);
+        }
+        
+        /* Data Models List */
+        .models-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .models-header {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .models-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+        
+        .model-item {
+            padding: 14px 16px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            margin-bottom: 4px;
+        }
+        
+        .model-item:hover {
+            background: var(--bg-tertiary);
+        }
+        
+        .model-item.active {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-focus);
+        }
+        
+        .model-name {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .model-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            display: flex;
+            gap: 12px;
+        }
+        
+        /* Main Content */
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 24px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .toolbar-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        
+        .toolbar-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .editor-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .editor-tabs {
+            display: flex;
+            gap: 2px;
+            padding: 12px 24px 0;
+            background: var(--bg-secondary);
+        }
+        
+        .editor-tab {
+            padding: 10px 20px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        
+        .editor-tab.active {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border-color: var(--border);
+        }
+        
+        .json-editor {
+            flex: 1;
+            padding: 24px;
+            overflow: auto;
+            background: var(--bg-primary);
+        }
+        
+        .json-editor textarea {
+            width: 100%;
+            height: 100%;
+            min-height: calc(100vh - 200px);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            color: var(--text-primary);
+            resize: none;
+            tab-size: 2;
+        }
+        
+        .json-editor textarea:focus {
+            outline: none;
+            border-color: var(--border-focus);
+        }
+        
+        /* Status Messages */
+        .status-bar {
+            padding: 10px 24px;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+        
+        .status-indicator.connected {
+            background: var(--success);
+        }
+        
+        .status-indicator.error {
+            background: var(--error);
+        }
+        
+        .status-indicator.loading {
+            background: var(--warning);
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .toast {
+            padding: 14px 20px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+            font-size: 13px;
+            animation: slideIn 0.2s ease;
+            max-width: 400px;
+        }
+        
+        .toast.success { border-left: 3px solid var(--success); }
+        .toast.error { border-left: 3px solid var(--error); }
+        .toast.warning { border-left: 3px solid var(--warning); }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        /* Empty State */
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            padding: 40px;
+            text-align: center;
+        }
+        
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+        
+        .empty-state h3 {
+            font-size: 18px;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+        }
+        
+        .empty-state p {
+            font-size: 14px;
+            max-width: 300px;
+        }
+        
+        /* Loading spinner */
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+
+        /* Cloud selector */
+        .cloud-selector {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+
+        .cloud-option {
+            flex: 1;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.15s ease;
+        }
+
+        .cloud-option:hover {
+            background: var(--bg-hover);
+        }
+
+        .cloud-option.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        /* Badge */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .badge.beta {
+            background: rgba(250, 166, 26, 0.15);
+            color: var(--warning);
+        }
+
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.75);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        
+        .modal-overlay.active {
+            display: flex;
+        }
+        
+        .modal {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 85vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid var(--border);
+        }
+        
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+        
+        .modal-close:hover {
+            color: var(--text-primary);
+        }
+        
+        .modal-body {
+            padding: 24px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        
+        .modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        
+        .table-config {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            border: 1px solid var(--border);
+        }
+        
+        .table-config-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        
+        .table-config-title {
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .remove-table-btn {
+            background: none;
+            border: none;
+            color: var(--error);
+            cursor: pointer;
+            font-size: 18px;
+            padding: 4px;
+        }
+
+        .browse-result {
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: background 0.15s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .browse-result:hover {
+            background: var(--bg-hover);
+        }
+        
+        .browse-result.selected {
+            background: var(--accent);
+        }
+        
+        .browse-result-name {
+            font-weight: 500;
+        }
+        
+        .browse-result-type {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+        
+        .selected-tables {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+        }
+        
+        .selected-table-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+        
+        .selected-table-name {
+            font-size: 13px;
+        }
+        
+        .remove-selected-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        .remove-selected-btn:hover {
+            color: var(--error);
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon">Σ</div>
+                    <span class="logo-text">Data Model Manager</span>
+                </div>
+                <div class="logo-subtitle">Direct Sigma Integration <span class="badge beta">Standalone</span></div>
+            </div>
+            
+            <div class="credentials-section">
+                <div class="section-title">API Credentials</div>
+                
+                <div class="form-group">
+                    <label>Sigma Cloud</label>
+                    <div class="cloud-selector">
+                        <div class="cloud-option active" data-cloud="aws" onclick="selectCloud('aws')">AWS</div>
+                        <div class="cloud-option" data-cloud="azure" onclick="selectCloud('azure')">Azure</div>
+                        <div class="cloud-option" data-cloud="gcp" onclick="selectCloud('gcp')">GCP</div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="clientId">Client ID</label>
+                    <input type="text" id="clientId" placeholder="Enter your Client ID">
+                </div>
+                
+                <div class="form-group">
+                    <label for="clientSecret">Client Secret</label>
+                    <input type="password" id="clientSecret" placeholder="Enter your Client Secret">
+                </div>
+                
+                <button class="btn btn-primary" id="connectBtn" onclick="connect()">
+                    <span>Connect to Sigma</span>
+                </button>
+                
+                <div style="margin-top: 12px; text-align: center;">
+                    <button onclick="clearCredentials()" style="background: none; border: none; color: var(--text-muted); font-size: 11px; cursor: pointer; text-decoration: underline;">
+                        Clear saved credentials
+                    </button>
+                </div>
+            </div>
+            
+            <div class="models-section">
+                <div class="models-header">
+                    <span class="section-title" style="margin: 0;">Data Models</span>
+                    <div style="display: flex; gap: 6px;">
+                        <button class="btn btn-secondary" onclick="newDataModel()" style="padding: 6px 12px; font-size: 12px;" id="newModelBtn" disabled>
+                            + New
+                        </button>
+                        <button class="btn btn-secondary" onclick="refreshModels()" style="padding: 6px 12px; font-size: 12px;" id="refreshBtn" disabled>
+                            ↻ Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="models-list" id="modelsList">
+                    <div class="empty-state" style="padding: 40px 20px;">
+                        <div class="empty-state-icon">📊</div>
+                        <p>Connect to Sigma to view your data models</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="toolbar">
+                <div class="toolbar-title" id="editorTitle">No Data Model Selected</div>
+                <div class="toolbar-actions">
+                    <button class="btn btn-secondary" onclick="refreshFromSigma()" id="refreshSigmaBtn" disabled title="Refresh from Sigma API">
+                        ↻ Refresh
+                    </button>
+                    <button class="btn btn-secondary" onclick="formatJson()" id="formatBtn" disabled>
+                        Format JSON
+                    </button>
+                    <button class="btn btn-secondary" onclick="copyJson()" id="copyBtn" disabled>
+                        Copy
+                    </button>
+                    <button class="btn btn-success" onclick="saveDataModel()" id="saveBtn" disabled>
+                        Save to Sigma
+                    </button>
+                </div>
+            </div>
+            
+            <div class="editor-container">
+                <div class="editor-tabs">
+                    <div class="editor-tab active">JSON Representation</div>
+                </div>
+                <div class="json-editor">
+                    <textarea id="jsonEditor" placeholder="Select a data model from the sidebar to view and edit its JSON representation...
+
+WORKFLOW:
+1. Connect to Sigma (enter your API credentials)
+2. Select a data model from the sidebar, or click '+ New' to create one
+3. Edit the JSON here
+4. Click 'Save to Sigma' to push changes directly
+
+This is the standalone version - changes are saved directly to Sigma."></textarea>
+                </div>
+            </div>
+            
+            <div class="status-bar">
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span id="statusText">Not connected</span>
+            </div>
+        </main>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <!-- New Data Model Modal -->
+    <div class="modal-overlay" id="newModelModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">Create New Data Model</div>
+                <button class="modal-close" onclick="closeNewModelModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="newModelName">Data Model Name</label>
+                    <input type="text" id="newModelName" placeholder="e.g., Sales Analytics">
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="newModelConnectionId">Connection</label>
+                        <select id="newModelConnectionId" style="width: 100%; padding: 10px 12px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); font-size: 13px;">
+                            <option value="">Select a connection...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="newModelFolderId">Folder ID</label>
+                        <input type="text" id="newModelFolderId" placeholder="Folder ID for new model">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Tables</label>
+                    <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+                        Select a connection, then browse and select tables to include.
+                    </p>
+                    
+                    <div id="tableBrowser" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--bg-primary);">
+                        <div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;">
+                            Select a connection to browse tables
+                        </div>
+                    </div>
+                    
+                    <div class="selected-tables" id="selectedTablesContainer" style="display: none;">
+                        <label style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; display: block;">Selected Tables:</label>
+                        <div id="selectedTablesList"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeNewModelModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="createDataModelFromWizard()">Create Data Model</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // State
+        let state = {
+            cloud: 'aws',
+            baseUrl: 'https://aws-api.sigmacomputing.com',
+            accessToken: null,
+            tokenExpiry: null,
+            dataModels: [],
+            selectedModel: null,
+            originalJson: null
+        };
+        
+        // Cloud URLs
+        const cloudUrls = {
+            aws: 'https://aws-api.sigmacomputing.com',
+            azure: 'https://api.us.azure.sigmacomputing.com',
+            gcp: 'https://api.sigmacomputing.com'
+        };
+        
+        // Select cloud
+        function selectCloud(cloud) {
+            state.cloud = cloud;
+            state.baseUrl = cloudUrls[cloud];
+            
+            document.querySelectorAll('.cloud-option').forEach(el => {
+                el.classList.toggle('active', el.dataset.cloud === cloud);
+            });
+        }
+        
+        // Toast notification
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.animation = 'slideIn 0.2s ease reverse';
+                setTimeout(() => toast.remove(), 200);
+            }, 4000);
+        }
+        
+        // Update status
+        function updateStatus(status, text) {
+            const indicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('statusText');
+            
+            indicator.className = 'status-indicator ' + status;
+            statusText.textContent = text;
+        }
+        
+        // Connect to Sigma
+        async function connect() {
+            const clientId = document.getElementById('clientId').value.trim();
+            const clientSecret = document.getElementById('clientSecret').value.trim();
+            
+            if (!clientId || !clientSecret) {
+                showToast('Please enter both Client ID and Client Secret', 'error');
+                return;
+            }
+            
+            const btn = document.getElementById('connectBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner"></div><span>Connecting...</span>';
+            updateStatus('loading', 'Authenticating...');
+            
+            try {
+                // Get access token
+                const tokenResponse = await fetch(`${state.baseUrl}/v2/auth/token`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: new URLSearchParams({
+                        grant_type: 'client_credentials',
+                        client_id: clientId,
+                        client_secret: clientSecret
+                    })
+                });
+                
+                if (!tokenResponse.ok) {
+                    const error = await tokenResponse.json();
+                    throw new Error(error.message || 'Authentication failed');
+                }
+                
+                const tokenData = await tokenResponse.json();
+                state.accessToken = tokenData.access_token;
+                state.tokenExpiry = Date.now() + (tokenData.expires_in * 1000);
+                
+                // Save credentials to localStorage
+                localStorage.setItem('sigma_standalone_credentials', JSON.stringify({
+                    clientId,
+                    clientSecret,
+                    cloud: state.cloud
+                }));
+                
+                updateStatus('connected', 'Connected to Sigma');
+                showToast('Successfully connected to Sigma!', 'success');
+                
+                // Enable buttons
+                document.getElementById('refreshBtn').disabled = false;
+                document.getElementById('newModelBtn').disabled = false;
+                
+                // Load data models
+                await loadDataModels();
+                
+            } catch (error) {
+                console.error('Connection error:', error);
+                updateStatus('error', 'Connection failed');
+                showToast(`Connection failed: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span>Connect to Sigma</span>';
+            }
+        }
+        
+        // Load data models
+        async function loadDataModels() {
+            updateStatus('loading', 'Loading data models...');
+            
+            try {
+                const response = await fetch(`${state.baseUrl}/v2/datamodels`, {
+                    headers: {
+                        'Authorization': `Bearer ${state.accessToken}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to load data models');
+                }
+                
+                const data = await response.json();
+                state.dataModels = data.entries || [];
+                
+                renderModelsList();
+                updateStatus('connected', `Connected • ${state.dataModels.length} data models`);
+                
+            } catch (error) {
+                console.error('Load error:', error);
+                updateStatus('error', 'Failed to load data models');
+                showToast(`Error: ${error.message}`, 'error');
+            }
+        }
+        
+        // Refresh models
+        async function refreshModels() {
+            if (!state.accessToken) return;
+            await loadDataModels();
+            showToast('Data models refreshed', 'success');
+        }
+        
+        // Render models list
+        function renderModelsList() {
+            const container = document.getElementById('modelsList');
+            
+            if (state.dataModels.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state" style="padding: 40px 20px;">
+                        <div class="empty-state-icon">📭</div>
+                        <p>No data models found in your organization</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = state.dataModels.map(model => `
+                <div class="model-item ${state.selectedModel?.dataModelId === model.dataModelId ? 'active' : ''}" 
+                     onclick="selectModel('${model.dataModelId}')">
+                    <div class="model-name">${model.name || 'Untitled'}</div>
+                    <div class="model-meta">
+                        <span>Updated: ${formatDate(model.updatedAt)}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        // Format date
+        function formatDate(dateString) {
+            if (!dateString) return 'Unknown';
+            const date = new Date(dateString);
+            return date.toLocaleDateString('en-US', { 
+                month: 'short', 
+                day: 'numeric',
+                year: 'numeric'
+            });
+        }
+        
+        // Select a model
+        async function selectModel(dataModelId) {
+            updateStatus('loading', 'Loading data model...');
+            
+            try {
+                // Fetch the JSON representation using v3alpha endpoint
+                const response = await fetch(`${state.baseUrl}/v3alpha/datamodels/${dataModelId}/spec`, {
+                    headers: {
+                        'Authorization': `Bearer ${state.accessToken}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || 'Failed to load data model');
+                }
+                
+                const data = await response.json();
+                state.selectedModel = data;
+                state.originalJson = JSON.stringify(data, null, 2);
+                
+                // Update UI
+                document.getElementById('jsonEditor').value = state.originalJson;
+                document.getElementById('editorTitle').textContent = data.name || 'Untitled Data Model';
+                
+                // Enable buttons
+                document.getElementById('formatBtn').disabled = false;
+                document.getElementById('copyBtn').disabled = false;
+                document.getElementById('saveBtn').disabled = false;
+                document.getElementById('refreshSigmaBtn').disabled = false;
+                
+                renderModelsList();
+                updateStatus('connected', `Editing: ${data.name || 'Untitled'}`);
+                showToast('Data model loaded successfully', 'success');
+                
+            } catch (error) {
+                console.error('Select error:', error);
+                updateStatus('error', 'Failed to load data model');
+                showToast(`Error: ${error.message}`, 'error');
+            }
+        }
+        
+        // Format JSON
+        function formatJson() {
+            const editor = document.getElementById('jsonEditor');
+            try {
+                const parsed = JSON.parse(editor.value);
+                editor.value = JSON.stringify(parsed, null, 2);
+                showToast('JSON formatted', 'success');
+            } catch (error) {
+                showToast('Invalid JSON - cannot format', 'error');
+            }
+        }
+        
+        // Copy JSON
+        function copyJson() {
+            const editor = document.getElementById('jsonEditor');
+            navigator.clipboard.writeText(editor.value);
+            showToast('JSON copied to clipboard', 'success');
+        }
+        
+        // Refresh from Sigma (reload current model)
+        async function refreshFromSigma() {
+            if (!state.accessToken || !state.selectedModel?.dataModelId) {
+                showToast('No data model selected', 'error');
+                return;
+            }
+            
+            const btn = document.getElementById('refreshSigmaBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner" style="width: 14px; height: 14px;"></div>';
+            
+            try {
+                const response = await fetch(`${state.baseUrl}/v3alpha/datamodels/${state.selectedModel.dataModelId}/spec`, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                
+                if (!response.ok) throw new Error('Failed to fetch from Sigma');
+                
+                const spec = await response.json();
+                state.selectedModel = spec;
+                state.originalJson = JSON.stringify(spec, null, 2);
+                document.getElementById('jsonEditor').value = state.originalJson;
+                
+                showToast('Refreshed from Sigma', 'success');
+                
+            } catch (error) {
+                console.error('Refresh error:', error);
+                showToast(`Failed to refresh: ${error.message}`, 'error');
+            }
+            
+            btn.disabled = false;
+            btn.innerHTML = '↻ Refresh';
+        }
+        
+        // Save data model
+        async function saveDataModel() {
+            const editor = document.getElementById('jsonEditor');
+            let jsonData;
+            
+            try {
+                jsonData = JSON.parse(editor.value);
+            } catch (error) {
+                showToast('Invalid JSON - please fix errors before saving', 'error');
+                return;
+            }
+            
+            if (!state.selectedModel?.dataModelId) {
+                showToast('No data model selected', 'error');
+                return;
+            }
+            
+            const btn = document.getElementById('saveBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner"></div><span>Saving...</span>';
+            updateStatus('loading', 'Saving changes...');
+            
+            try {
+                const response = await fetch(`${state.baseUrl}/v3alpha/datamodels/${state.selectedModel.dataModelId}/spec`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${state.accessToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(jsonData)
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || 'Failed to save data model');
+                }
+                
+                const result = await response.json();
+                state.selectedModel = result;
+                state.originalJson = JSON.stringify(result, null, 2);
+                editor.value = state.originalJson;
+                
+                updateStatus('connected', 'Changes saved successfully');
+                showToast('Data model saved to Sigma!', 'success');
+                
+                // Refresh the list to get updated timestamps
+                await loadDataModels();
+                
+            } catch (error) {
+                console.error('Save error:', error);
+                updateStatus('error', 'Failed to save');
+                showToast(`Save failed: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Save to Sigma';
+            }
+        }
+        
+        // Handle keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+                e.preventDefault();
+                if (!document.getElementById('saveBtn').disabled) {
+                    saveDataModel();
+                }
+            }
+        });
+        
+        // ============================================
+        // NEW DATA MODEL WIZARD
+        // ============================================
+        
+        let wizardState = {
+            tables: [],
+            connections: [],
+            currentPath: []
+        };
+        
+        async function loadConnections() {
+            const select = document.getElementById('newModelConnectionId');
+            select.innerHTML = '<option value="">Loading connections...</option>';
+            
+            try {
+                const response = await fetch(`${state.baseUrl}/v2/connections`, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                
+                if (!response.ok) throw new Error('Failed to load connections');
+                
+                const data = await response.json();
+                wizardState.connections = data.entries || [];
+                
+                select.innerHTML = '<option value="">Select a connection...</option>';
+                wizardState.connections.forEach(conn => {
+                    const option = document.createElement('option');
+                    option.value = conn.connectionId;
+                    option.textContent = conn.name || conn.connectionId;
+                    select.appendChild(option);
+                });
+                
+            } catch (error) {
+                console.error('Failed to load connections:', error);
+                select.innerHTML = '<option value="">Failed to load connections</option>';
+            }
+        }
+        
+        function newDataModel() {
+            document.getElementById('newModelModal').classList.add('active');
+            document.getElementById('newModelName').value = '';
+            document.getElementById('newModelConnectionId').value = '';
+            document.getElementById('newModelFolderId').value = '';
+            wizardState.tables = [];
+            updateSelectedTablesList();
+            
+            document.getElementById('tableBrowser').innerHTML = `
+                <div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;">
+                    Select a connection to browse tables
+                </div>
+            `;
+            
+            loadConnections();
+            
+            // Add connection change listener
+            document.getElementById('newModelConnectionId').onchange = function() {
+                if (this.value) {
+                    wizardState.currentPath = [];
+                    browseTables(this.value);
+                }
+            };
+        }
+        
+        function closeNewModelModal() {
+            document.getElementById('newModelModal').classList.remove('active');
+        }
+        
+        async function browseTables(connectionId, path = []) {
+            const browser = document.getElementById('tableBrowser');
+            browser.innerHTML = '<div style="text-align: center; padding: 20px;"><div class="spinner" style="margin: 0 auto;"></div></div>';
+            
+            try {
+                let url = `${state.baseUrl}/v2/connections/${connectionId}/browse`;
+                if (path.length > 0) {
+                    url += `?path=${encodeURIComponent(JSON.stringify(path))}`;
+                }
+                
+                const response = await fetch(url, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                
+                if (!response.ok) throw new Error('Failed to browse');
+                
+                const data = await response.json();
+                const entries = data.entries || [];
+                
+                let html = '';
+                
+                // Back button if not at root
+                if (path.length > 0) {
+                    html += `
+                        <div class="browse-result" onclick="browseTablePath('${connectionId}', ${JSON.stringify(path.slice(0, -1))})">
+                            <span class="browse-result-name">⬅ Back</span>
+                        </div>
+                    `;
+                }
+                
+                entries.forEach(entry => {
+                    const isTable = entry.kind === 'table' || entry.kind === 'view';
+                    const fullPath = [...path, entry.name];
+                    const isSelected = wizardState.tables.some(t => 
+                        t.connectionId === connectionId && JSON.stringify(t.path) === JSON.stringify(fullPath)
+                    );
+                    
+                    if (isTable) {
+                        html += `
+                            <div class="browse-result ${isSelected ? 'selected' : ''}" 
+                                 onclick="toggleTableSelection('${connectionId}', ${JSON.stringify(fullPath)}, '${entry.name}')">
+                                <span class="browse-result-name">📊 ${entry.name}</span>
+                                <span class="browse-result-type">${entry.kind}</span>
+                            </div>
+                        `;
+                    } else {
+                        html += `
+                            <div class="browse-result" onclick="browseTablePath('${connectionId}', ${JSON.stringify(fullPath)})">
+                                <span class="browse-result-name">📁 ${entry.name}</span>
+                                <span class="browse-result-type">${entry.kind || 'schema'}</span>
+                            </div>
+                        `;
+                    }
+                });
+                
+                if (entries.length === 0) {
+                    html = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;">No items found</div>';
+                }
+                
+                browser.innerHTML = html;
+                
+            } catch (error) {
+                console.error('Browse error:', error);
+                browser.innerHTML = `<div style="color: var(--error); font-size: 13px; text-align: center; padding: 20px;">Error: ${error.message}</div>`;
+            }
+        }
+        
+        function browseTablePath(connectionId, path) {
+            wizardState.currentPath = path;
+            browseTables(connectionId, path);
+        }
+        
+        function toggleTableSelection(connectionId, path, tableName) {
+            const existingIndex = wizardState.tables.findIndex(t => 
+                t.connectionId === connectionId && JSON.stringify(t.path) === JSON.stringify(path)
+            );
+            
+            if (existingIndex >= 0) {
+                wizardState.tables.splice(existingIndex, 1);
+            } else {
+                wizardState.tables.push({ connectionId, path, name: tableName });
+            }
+            
+            updateSelectedTablesList();
+            browseTables(connectionId, wizardState.currentPath);
+        }
+        
+        function updateSelectedTablesList() {
+            const container = document.getElementById('selectedTablesContainer');
+            const list = document.getElementById('selectedTablesList');
+            
+            if (wizardState.tables.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+            
+            container.style.display = 'block';
+            list.innerHTML = wizardState.tables.map((t, i) => `
+                <div class="selected-table-item">
+                    <span class="selected-table-name">📊 ${t.path.join(' / ')}</span>
+                    <button class="remove-selected-btn" onclick="removeSelectedTable(${i})">✕</button>
+                </div>
+            `).join('');
+        }
+        
+        function removeSelectedTable(index) {
+            wizardState.tables.splice(index, 1);
+            updateSelectedTablesList();
+            
+            const connectionId = document.getElementById('newModelConnectionId').value;
+            if (connectionId) {
+                browseTables(connectionId, wizardState.currentPath);
+            }
+        }
+        
+        async function createDataModelFromWizard() {
+            const name = document.getElementById('newModelName').value.trim();
+            const connectionId = document.getElementById('newModelConnectionId').value;
+            const folderId = document.getElementById('newModelFolderId').value.trim();
+            
+            if (!name) {
+                showToast('Please enter a data model name', 'error');
+                return;
+            }
+            
+            if (!connectionId) {
+                showToast('Please select a connection', 'error');
+                return;
+            }
+            
+            if (!folderId) {
+                showToast('Please enter a folder ID', 'error');
+                return;
+            }
+            
+            if (wizardState.tables.length === 0) {
+                showToast('Please select at least one table', 'error');
+                return;
+            }
+            
+            // Build elements array with columns
+            const elements = [];
+            
+            for (const table of wizardState.tables) {
+                try {
+                    // Fetch columns for each table
+                    const columnsUrl = `${state.baseUrl}/v2/connections/${table.connectionId}/browse?path=${encodeURIComponent(JSON.stringify(table.path))}`;
+                    const colResponse = await fetch(columnsUrl, {
+                        headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                    });
+                    
+                    let columns = [];
+                    if (colResponse.ok) {
+                        const colData = await colResponse.json();
+                        columns = (colData.entries || [])
+                            .filter(e => e.kind === 'column')
+                            .map(col => ({
+                                name: col.name,
+                                type: col.type || 'text'
+                            }));
+                    }
+                    
+                    elements.push({
+                        type: 'table',
+                        name: table.name,
+                        source: {
+                            type: 'dbTable',
+                            path: table.path,
+                            connectionId: table.connectionId
+                        },
+                        columns: columns
+                    });
+                    
+                } catch (e) {
+                    console.warn('Could not fetch columns for', table.name, e);
+                    elements.push({
+                        type: 'table',
+                        name: table.name,
+                        source: {
+                            type: 'dbTable',
+                            path: table.path,
+                            connectionId: table.connectionId
+                        },
+                        columns: []
+                    });
+                }
+            }
+            
+            // Build the spec
+            const spec = {
+                name: name,
+                schemaVersion: 1,
+                folderId: folderId,
+                pages: [{
+                    name: 'Page 1',
+                    elements: elements
+                }]
+            };
+            
+            // Create directly in Sigma
+            try {
+                showToast('Creating data model...', 'success');
+                
+                const response = await fetch(`${state.baseUrl}/v3alpha/datamodels/spec`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${state.accessToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(spec)
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Failed to create data model');
+                }
+                
+                const result = await response.json();
+                
+                // Load the created model
+                state.selectedModel = result;
+                document.getElementById('editorTitle').textContent = name;
+                document.getElementById('jsonEditor').value = JSON.stringify(result, null, 2);
+                
+                // Enable buttons
+                document.getElementById('formatBtn').disabled = false;
+                document.getElementById('copyBtn').disabled = false;
+                document.getElementById('saveBtn').disabled = false;
+                document.getElementById('refreshSigmaBtn').disabled = false;
+                
+                closeNewModelModal();
+                
+                // Refresh the list
+                await loadDataModels();
+                
+                updateStatus('connected', `Created: ${name}`);
+                showToast(`Data model "${name}" created successfully!`, 'success');
+                
+            } catch (error) {
+                console.error('Create error:', error);
+                showToast(`Failed to create: ${error.message}`, 'error');
+            }
+        }
+        
+        // Auto-resize textarea
+        const editor = document.getElementById('jsonEditor');
+        editor.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.max(this.scrollHeight, 500) + 'px';
+        });
+        
+        // Load saved credentials on page load
+        function loadSavedCredentials() {
+            const saved = localStorage.getItem('sigma_standalone_credentials');
+            if (saved) {
+                try {
+                    const creds = JSON.parse(saved);
+                    document.getElementById('clientId').value = creds.clientId || '';
+                    document.getElementById('clientSecret').value = creds.clientSecret || '';
+                    if (creds.cloud) {
+                        selectCloud(creds.cloud);
+                    }
+                } catch (e) {
+                    console.error('Failed to load saved credentials:', e);
+                }
+            }
+        }
+        
+        // Clear saved credentials
+        function clearCredentials() {
+            localStorage.removeItem('sigma_standalone_credentials');
+            document.getElementById('clientId').value = '';
+            document.getElementById('clientSecret').value = '';
+            showToast('Saved credentials cleared', 'success');
+        }
+        
+        // Initialize on page load
+        loadSavedCredentials();
+    </script>
+</body>
+</html>
