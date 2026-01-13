@@ -718,6 +718,18 @@
             font-size: 12px;
         }
 
+        .location-type-btn {
+            padding: 10px 16px;
+            font-size: 13px;
+            transition: all 0.15s ease;
+        }
+        
+        .location-type-btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
         .browse-result {
             padding: 10px 12px;
             background: var(--bg-tertiary);
@@ -907,9 +919,31 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 </div>
                 
                 <div class="form-group">
-                    <label class="form-label">Folder ID *</label>
-                    <input type="text" class="form-input" id="newModelFolderId" placeholder="Folder ID for new model">
-                    <div class="form-hint">Find this in the Sigma URL when viewing a folder</div>
+                    <label class="form-label">Location *</label>
+                    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                        <button type="button" class="btn btn-secondary location-type-btn active" id="locTypeWorkspace" onclick="selectLocationType('workspace')" style="flex: 1;">
+                            Workspace
+                        </button>
+                        <button type="button" class="btn btn-secondary location-type-btn" id="locTypePersonal" onclick="selectLocationType('personal')" style="flex: 1;">
+                            My Documents
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="form-group" id="workspaceGroup">
+                    <label class="form-label">Workspace *</label>
+                    <select class="form-input" id="newModelWorkspaceId">
+                        <option value="">Select a workspace...</option>
+                    </select>
+                    <div class="form-hint">Select the workspace containing your target folder</div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Folder *</label>
+                    <select class="form-input" id="newModelFolderId" disabled>
+                        <option value="">Select a workspace first...</option>
+                    </select>
+                    <div class="form-hint">Select the folder where the data model will be created</div>
                 </div>
                 
                 <div class="form-group">
@@ -944,7 +978,8 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             tokenExpiry: null,
             dataModels: [],
             selectedModel: null,
-            originalJson: null
+            originalJson: null,
+            isNewModel: false
         };
         
         // Cloud URLs
@@ -1144,6 +1179,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 // Ensure dataModelId is preserved (spec may not include it)
                 state.selectedModel = { ...data, dataModelId: dataModelId };
                 state.originalJson = JSON.stringify(data, null, 2);
+                state.isNewModel = false; // This is an existing model
                 
                 // Update UI
                 document.getElementById('jsonEditor').value = state.originalJson;
@@ -1234,26 +1270,47 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 return;
             }
             
-            if (!state.selectedModel?.dataModelId) {
-                showToast('No data model selected', 'error');
-                return;
-            }
-            
-            const dataModelId = state.selectedModel.dataModelId;
             const btn = document.getElementById('saveBtn');
             btn.disabled = true;
             btn.innerHTML = '<div class="spinner"></div><span>Saving...</span>';
-            updateStatus('loading', 'Saving changes...');
+            
+            // Check if this is a new model or existing
+            const isNew = state.isNewModel === true;
+            
+            if (!isNew && !state.selectedModel?.dataModelId) {
+                showToast('No data model selected', 'error');
+                btn.disabled = false;
+                btn.innerHTML = 'Save to Sigma';
+                return;
+            }
+            
+            updateStatus('loading', isNew ? 'Creating data model...' : 'Saving changes...');
             
             try {
-                const response = await fetch(`${state.baseUrl}/v3alpha/datamodels/${dataModelId}/spec`, {
-                    method: 'PUT',
-                    headers: {
-                        'Authorization': `Bearer ${state.accessToken}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(jsonData)
-                });
+                let response;
+                
+                if (isNew) {
+                    // POST to create new data model
+                    response = await fetch(`${state.baseUrl}/v3alpha/datamodels/spec`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${state.accessToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(jsonData)
+                    });
+                } else {
+                    // PUT to update existing data model
+                    const dataModelId = state.selectedModel.dataModelId;
+                    response = await fetch(`${state.baseUrl}/v3alpha/datamodels/${dataModelId}/spec`, {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `Bearer ${state.accessToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(jsonData)
+                    });
+                }
                 
                 if (!response.ok) {
                     const error = await response.json();
@@ -1261,18 +1318,23 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 }
                 
                 const result = await response.json();
-                // Preserve the dataModelId (response may not include it)
-                state.selectedModel = { ...result, dataModelId: dataModelId };
+                
+                // Update state with result
+                state.selectedModel = { ...result, dataModelId: result.dataModelId || state.selectedModel?.dataModelId };
                 state.originalJson = JSON.stringify(result, null, 2);
+                state.isNewModel = false; // No longer new after saving
                 editor.value = state.originalJson;
                 
                 // Update the title bar with new name
                 document.getElementById('editorTitle').textContent = result.name || jsonData.name || 'Untitled Data Model';
                 
-                updateStatus('connected', 'Changes saved successfully');
-                showToast('Data model saved to Sigma!', 'success');
+                // Enable refresh button now that model exists
+                document.getElementById('refreshSigmaBtn').disabled = false;
                 
-                // Refresh the list to get updated timestamps
+                updateStatus('connected', isNew ? 'Data model created!' : 'Changes saved');
+                showToast(isNew ? 'Data model created in Sigma!' : 'Data model saved to Sigma!', 'success');
+                
+                // Refresh the list to get updated data
                 await loadDataModels();
                 
             } catch (error) {
@@ -1301,8 +1363,156 @@ This is the standalone version - changes are saved directly to Sigma."></textare
         
         let wizardState = {
             tables: [],
-            connections: []
+            connections: [],
+            workspaces: [],
+            folders: [],
+            locationType: 'workspace' // 'workspace' or 'personal'
         };
+        
+        function selectLocationType(type) {
+            wizardState.locationType = type;
+            
+            // Update button states
+            document.getElementById('locTypeWorkspace').classList.toggle('active', type === 'workspace');
+            document.getElementById('locTypePersonal').classList.toggle('active', type === 'personal');
+            
+            // Show/hide workspace dropdown
+            document.getElementById('workspaceGroup').style.display = type === 'workspace' ? 'block' : 'none';
+            
+            // Reset folder dropdown
+            const folderSelect = document.getElementById('newModelFolderId');
+            
+            if (type === 'workspace') {
+                folderSelect.innerHTML = '<option value="">Select a workspace first...</option>';
+                folderSelect.disabled = true;
+                // Reset workspace selection
+                document.getElementById('newModelWorkspaceId').value = '';
+            } else {
+                // Load personal folders (My Documents)
+                loadPersonalFolders();
+            }
+        }
+        
+        async function loadPersonalFolders() {
+            const select = document.getElementById('newModelFolderId');
+            select.innerHTML = '<option value="">Loading folders...</option>';
+            select.disabled = true;
+            
+            try {
+                // Get personal files/folders (no parentId = root/My Documents level)
+                const response = await fetch(`${state.baseUrl}/v2/files?typeFilters=folder`, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                
+                if (!response.ok) throw new Error('Failed to load folders');
+                
+                const data = await response.json();
+                wizardState.folders = data.entries || [];
+                
+                select.innerHTML = '';
+                
+                // Add "My Documents root" option
+                const rootOption = document.createElement('option');
+                rootOption.value = 'personal';
+                rootOption.textContent = '📁 My Documents (Root)';
+                select.appendChild(rootOption);
+                
+                // Add folders
+                wizardState.folders.forEach(folder => {
+                    const option = document.createElement('option');
+                    option.value = folder.id || folder.inodeId;
+                    option.textContent = '📁 ' + (folder.name || folder.id);
+                    select.appendChild(option);
+                });
+                
+                select.disabled = false;
+                
+            } catch (error) {
+                console.error('Failed to load personal folders:', error);
+                select.innerHTML = '<option value="">Failed to load folders</option>';
+                select.disabled = true;
+            }
+        }
+        
+        async function loadWorkspaces() {
+            const select = document.getElementById('newModelWorkspaceId');
+            select.innerHTML = '<option value="">Loading workspaces...</option>';
+            
+            try {
+                const response = await fetch(`${state.baseUrl}/v2/workspaces`, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                
+                if (!response.ok) throw new Error('Failed to load workspaces');
+                
+                const data = await response.json();
+                wizardState.workspaces = data.entries || [];
+                
+                select.innerHTML = '<option value="">Select a workspace...</option>';
+                wizardState.workspaces.forEach(ws => {
+                    const option = document.createElement('option');
+                    option.value = ws.workspaceId;
+                    option.textContent = ws.name || ws.workspaceId;
+                    select.appendChild(option);
+                });
+                
+                // Add change listener
+                select.onchange = function() {
+                    if (this.value) {
+                        loadFolders(this.value);
+                    } else {
+                        const folderSelect = document.getElementById('newModelFolderId');
+                        folderSelect.innerHTML = '<option value="">Select a workspace first...</option>';
+                        folderSelect.disabled = true;
+                    }
+                };
+                
+            } catch (error) {
+                console.error('Failed to load workspaces:', error);
+                select.innerHTML = '<option value="">Failed to load workspaces</option>';
+            }
+        }
+        
+        async function loadFolders(workspaceId) {
+            const select = document.getElementById('newModelFolderId');
+            select.innerHTML = '<option value="">Loading folders...</option>';
+            select.disabled = true;
+            
+            try {
+                // Get files in the workspace, filter for folders
+                const response = await fetch(`${state.baseUrl}/v2/files?typeFilters=folder&parentId=${workspaceId}`, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                
+                if (!response.ok) throw new Error('Failed to load folders');
+                
+                const data = await response.json();
+                wizardState.folders = data.entries || [];
+                
+                select.innerHTML = '';
+                
+                // Add workspace root as an option
+                const rootOption = document.createElement('option');
+                rootOption.value = workspaceId;
+                rootOption.textContent = '📁 (Workspace Root)';
+                select.appendChild(rootOption);
+                
+                // Add folders
+                wizardState.folders.forEach(folder => {
+                    const option = document.createElement('option');
+                    option.value = folder.id || folder.inodeId;
+                    option.textContent = '📁 ' + (folder.name || folder.id);
+                    select.appendChild(option);
+                });
+                
+                select.disabled = false;
+                
+            } catch (error) {
+                console.error('Failed to load folders:', error);
+                select.innerHTML = '<option value="">Failed to load folders</option>';
+                select.disabled = true;
+            }
+        }
         
         async function loadConnections() {
             const select = document.getElementById('newModelConnectionId');
@@ -1340,9 +1550,23 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             
             // Reset wizard state
             wizardState.tables = [];
+            wizardState.locationType = 'workspace';
             document.getElementById('newModelName').value = '';
-            document.getElementById('newModelFolderId').value = '';
             document.getElementById('tablesContainer').innerHTML = '';
+            
+            // Reset location type buttons
+            document.getElementById('locTypeWorkspace').classList.add('active');
+            document.getElementById('locTypePersonal').classList.remove('active');
+            document.getElementById('workspaceGroup').style.display = 'block';
+            
+            // Reset workspace dropdown
+            const wsSelect = document.getElementById('newModelWorkspaceId');
+            wsSelect.innerHTML = '<option value="">Loading workspaces...</option>';
+            
+            // Reset folder dropdown
+            const folderSelect = document.getElementById('newModelFolderId');
+            folderSelect.innerHTML = '<option value="">Select a workspace first...</option>';
+            folderSelect.disabled = true;
             
             // Reset connection dropdown
             const connSelect = document.getElementById('newModelConnectionId');
@@ -1354,7 +1578,8 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             // Show modal
             document.getElementById('newModelModal').classList.add('active');
             
-            // Load connections
+            // Load workspaces and connections
+            loadWorkspaces();
             loadConnections();
         }
         
@@ -1440,16 +1665,23 @@ This is the standalone version - changes are saved directly to Sigma."></textare
         
         async function createDataModelFromWizard() {
             const modelName = document.getElementById('newModelName').value.trim();
-            const folderId = document.getElementById('newModelFolderId').value.trim();
-            const connectionId = document.getElementById('newModelConnectionId').value.trim();
+            const workspaceId = document.getElementById('newModelWorkspaceId').value;
+            const folderId = document.getElementById('newModelFolderId').value;
+            const connectionId = document.getElementById('newModelConnectionId').value;
             
             if (!modelName) {
                 showToast('Please enter a data model name', 'error');
                 return;
             }
             
+            // Only require workspace if workspace location type is selected
+            if (wizardState.locationType === 'workspace' && !workspaceId) {
+                showToast('Please select a workspace', 'error');
+                return;
+            }
+            
             if (!folderId) {
-                showToast('Please enter a folder ID', 'error');
+                showToast('Please select a folder', 'error');
                 return;
             }
             
@@ -1458,7 +1690,8 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 return;
             }
             
-            // Gather table configurations
+            // Determine actual folder ID (for personal root, we may need to handle differently)
+            const actualFolderId = folderId === 'personal' ? null : folderId;
             const tableConfigs = document.querySelectorAll('.table-config');
             const elements = [];
             
@@ -1509,7 +1742,6 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             const spec = {
                 schemaVersion: 1,
                 name: modelName,
-                folderId: folderId,
                 pages: [
                     {
                         id: "page_" + Date.now(),
@@ -1519,49 +1751,31 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 ]
             };
             
-            // Create directly in Sigma
-            try {
-                showToast('Creating data model...', 'success');
-                
-                const response = await fetch(`${state.baseUrl}/v3alpha/datamodels/spec`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${state.accessToken}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(spec)
-                });
-                
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(errorText || 'Failed to create data model');
-                }
-                
-                const result = await response.json();
-                
-                // Load the created model
-                state.selectedModel = result;
-                document.getElementById('editorTitle').textContent = modelName;
-                document.getElementById('jsonEditor').value = JSON.stringify(result, null, 2);
-                
-                // Enable buttons
-                document.getElementById('formatBtn').disabled = false;
-                document.getElementById('copyBtn').disabled = false;
-                document.getElementById('saveBtn').disabled = false;
-                document.getElementById('refreshSigmaBtn').disabled = false;
-                
-                closeNewModelModal();
-                
-                // Refresh the list
-                await loadDataModels();
-                
-                updateStatus('connected', `Created: ${modelName}`);
-                showToast(`Data model "${modelName}" created successfully!`, 'success');
-                
-            } catch (error) {
-                console.error('Create error:', error);
-                showToast(`Failed to create: ${error.message}`, 'error');
+            // Add folderId if a specific folder is selected (not personal root)
+            if (actualFolderId) {
+                spec.folderId = actualFolderId;
             }
+            
+            // Set up state for the new model (don't save yet - let user review)
+            state.selectedModel = spec;
+            state.isNewModel = true;
+            state.originalJson = null;
+            
+            // Update UI - show JSON for review
+            document.getElementById('editorTitle').textContent = modelName + ' (New - Unsaved)';
+            document.getElementById('jsonEditor').value = JSON.stringify(spec, null, 2);
+            
+            // Enable buttons
+            document.getElementById('formatBtn').disabled = false;
+            document.getElementById('copyBtn').disabled = false;
+            document.getElementById('saveBtn').disabled = false;
+            document.getElementById('refreshSigmaBtn').disabled = true; // Can't refresh unsaved model
+            
+            // Close modal
+            closeNewModelModal();
+            
+            updateStatus('connected', `New: ${modelName} (unsaved)`);
+            showToast(`Data model created with ${elements.length} table(s). Review the JSON and click "Save to Sigma" when ready.`, 'success');
         }
         
         // Auto-resize textarea
