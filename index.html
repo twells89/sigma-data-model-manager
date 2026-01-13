@@ -601,29 +601,121 @@
             background: var(--bg-tertiary);
             border-radius: 8px;
             padding: 16px;
-            margin-bottom: 12px;
-            border: 1px solid var(--border);
+            margin-bottom: 16px;
         }
         
         .table-config-header {
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            justify-content: space-between;
             margin-bottom: 12px;
         }
         
         .table-config-title {
-            font-weight: 600;
             font-size: 14px;
+            font-weight: 600;
         }
         
-        .remove-table-btn {
+        .table-config-remove {
             background: none;
             border: none;
             color: var(--error);
+            font-size: 12px;
             cursor: pointer;
-            font-size: 18px;
-            padding: 4px;
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+        }
+        
+        select.form-input {
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239090a0' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 36px;
+        }
+        
+        select.form-input option {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: var(--border-focus);
+        }
+        
+        .form-input::placeholder {
+            color: var(--text-muted);
+        }
+        
+        .form-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+        
+        .column-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        
+        .column-tag {
+            background: var(--bg-hover);
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .column-tag-remove {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1;
+            padding: 0;
+        }
+        
+        .column-tag-remove:hover {
+            color: var(--error);
+        }
+        
+        .add-column-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        
+        .add-column-row input {
+            flex: 1;
+        }
+        
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
         }
 
         .browse-result {
@@ -810,39 +902,30 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             </div>
             <div class="modal-body">
                 <div class="form-group">
-                    <label for="newModelName">Data Model Name</label>
-                    <input type="text" id="newModelName" placeholder="e.g., Sales Analytics">
-                </div>
-                
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="newModelConnectionId">Connection</label>
-                        <select id="newModelConnectionId" style="width: 100%; padding: 10px 12px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); font-size: 13px;">
-                            <option value="">Select a connection...</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="newModelFolderId">Folder ID</label>
-                        <input type="text" id="newModelFolderId" placeholder="Folder ID for new model">
-                    </div>
+                    <label class="form-label">Data Model Name *</label>
+                    <input type="text" class="form-input" id="newModelName" placeholder="e.g., Sales Analytics">
                 </div>
                 
                 <div class="form-group">
-                    <label>Tables</label>
-                    <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
-                        Select a connection, then browse and select tables to include.
-                    </p>
-                    
-                    <div id="tableBrowser" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--bg-primary);">
-                        <div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;">
-                            Select a connection to browse tables
-                        </div>
-                    </div>
-                    
-                    <div class="selected-tables" id="selectedTablesContainer" style="display: none;">
-                        <label style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; display: block;">Selected Tables:</label>
-                        <div id="selectedTablesList"></div>
-                    </div>
+                    <label class="form-label">Folder ID *</label>
+                    <input type="text" class="form-input" id="newModelFolderId" placeholder="Folder ID for new model">
+                    <div class="form-hint">Find this in the Sigma URL when viewing a folder</div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Connection *</label>
+                    <select class="form-input" id="newModelConnectionId">
+                        <option value="">Loading connections...</option>
+                    </select>
+                    <div class="form-hint">Select the data warehouse connection for your tables</div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Tables</span>
+                        <button class="btn btn-secondary btn-small" onclick="addTableConfig()">+ Add Table</button>
+                    </label>
+                    <div id="tablesContainer"></div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -1209,8 +1292,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
         
         let wizardState = {
             tables: [],
-            connections: [],
-            currentPath: []
+            connections: []
         };
         
         async function loadConnections() {
@@ -1242,161 +1324,118 @@ This is the standalone version - changes are saved directly to Sigma."></textare
         }
         
         function newDataModel() {
-            document.getElementById('newModelModal').classList.add('active');
-            document.getElementById('newModelName').value = '';
-            document.getElementById('newModelConnectionId').value = '';
-            document.getElementById('newModelFolderId').value = '';
+            if (!state.accessToken) {
+                showToast('Please connect to Sigma first', 'error');
+                return;
+            }
+            
+            // Reset wizard state
             wizardState.tables = [];
-            updateSelectedTablesList();
+            document.getElementById('newModelName').value = '';
+            document.getElementById('newModelFolderId').value = '';
+            document.getElementById('tablesContainer').innerHTML = '';
             
-            document.getElementById('tableBrowser').innerHTML = `
-                <div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;">
-                    Select a connection to browse tables
-                </div>
-            `;
+            // Reset connection dropdown
+            const connSelect = document.getElementById('newModelConnectionId');
+            connSelect.innerHTML = '<option value="">Loading connections...</option>';
             
+            // Add one table by default
+            addTableConfig();
+            
+            // Show modal
+            document.getElementById('newModelModal').classList.add('active');
+            
+            // Load connections
             loadConnections();
-            
-            // Add connection change listener
-            document.getElementById('newModelConnectionId').onchange = function() {
-                if (this.value) {
-                    wizardState.currentPath = [];
-                    browseTables(this.value);
-                }
-            };
         }
         
         function closeNewModelModal() {
             document.getElementById('newModelModal').classList.remove('active');
         }
         
-        async function browseTables(connectionId, path = []) {
-            const browser = document.getElementById('tableBrowser');
-            browser.innerHTML = '<div style="text-align: center; padding: 20px;"><div class="spinner" style="margin: 0 auto;"></div></div>';
+        let tableCounter = 0;
+        
+        function addTableConfig() {
+            tableCounter++;
+            const tableId = `table_${tableCounter}`;
+            const container = document.getElementById('tablesContainer');
             
-            try {
-                let url = `${state.baseUrl}/v2/connections/${connectionId}/browse`;
-                if (path.length > 0) {
-                    url += `?path=${encodeURIComponent(JSON.stringify(path))}`;
-                }
-                
-                const response = await fetch(url, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
-                
-                if (!response.ok) throw new Error('Failed to browse');
-                
-                const data = await response.json();
-                const entries = data.entries || [];
-                
-                let html = '';
-                
-                // Back button if not at root
-                if (path.length > 0) {
-                    html += `
-                        <div class="browse-result" onclick="browseTablePath('${connectionId}', ${JSON.stringify(path.slice(0, -1))})">
-                            <span class="browse-result-name">⬅ Back</span>
+            const tableHtml = `
+                <div class="table-config" id="${tableId}">
+                    <div class="table-config-header">
+                        <span class="table-config-title">Table ${tableCounter}</span>
+                        <button class="table-config-remove" onclick="removeTableConfig('${tableId}')">Remove</button>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Table Name *</label>
+                        <input type="text" class="form-input table-name" placeholder="e.g., Orders">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Source Path * (Database / Schema / Table)</label>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+                            <input type="text" class="form-input table-database" placeholder="DATABASE">
+                            <input type="text" class="form-input table-schema" placeholder="SCHEMA">
+                            <input type="text" class="form-input table-source" placeholder="TABLE_NAME">
                         </div>
-                    `;
-                }
-                
-                entries.forEach(entry => {
-                    const isTable = entry.kind === 'table' || entry.kind === 'view';
-                    const fullPath = [...path, entry.name];
-                    const isSelected = wizardState.tables.some(t => 
-                        t.connectionId === connectionId && JSON.stringify(t.path) === JSON.stringify(fullPath)
-                    );
-                    
-                    if (isTable) {
-                        html += `
-                            <div class="browse-result ${isSelected ? 'selected' : ''}" 
-                                 onclick="toggleTableSelection('${connectionId}', ${JSON.stringify(fullPath)}, '${entry.name}')">
-                                <span class="browse-result-name">📊 ${entry.name}</span>
-                                <span class="browse-result-type">${entry.kind}</span>
-                            </div>
-                        `;
-                    } else {
-                        html += `
-                            <div class="browse-result" onclick="browseTablePath('${connectionId}', ${JSON.stringify(fullPath)})">
-                                <span class="browse-result-name">📁 ${entry.name}</span>
-                                <span class="browse-result-type">${entry.kind || 'schema'}</span>
-                            </div>
-                        `;
-                    }
-                });
-                
-                if (entries.length === 0) {
-                    html = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;">No items found</div>';
-                }
-                
-                browser.innerHTML = html;
-                
-            } catch (error) {
-                console.error('Browse error:', error);
-                browser.innerHTML = `<div style="color: var(--error); font-size: 13px; text-align: center; padding: 20px;">Error: ${error.message}</div>`;
-            }
-        }
-        
-        function browseTablePath(connectionId, path) {
-            wizardState.currentPath = path;
-            browseTables(connectionId, path);
-        }
-        
-        function toggleTableSelection(connectionId, path, tableName) {
-            const existingIndex = wizardState.tables.findIndex(t => 
-                t.connectionId === connectionId && JSON.stringify(t.path) === JSON.stringify(path)
-            );
-            
-            if (existingIndex >= 0) {
-                wizardState.tables.splice(existingIndex, 1);
-            } else {
-                wizardState.tables.push({ connectionId, path, name: tableName });
-            }
-            
-            updateSelectedTablesList();
-            browseTables(connectionId, wizardState.currentPath);
-        }
-        
-        function updateSelectedTablesList() {
-            const container = document.getElementById('selectedTablesContainer');
-            const list = document.getElementById('selectedTablesList');
-            
-            if (wizardState.tables.length === 0) {
-                container.style.display = 'none';
-                return;
-            }
-            
-            container.style.display = 'block';
-            list.innerHTML = wizardState.tables.map((t, i) => `
-                <div class="selected-table-item">
-                    <span class="selected-table-name">📊 ${t.path.join(' / ')}</span>
-                    <button class="remove-selected-btn" onclick="removeSelectedTable(${i})">✕</button>
+                        <div class="form-hint">The warehouse path to your source table</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Columns</label>
+                        <div class="column-list" id="${tableId}_columns"></div>
+                        <div class="add-column-row">
+                            <input type="text" class="form-input" id="${tableId}_newColumn" placeholder="Column name" onkeypress="if(event.key==='Enter'){addColumn('${tableId}'); event.preventDefault();}">
+                            <button class="btn btn-secondary btn-small" onclick="addColumn('${tableId}')">Add</button>
+                        </div>
+                        <div class="form-hint">Press Enter or click Add for each column. Leave empty to add columns later in Sigma.</div>
+                    </div>
                 </div>
-            `).join('');
+            `;
+            
+            container.insertAdjacentHTML('beforeend', tableHtml);
         }
         
-        function removeSelectedTable(index) {
-            wizardState.tables.splice(index, 1);
-            updateSelectedTablesList();
+        function removeTableConfig(tableId) {
+            const element = document.getElementById(tableId);
+            if (element) {
+                element.remove();
+            }
+        }
+        
+        function addColumn(tableId) {
+            const input = document.getElementById(`${tableId}_newColumn`);
+            const columnName = input.value.trim();
             
-            const connectionId = document.getElementById('newModelConnectionId').value;
-            if (connectionId) {
-                browseTables(connectionId, wizardState.currentPath);
+            if (!columnName) return;
+            
+            const columnList = document.getElementById(`${tableId}_columns`);
+            const columnId = `${tableId}_col_${Date.now()}`;
+            
+            const columnHtml = `
+                <span class="column-tag" id="${columnId}" data-column-name="${columnName}">
+                    ${columnName}
+                    <button class="column-tag-remove" onclick="removeColumn('${columnId}')">&times;</button>
+                </span>
+            `;
+            
+            columnList.insertAdjacentHTML('beforeend', columnHtml);
+            input.value = '';
+            input.focus();
+        }
+        
+        function removeColumn(columnId) {
+            const element = document.getElementById(columnId);
+            if (element) {
+                element.remove();
             }
         }
         
         async function createDataModelFromWizard() {
-            const name = document.getElementById('newModelName').value.trim();
-            const connectionId = document.getElementById('newModelConnectionId').value;
+            const modelName = document.getElementById('newModelName').value.trim();
             const folderId = document.getElementById('newModelFolderId').value.trim();
+            const connectionId = document.getElementById('newModelConnectionId').value.trim();
             
-            if (!name) {
+            if (!modelName) {
                 showToast('Please enter a data model name', 'error');
-                return;
-            }
-            
-            if (!connectionId) {
-                showToast('Please select a connection', 'error');
                 return;
             }
             
@@ -1405,68 +1444,70 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 return;
             }
             
-            if (wizardState.tables.length === 0) {
-                showToast('Please select at least one table', 'error');
+            if (!connectionId) {
+                showToast('Please select a connection', 'error');
                 return;
             }
             
-            // Build elements array with columns
+            // Gather table configurations
+            const tableConfigs = document.querySelectorAll('.table-config');
             const elements = [];
             
-            for (const table of wizardState.tables) {
-                try {
-                    // Fetch columns for each table
-                    const columnsUrl = `${state.baseUrl}/v2/connections/${table.connectionId}/browse?path=${encodeURIComponent(JSON.stringify(table.path))}`;
-                    const colResponse = await fetch(columnsUrl, {
-                        headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                    });
-                    
-                    let columns = [];
-                    if (colResponse.ok) {
-                        const colData = await colResponse.json();
-                        columns = (colData.entries || [])
-                            .filter(e => e.kind === 'column')
-                            .map(col => ({
-                                name: col.name,
-                                type: col.type || 'text'
-                            }));
-                    }
-                    
-                    elements.push({
-                        type: 'table',
-                        name: table.name,
-                        source: {
-                            type: 'dbTable',
-                            path: table.path,
-                            connectionId: table.connectionId
-                        },
-                        columns: columns
-                    });
-                    
-                } catch (e) {
-                    console.warn('Could not fetch columns for', table.name, e);
-                    elements.push({
-                        type: 'table',
-                        name: table.name,
-                        source: {
-                            type: 'dbTable',
-                            path: table.path,
-                            connectionId: table.connectionId
-                        },
-                        columns: []
-                    });
+            tableConfigs.forEach((tableEl, index) => {
+                const tableName = tableEl.querySelector('.table-name').value.trim();
+                const database = tableEl.querySelector('.table-database').value.trim();
+                const schema = tableEl.querySelector('.table-schema').value.trim();
+                const sourceTable = tableEl.querySelector('.table-source').value.trim();
+                
+                if (!tableName || !database || !schema || !sourceTable) {
+                    return; // Skip incomplete tables
                 }
+                
+                // Get columns
+                const columnTags = tableEl.querySelectorAll('.column-tag');
+                const columns = [];
+                
+                columnTags.forEach((tag, colIndex) => {
+                    const colName = tag.getAttribute('data-column-name');
+                    if (colName) {
+                        columns.push({
+                            id: `col_${index}_${colIndex}_${Date.now()}`,
+                            name: colName,
+                            formula: `[${sourceTable}/${colName}]`
+                        });
+                    }
+                });
+                
+                elements.push({
+                    id: `element_${index}_${Date.now()}`,
+                    name: tableName,
+                    kind: "table",
+                    source: {
+                        connectionId: connectionId,
+                        kind: "warehouse-table",
+                        path: [database, schema, sourceTable]
+                    },
+                    columns: columns
+                });
+            });
+            
+            if (elements.length === 0) {
+                showToast('Please configure at least one table with all required fields', 'error');
+                return;
             }
             
-            // Build the spec
+            // Create the data model spec
             const spec = {
-                name: name,
                 schemaVersion: 1,
+                name: modelName,
                 folderId: folderId,
-                pages: [{
-                    name: 'Page 1',
-                    elements: elements
-                }]
+                pages: [
+                    {
+                        id: "page_" + Date.now(),
+                        name: "Page 1",
+                        elements: elements
+                    }
+                ]
             };
             
             // Create directly in Sigma
@@ -1491,7 +1532,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 
                 // Load the created model
                 state.selectedModel = result;
-                document.getElementById('editorTitle').textContent = name;
+                document.getElementById('editorTitle').textContent = modelName;
                 document.getElementById('jsonEditor').value = JSON.stringify(result, null, 2);
                 
                 // Enable buttons
@@ -1505,8 +1546,8 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 // Refresh the list
                 await loadDataModels();
                 
-                updateStatus('connected', `Created: ${name}`);
-                showToast(`Data model "${name}" created successfully!`, 'success');
+                updateStatus('connected', `Created: ${modelName}`);
+                showToast(`Data model "${modelName}" created successfully!`, 'success');
                 
             } catch (error) {
                 console.error('Create error:', error);
