@@ -840,7 +840,10 @@
             
             <div class="models-section">
                 <div class="models-header">
-                    <span class="section-title" style="margin: 0;">Data Models</span>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span class="section-title" style="margin: 0;">Data Models</span>
+                        <span id="modelsCount" style="font-size: 11px; color: var(--text-muted);"></span>
+                    </div>
                     <div style="display: flex; gap: 6px;">
                         <button class="btn btn-secondary" onclick="newDataModel()" style="padding: 6px 12px; font-size: 12px;" id="newModelBtn" disabled>
                             + New
@@ -849,6 +852,13 @@
                             ↻ Refresh
                         </button>
                     </div>
+                </div>
+                <div style="padding: 8px 12px; border-bottom: 1px solid var(--border);">
+                    <input type="text" 
+                           id="modelsSearch" 
+                           placeholder="Search models..." 
+                           oninput="filterModels(this.value)"
+                           style="width: 100%; padding: 8px 12px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 12px;">
                 </div>
                 <div class="models-list" id="modelsList">
                     <div class="empty-state" style="padding: 40px 20px;">
@@ -977,6 +987,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             accessToken: null,
             tokenExpiry: null,
             dataModels: [],
+            filteredModels: [],
             selectedModel: null,
             originalJson: null,
             isNewModel: false
@@ -1092,18 +1103,51 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             updateStatus('loading', 'Loading data models...');
             
             try {
-                const response = await fetch(`${state.baseUrl}/v2/datamodels`, {
-                    headers: {
-                        'Authorization': `Bearer ${state.accessToken}`
-                    }
-                });
+                let allModels = [];
+                let page = null;
+                let hasMore = true;
+                const limit = 50;
                 
-                if (!response.ok) {
-                    throw new Error('Failed to load data models');
+                // Paginate through all results
+                while (hasMore) {
+                    const url = new URL(`${state.baseUrl}/v2/datamodels`);
+                    url.searchParams.set('limit', limit.toString());
+                    if (page) {
+                        url.searchParams.set('page', page);
+                    }
+                    
+                    const response = await fetch(url, {
+                        headers: {
+                            'Authorization': `Bearer ${state.accessToken}`
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to load data models');
+                    }
+                    
+                    const data = await response.json();
+                    const entries = data.entries || [];
+                    allModels = allModels.concat(entries);
+                    
+                    // Check if more pages exist
+                    hasMore = data.hasMore === true && data.nextPage;
+                    page = data.nextPage;
+                    
+                    // Update progress
+                    if (data.total) {
+                        updateStatus('loading', `Loading data models... (${allModels.length}/${data.total})`);
+                    }
+                    
+                    // Safety break
+                    if (!entries.length) break;
                 }
                 
-                const data = await response.json();
-                state.dataModels = data.entries || [];
+                // Sort alphabetically by name
+                allModels.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                
+                state.dataModels = allModels;
+                state.filteredModels = allModels;
                 
                 renderModelsList();
                 updateStatus('connected', `Connected • ${state.dataModels.length} data models`);
@@ -1115,9 +1159,25 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             }
         }
         
+        // Filter models by search query
+        function filterModels(query) {
+            const searchTerm = query.toLowerCase().trim();
+            if (!searchTerm) {
+                state.filteredModels = state.dataModels;
+            } else {
+                state.filteredModels = state.dataModels.filter(model => 
+                    (model.name || '').toLowerCase().includes(searchTerm)
+                );
+            }
+            renderModelsList();
+        }
+        
         // Refresh models
         async function refreshModels() {
             if (!state.accessToken) return;
+            // Clear search
+            const searchInput = document.getElementById('modelsSearch');
+            if (searchInput) searchInput.value = '';
             await loadDataModels();
             showToast('Data models refreshed', 'success');
         }
@@ -1125,26 +1185,46 @@ This is the standalone version - changes are saved directly to Sigma."></textare
         // Render models list
         function renderModelsList() {
             const container = document.getElementById('modelsList');
+            const models = state.filteredModels || state.dataModels || [];
+            const totalCount = state.dataModels?.length || 0;
+            const filteredCount = models.length;
             
-            if (state.dataModels.length === 0) {
+            // Update count display
+            const countDisplay = document.getElementById('modelsCount');
+            if (countDisplay) {
+                if (filteredCount !== totalCount) {
+                    countDisplay.textContent = `(${filteredCount}/${totalCount})`;
+                } else {
+                    countDisplay.textContent = `(${totalCount})`;
+                }
+            }
+            
+            if (models.length === 0) {
                 container.innerHTML = `
                     <div class="empty-state" style="padding: 40px 20px;">
-                        <div class="empty-state-icon">📭</div>
-                        <p>No data models found in your organization</p>
+                        <div class="empty-state-icon">${totalCount > 0 ? '🔍' : '📭'}</div>
+                        <p>${totalCount > 0 ? 'No matching data models' : 'No data models found in your organization'}</p>
                     </div>
                 `;
                 return;
             }
             
-            container.innerHTML = state.dataModels.map(model => `
+            container.innerHTML = models.map(model => `
                 <div class="model-item ${state.selectedModel?.dataModelId === model.dataModelId ? 'active' : ''}" 
                      onclick="selectModel('${model.dataModelId}')">
-                    <div class="model-name">${model.name || 'Untitled'}</div>
+                    <div class="model-name">${escapeHtml(model.name || 'Untitled')}</div>
                     <div class="model-meta">
                         <span>Updated: ${formatDate(model.updatedAt)}</span>
                     </div>
                 </div>
             `).join('');
+        }
+        
+        // Escape HTML to prevent XSS
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
         
         // Format date
