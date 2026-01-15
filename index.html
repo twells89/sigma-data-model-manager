@@ -55,7 +55,7 @@
             border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
-            overflow: hidden;
+            overflow: visible;
         }
         
         .sidebar-header {
@@ -98,6 +98,8 @@
         .credentials-section {
             padding: 20px 24px;
             border-bottom: 1px solid var(--border);
+            overflow: visible;
+            position: relative;
         }
         
         .section-title {
@@ -471,35 +473,70 @@
             background: var(--text-muted);
         }
 
-        /* Cloud selector */
-        .cloud-selector {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 14px;
+        /* Tooltips */
+        .tooltip-container {
+            position: relative;
+            display: inline-block;
         }
 
-        .cloud-option {
-            flex: 1;
-            padding: 8px 12px;
+        .tooltip-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
             background: var(--bg-tertiary);
             border: 1px solid var(--border);
-            border-radius: 6px;
+            border-radius: 50%;
             font-size: 11px;
-            font-weight: 500;
+            color: var(--text-muted);
+            cursor: help;
+            margin-left: 8px;
+        }
+
+        .tooltip-text {
+            visibility: hidden;
+            position: absolute;
+            z-index: 1000;
+            left: calc(100% + 12px);
+            top: 50%;
+            transform: translateY(-50%);
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            width: 280px;
+            font-size: 12px;
+            line-height: 1.5;
             color: var(--text-secondary);
-            cursor: pointer;
-            text-align: center;
-            transition: all 0.15s ease;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+            opacity: 0;
+            transition: opacity 0.2s ease;
         }
 
-        .cloud-option:hover {
-            background: var(--bg-hover);
+        .tooltip-text::before {
+            content: '';
+            position: absolute;
+            right: 100%;
+            top: 50%;
+            transform: translateY(-50%);
+            border: 6px solid transparent;
+            border-right-color: var(--border);
         }
 
-        .cloud-option.active {
-            background: var(--accent);
-            border-color: var(--accent);
-            color: white;
+        .tooltip-text::after {
+            content: '';
+            position: absolute;
+            right: 100%;
+            top: 50%;
+            transform: translateY(-50%);
+            border: 5px solid transparent;
+            border-right-color: var(--bg-tertiary);
+        }
+
+        .tooltip-container:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
         }
 
         /* Badge */
@@ -809,12 +846,37 @@
                 <div class="section-title">API Credentials</div>
                 
                 <div class="form-group">
-                    <label>Sigma Cloud</label>
-                    <div class="cloud-selector">
-                        <div class="cloud-option active" data-cloud="aws" onclick="selectCloud('aws')">AWS</div>
-                        <div class="cloud-option" data-cloud="azure" onclick="selectCloud('azure')">Azure</div>
-                        <div class="cloud-option" data-cloud="gcp" onclick="selectCloud('gcp')">GCP</div>
-                    </div>
+                    <label>
+                        API Base URL
+                        <span class="tooltip-container">
+                            <span class="tooltip-icon">?</span>
+                            <span class="tooltip-text">
+                                Find your organization's API base URL in:<br><br>
+                                <strong>Administration → Developer Access → API base URL</strong><br><br>
+                                Then select the matching region from the dropdown.
+                            </span>
+                        </span>
+                    </label>
+                    <select id="apiRegion" onchange="selectRegion()">
+                        <optgroup label="GCP">
+                            <option value="https://api.sigmacomputing.com">api.sigmacomputing.com (GCP US)</option>
+                            <option value="https://api.sa.gcp.sigmacomputing.com">api.sa.gcp.sigmacomputing.com (GCP KSA)</option>
+                        </optgroup>
+                        <optgroup label="AWS">
+                            <option value="https://aws-api.sigmacomputing.com">aws-api.sigmacomputing.com (AWS US West)</option>
+                            <option value="https://api.us-a.aws.sigmacomputing.com">api.us-a.aws.sigmacomputing.com (AWS US East)</option>
+                            <option value="https://api.ca.aws.sigmacomputing.com">api.ca.aws.sigmacomputing.com (AWS Canada)</option>
+                            <option value="https://api.eu.aws.sigmacomputing.com">api.eu.aws.sigmacomputing.com (AWS Europe)</option>
+                            <option value="https://api.au.aws.sigmacomputing.com">api.au.aws.sigmacomputing.com (AWS Australia/APAC)</option>
+                            <option value="https://api.uk.aws.sigmacomputing.com">api.uk.aws.sigmacomputing.com (AWS UK)</option>
+                        </optgroup>
+                        <optgroup label="Azure">
+                            <option value="https://api.us.azure.sigmacomputing.com">api.us.azure.sigmacomputing.com (Azure US)</option>
+                            <option value="https://api.eu.azure.sigmacomputing.com">api.eu.azure.sigmacomputing.com (Azure Europe)</option>
+                            <option value="https://api.ca.azure.sigmacomputing.com">api.ca.azure.sigmacomputing.com (Azure Canada)</option>
+                            <option value="https://api.uk.azure.sigmacomputing.com">api.uk.azure.sigmacomputing.com (Azure UK)</option>
+                        </optgroup>
+                    </select>
                 </div>
                 
                 <div class="form-group">
@@ -982,8 +1044,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
     <script>
         // State
         let state = {
-            cloud: 'aws',
-            baseUrl: 'https://aws-api.sigmacomputing.com',
+            baseUrl: 'https://api.sigmacomputing.com',
             accessToken: null,
             tokenExpiry: null,
             dataModels: [],
@@ -993,21 +1054,10 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             isNewModel: false
         };
         
-        // Cloud URLs
-        const cloudUrls = {
-            aws: 'https://aws-api.sigmacomputing.com',
-            azure: 'https://api.us.azure.sigmacomputing.com',
-            gcp: 'https://api.sigmacomputing.com'
-        };
-        
-        // Select cloud
-        function selectCloud(cloud) {
-            state.cloud = cloud;
-            state.baseUrl = cloudUrls[cloud];
-            
-            document.querySelectorAll('.cloud-option').forEach(el => {
-                el.classList.toggle('active', el.dataset.cloud === cloud);
-            });
+        // Select API region
+        function selectRegion() {
+            const select = document.getElementById('apiRegion');
+            state.baseUrl = select.value;
         }
         
         // Toast notification
@@ -1037,6 +1087,9 @@ This is the standalone version - changes are saved directly to Sigma."></textare
         async function connect() {
             const clientId = document.getElementById('clientId').value.trim();
             const clientSecret = document.getElementById('clientSecret').value.trim();
+            
+            // Ensure base URL is set from the dropdown
+            state.baseUrl = document.getElementById('apiRegion').value;
             
             if (!clientId || !clientSecret) {
                 showToast('Please enter both Client ID and Client Secret', 'error');
@@ -1075,7 +1128,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 localStorage.setItem('sigma_standalone_credentials', JSON.stringify({
                     clientId,
                     clientSecret,
-                    cloud: state.cloud
+                    apiUrl: state.baseUrl
                 }));
                 
                 updateStatus('connected', 'Connected to Sigma');
@@ -1873,8 +1926,9 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                     const creds = JSON.parse(saved);
                     document.getElementById('clientId').value = creds.clientId || '';
                     document.getElementById('clientSecret').value = creds.clientSecret || '';
-                    if (creds.cloud) {
-                        selectCloud(creds.cloud);
+                    if (creds.apiUrl) {
+                        document.getElementById('apiRegion').value = creds.apiUrl;
+                        state.baseUrl = creds.apiUrl;
                     }
                 } catch (e) {
                     console.error('Failed to load saved credentials:', e);
