@@ -201,6 +201,94 @@
             filter: brightness(1.1);
         }
         
+        .btn-ai {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+        }
+        
+        .btn-ai:hover {
+            filter: brightness(1.1);
+        }
+        
+        .btn-ai:disabled {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+        }
+        
+        /* AI Assistant Styles */
+        .ai-prompt {
+            resize: vertical;
+            min-height: 80px;
+        }
+        
+        .ai-explanation {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 13px;
+            line-height: 1.5;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        
+        .ai-config {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .ai-config .form-group {
+            margin-bottom: 12px;
+        }
+        
+        .ai-config .form-group:last-child {
+            margin-bottom: 0;
+        }
+        
+        .ai-mode-tabs {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .ai-mode-tab {
+            flex: 1;
+            padding: 12px 16px;
+            background: var(--bg-tertiary);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        
+        .ai-mode-tab:hover {
+            border-color: var(--accent);
+            color: var(--text-primary);
+        }
+        
+        .ai-mode-tab.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+        
+        .ai-mode-content {
+            margin-top: 16px;
+        }
+        
+        .ai-hint-box {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+        }
+        
         /* Data Models List */
         .models-section {
             flex: 1;
@@ -943,6 +1031,9 @@
             <div class="toolbar">
                 <div class="toolbar-title" id="editorTitle">No Data Model Selected</div>
                 <div class="toolbar-actions">
+                    <button class="btn btn-ai" onclick="openAIAssistant()" id="aiBtn" disabled title="AI Assistant">
+                        🤖 AI Assistant
+                    </button>
                     <button class="btn btn-secondary" onclick="refreshFromSigma()" id="refreshSigmaBtn" disabled title="Refresh from Sigma API">
                         ↻ Refresh
                     </button>
@@ -1044,6 +1135,167 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeNewModelModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="createDataModelFromWizard()">Create Data Model</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- AI Assistant Modal -->
+    <div class="modal-overlay" id="aiModal">
+        <div class="modal" style="max-width: 700px;">
+            <div class="modal-header">
+                <div class="modal-title">🤖 AI Assistant</div>
+                <button class="modal-close" onclick="closeAIModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- API Configuration -->
+                <div class="ai-config" id="aiConfig">
+                    <div class="form-group">
+                        <label class="form-label">AI Provider</label>
+                        <select class="form-input" id="aiProvider" onchange="onAIProviderChange()">
+                            <option value="openai">OpenAI (GPT-4o)</option>
+                            <option value="anthropic">Anthropic (Claude Sonnet 4)</option>
+                            <option value="gemini">Google (Gemini 2.0 Flash)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">API Key</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="password" class="form-input" id="aiApiKey" placeholder="Enter your API key">
+                            <button class="btn btn-secondary" onclick="saveAIKey()">Save</button>
+                        </div>
+                        <div class="form-hint">Your API key is stored locally in your browser</div>
+                    </div>
+                </div>
+                
+                <hr style="border: none; border-top: 1px solid var(--border); margin: 16px 0;">
+                
+                <!-- Mode Selector -->
+                <div class="form-group">
+                    <label class="form-label">What do you want to do?</label>
+                    <div class="ai-mode-tabs">
+                        <button class="ai-mode-tab active" data-mode="enhance" onclick="setAIMode('enhance')">
+                            ✏️ Enhance Existing Model
+                        </button>
+                        <button class="ai-mode-tab" data-mode="addtable" onclick="setAIMode('addtable')">
+                            ➕ Add New Table
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Enhance Mode -->
+                <div id="aiModeEnhance" class="ai-mode-content">
+                    <div class="form-group">
+                        <label class="form-label">What would you like to add or change?</label>
+                        <textarea class="form-input ai-prompt" id="aiPromptEnhance" rows="3" placeholder="Examples:
+• Add a metric for Total Revenue that sums the Amount column
+• Create a calculated column for profit margin
+• Add a relationship between Orders and Customers on customer_id
+• Rename the Price column to Unit Price"></textarea>
+                    </div>
+                    <div class="ai-hint-box">
+                        💡 The AI will use the columns and tables already in your data model.
+                    </div>
+                </div>
+                
+                <!-- Add Table Mode -->
+                <div id="aiModeAddTable" class="ai-mode-content" style="display: none;">
+                    <div class="form-group">
+                        <label class="form-label">Connection</label>
+                        <select class="form-input" id="aiConnection">
+                            <option value="">Select a connection...</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Table Path</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" class="form-input" id="aiDatabase" placeholder="DATABASE">
+                            <input type="text" class="form-input" id="aiSchema" placeholder="SCHEMA">
+                            <input type="text" class="form-input" id="aiTable" placeholder="TABLE">
+                        </div>
+                        <div class="form-hint">e.g., PLUGS_ELECTRONICS / PLUGS / D_PRODUCT</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">
+                            Column Definitions
+                            <span class="form-hint" style="font-weight: normal; margin-left: 8px;">(paste from Sigma or your warehouse)</span>
+                        </label>
+                        <textarea class="form-input" id="aiColumns" rows="6" placeholder="Paste column names and types, one per line:
+
+PRODUCT_KEY (number)
+PRODUCT_NAME (text)
+PRODUCT_TYPE (text)
+PRICE (number)
+CREATED_AT (datetime)
+
+Or just column names:
+PRODUCT_KEY
+PRODUCT_NAME
+..."></textarea>
+                        <div class="form-hint">💡 Copy from Sigma's table browser, your warehouse's INFORMATION_SCHEMA, or describe what columns you need</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Additional Instructions (optional)</label>
+                        <textarea class="form-input" id="aiPromptAddTable" rows="2" placeholder="e.g., Add a calculated column for full name, create a metric for total count..."></textarea>
+                    </div>
+                </div>
+                
+                <button class="btn btn-primary" onclick="generateAISuggestion()" id="aiGenerateBtn" style="width: 100%; margin-top: 16px;">
+                    ✨ Generate Suggestion
+                </button>
+                
+                <!-- Results -->
+                <div id="aiResults" style="display: none; margin-top: 16px;">
+                    <div class="form-group">
+                        <label class="form-label">📝 Generated JSON</label>
+                        <textarea class="form-input" id="aiSuggestion" rows="10" style="font-family: monospace; font-size: 12px;"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">💬 Explanation</label>
+                        <div id="aiExplanation" class="ai-explanation"></div>
+                    </div>
+                    
+                    <!-- Smart Insert Preview -->
+                    <div id="aiPreview" class="form-group" style="display: none;">
+                        <label class="form-label">📍 Insertion Preview</label>
+                        <div style="background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 12px;">
+                            <div style="display: flex; align-items: start; gap: 8px; margin-bottom: 8px;">
+                                <span style="color: var(--success);">✓</span>
+                                <div style="flex: 1;">
+                                    <div style="font-weight: 600; margin-bottom: 4px;" id="aiPreviewType"></div>
+                                    <div style="color: var(--text-secondary);" id="aiPreviewLocation"></div>
+                                </div>
+                            </div>
+                            <div style="font-size: 11px; color: var(--text-muted); padding-left: 24px;" id="aiPreviewDetails"></div>
+                        </div>
+                    </div>
+                    
+                    <div class="ai-hint-box" style="margin-bottom: 12px;">
+                        💡 <strong>Smart Insert</strong> will automatically find the right location and insert the JSON for you. Or <strong>Copy</strong> to paste manually.
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-primary" onclick="smartInsertAISuggestion()" style="flex: 1;">
+                            ✨ Smart Insert
+                        </button>
+                        <button class="btn btn-secondary" onclick="copyAISuggestion()" style="flex: 1;">
+                            📋 Copy
+                        </button>
+                        <button class="btn btn-secondary" onclick="validateAISuggestion()" title="Check if the suggestion is valid">
+                            ✓ Validate
+                        </button>
+                        <button class="btn btn-secondary" onclick="generateAISuggestion()" title="Generate a new suggestion">
+                            🔄
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Loading State -->
+                <div id="aiLoading" style="display: none; text-align: center; padding: 20px;">
+                    <div class="spinner" style="margin: 0 auto 12px;"></div>
+                    <p>Generating suggestion...</p>
+                </div>
             </div>
         </div>
     </div>
@@ -1303,8 +1555,8 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             updateStatus('loading', 'Loading data model...');
             
             try {
-                // Fetch the JSON representation using v3alpha endpoint
-                const response = await fetch(`${state.baseUrl}/v3alpha/datamodels/${dataModelId}/spec`, {
+                // Fetch the JSON representation using v3alpha/spec endpoint
+                const response = await fetch(`${state.baseUrl}/v3alpha/dataModels/${dataModelId}/spec`, {
                     headers: {
                         'Authorization': `Bearer ${state.accessToken}`
                     }
@@ -1330,6 +1582,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                 document.getElementById('copyBtn').disabled = false;
                 document.getElementById('saveBtn').disabled = false;
                 document.getElementById('refreshSigmaBtn').disabled = false;
+                document.getElementById('aiBtn').disabled = false;
                 
                 renderModelsList();
                 updateStatus('connected', `Editing: ${data.name || 'Untitled'}`);
@@ -1374,7 +1627,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             btn.innerHTML = '<div class="spinner" style="width: 14px; height: 14px;"></div>';
             
             try {
-                const response = await fetch(`${state.baseUrl}/v3alpha/datamodels/${dataModelId}/spec`, {
+                const response = await fetch(`${state.baseUrl}/v3alpha/dataModels/${dataModelId}/spec`, {
                     headers: { 'Authorization': `Bearer ${state.accessToken}` }
                 });
                 
@@ -1427,46 +1680,89 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             updateStatus('loading', isNew ? 'Creating data model...' : 'Saving changes...');
             
             try {
+                // Strip out metadata - only send spec fields that Sigma API expects
+                const spec = {
+                    schemaVersion: jsonData.schemaVersion || 1,
+                    name: jsonData.name,
+                    pages: jsonData.pages
+                };
+                
+                // Include optional fields if present
+                if (jsonData.description) spec.description = jsonData.description;
+                if (jsonData.folderId) spec.folderId = jsonData.folderId;
+                
                 let response;
                 
                 if (isNew) {
                     // POST to create new data model
-                    response = await fetch(`${state.baseUrl}/v3alpha/datamodels/spec`, {
+                    response = await fetch(`${state.baseUrl}/v3alpha/dataModels/spec`, {
                         method: 'POST',
                         headers: {
                             'Authorization': `Bearer ${state.accessToken}`,
                             'Content-Type': 'application/json'
                         },
-                        body: JSON.stringify(jsonData)
+                        body: JSON.stringify(spec)
                     });
                 } else {
-                    // PUT to update existing data model
+                    // PUT to update existing data model - try with /spec
                     const dataModelId = state.selectedModel.dataModelId;
-                    response = await fetch(`${state.baseUrl}/v3alpha/datamodels/${dataModelId}/spec`, {
+                    response = await fetch(`${state.baseUrl}/v3alpha/dataModels/${dataModelId}/spec`, {
                         method: 'PUT',
                         headers: {
                             'Authorization': `Bearer ${state.accessToken}`,
                             'Content-Type': 'application/json'
                         },
-                        body: JSON.stringify(jsonData)
+                        body: JSON.stringify(spec)
                     });
                 }
                 
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.message || 'Failed to save data model');
+                    // Try to get error message from response
+                    let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                    try {
+                        const errorData = await response.text();
+                        if (errorData) {
+                            const errorJson = JSON.parse(errorData);
+                            errorMessage = errorJson.message || errorMessage;
+                        }
+                    } catch (e) {
+                        // If can't parse error, use status text
+                    }
+                    throw new Error(errorMessage);
                 }
                 
-                const result = await response.json();
+                // Handle response - might be empty for some endpoints
+                let result = {};
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    const text = await response.text();
+                    if (text) {
+                        result = JSON.parse(text);
+                    }
+                }
                 
-                // Update state with result
-                state.selectedModel = { ...result, dataModelId: result.dataModelId || state.selectedModel?.dataModelId };
-                state.originalJson = JSON.stringify(result, null, 2);
+                // Get the dataModelId from result or state
+                const dataModelId = result.dataModelId || state.selectedModel?.dataModelId;
+                
+                // Fetch the full spec back from Sigma to ensure we have complete data
+                const refreshResponse = await fetch(`${state.baseUrl}/v3alpha/dataModels/${dataModelId}/spec`, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                
+                if (!refreshResponse.ok) {
+                    throw new Error('Saved but failed to refresh data');
+                }
+                
+                const fullSpec = await refreshResponse.json();
+                
+                // Update state with the full spec from Sigma
+                state.selectedModel = { ...fullSpec, dataModelId: dataModelId };
+                state.originalJson = JSON.stringify(fullSpec, null, 2);
                 state.isNewModel = false; // No longer new after saving
                 editor.value = state.originalJson;
                 
                 // Update the title bar with new name
-                document.getElementById('editorTitle').textContent = result.name || jsonData.name || 'Untitled Data Model';
+                document.getElementById('editorTitle').textContent = fullSpec.name || jsonData.name || 'Untitled Data Model';
                 
                 // Enable refresh button now that model exists
                 document.getElementById('refreshSigmaBtn').disabled = false;
@@ -1910,12 +2206,923 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             document.getElementById('copyBtn').disabled = false;
             document.getElementById('saveBtn').disabled = false;
             document.getElementById('refreshSigmaBtn').disabled = true; // Can't refresh unsaved model
+            document.getElementById('aiBtn').disabled = false;
             
             // Close modal
             closeNewModelModal();
             
             updateStatus('connected', `New: ${modelName} (unsaved)`);
             showToast(`Data model created with ${elements.length} table(s). Review the JSON and click "Save to Sigma" when ready.`, 'success');
+        }
+        
+        // ============================================
+        // AI ASSISTANT
+        // ============================================
+        
+        const AI_STORAGE_KEY = 'sigma-dm-ai-config';
+        
+        // Data Model Schema Documentation for AI
+        const DATA_MODEL_SCHEMA = `
+## Sigma Data Model JSON Schema
+
+A data model has this structure:
+{
+  "schemaVersion": 1,
+  "name": "Model Name",
+  "description": "Optional description",
+  "pages": [
+    {
+      "id": "page_<timestamp>",
+      "name": "Page 1",
+      "elements": [...]
+    }
+  ]
+}
+
+### Element Types
+
+**Table Element:**
+{
+  "id": "element_<timestamp>",
+  "type": "table",
+  "name": "Table Display Name",
+  "connectionId": "<connection-uuid>",
+  "path": ["DATABASE", "SCHEMA", "TABLE_NAME"],
+  "columns": [
+    {
+      "id": "col_<timestamp>",
+      "name": "Column Display Name",
+      "sourceName": "ORIGINAL_COLUMN_NAME",
+      "type": "text|number|datetime|boolean"
+    }
+  ]
+}
+
+**Calculated Column (add to columns array):**
+{
+  "id": "calc_<timestamp>",
+  "name": "Calculated Column Name",
+  "formula": "[Price] - [Cost]",
+  "type": "number"
+}
+
+**Metric:**
+{
+  "id": "metric_<timestamp>",
+  "name": "Metric Name",
+  "description": "What this metric measures",
+  "formula": "Sum([Amount])",
+  "formatOptions": {
+    "type": "currency|percent|number"
+  }
+}
+
+**Relationship (add to element):**
+{
+  "relationships": [
+    {
+      "targetElementId": "<element_id_of_related_table>",
+      "sourceColumns": ["col_id_in_this_table"],
+      "targetColumns": ["col_id_in_target_table"],
+      "type": "many_to_one"
+    }
+  ]
+}
+
+### Formula Syntax
+- Reference columns by their friendly name: [Column Name]
+- Do NOT include table name in formulas - just use [Column Name]
+- Aggregations: Sum(), Count(), Avg(), Min(), Max(), CountDistinct()
+- Math: +, -, *, /, ()
+- Conditional: If([condition], true_value, false_value)
+- Text: Concat(), Left(), Right(), Contains()
+- Date: DateTrunc(), DateDiff(), Today()
+
+### Formula Examples
+- Sum of a column: Sum([Amount])
+- Count distinct: CountDistinct([Customer Key])
+- Calculation: [Price] - [Cost]
+- Percentage: [Profit] / [Revenue]
+`;
+
+        function loadAIConfig() {
+            try {
+                const saved = localStorage.getItem(AI_STORAGE_KEY);
+                if (saved) {
+                    return JSON.parse(saved);
+                }
+            } catch (e) {
+                console.error('Failed to load AI config:', e);
+            }
+            return { provider: 'openai', keys: {} };
+        }
+        
+        function saveAIConfig(config) {
+            try {
+                localStorage.setItem(AI_STORAGE_KEY, JSON.stringify(config));
+            } catch (e) {
+                console.error('Failed to save AI config:', e);
+            }
+        }
+        
+        let aiCurrentMode = 'enhance';
+        
+        async function openAIAssistant() {
+            const config = loadAIConfig();
+            document.getElementById('aiProvider').value = config.provider || 'openai';
+            onAIProviderChange(); // Load the saved key for this provider
+            document.getElementById('aiResults').style.display = 'none';
+            document.getElementById('aiLoading').style.display = 'none';
+            
+            // Reset input fields
+            document.getElementById('aiPromptEnhance').value = '';
+            document.getElementById('aiPromptAddTable').value = '';
+            document.getElementById('aiDatabase').value = '';
+            document.getElementById('aiSchema').value = '';
+            document.getElementById('aiTable').value = '';
+            document.getElementById('aiColumns').value = '';
+            
+            // Set to enhance mode by default
+            setAIMode('enhance');
+            
+            // Load connections for the dropdown
+            await loadAIConnections();
+            
+            document.getElementById('aiModal').classList.add('active');
+        }
+        
+        function setAIMode(mode) {
+            aiCurrentMode = mode;
+            
+            // Update tab buttons
+            document.querySelectorAll('.ai-mode-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.mode === mode);
+            });
+            
+            // Show/hide content
+            document.getElementById('aiModeEnhance').style.display = mode === 'enhance' ? 'block' : 'none';
+            document.getElementById('aiModeAddTable').style.display = mode === 'addtable' ? 'block' : 'none';
+        }
+        
+        async function loadAIConnections() {
+            const select = document.getElementById('aiConnection');
+            select.innerHTML = '<option value="">Loading connections...</option>';
+            
+            try {
+                const response = await fetch(`${state.baseUrl}/v2/connections`, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                
+                if (!response.ok) throw new Error('Failed to load connections');
+                
+                const data = await response.json();
+                const connections = data.entries || [];
+                
+                select.innerHTML = '<option value="">Select a connection...</option>';
+                connections.forEach(conn => {
+                    const option = document.createElement('option');
+                    option.value = conn.connectionId;
+                    option.textContent = conn.name || conn.connectionId;
+                    select.appendChild(option);
+                });
+                
+                // Try to auto-select based on current model
+                const currentJson = document.getElementById('jsonEditor').value;
+                try {
+                    const currentModel = JSON.parse(currentJson);
+                    const elements = currentModel.pages?.[0]?.elements || [];
+                    const connectionId = elements.find(e => e.connectionId)?.connectionId;
+                    if (connectionId) {
+                        select.value = connectionId;
+                    }
+                } catch (e) {
+                    // Ignore parse errors
+                }
+                
+            } catch (error) {
+                console.error('Failed to load connections:', error);
+                select.innerHTML = '<option value="">Failed to load connections</option>';
+            }
+        }
+        
+        function closeAIModal() {
+            document.getElementById('aiModal').classList.remove('active');
+        }
+        
+        function onAIProviderChange() {
+            const provider = document.getElementById('aiProvider').value;
+            const config = loadAIConfig();
+            // Load saved key for this provider if exists
+            const savedKeys = config.keys || {};
+            document.getElementById('aiApiKey').value = savedKeys[provider] || '';
+        }
+        
+        function saveAIKey() {
+            const provider = document.getElementById('aiProvider').value;
+            const apiKey = document.getElementById('aiApiKey').value;
+            
+            const config = loadAIConfig();
+            if (!config.keys) config.keys = {};
+            config.keys[provider] = apiKey;
+            config.provider = provider;
+            
+            saveAIConfig(config);
+            showToast('API key saved', 'success');
+        }
+        
+        async function generateAISuggestion() {
+            const config = loadAIConfig();
+            const provider = document.getElementById('aiProvider').value;
+            const apiKey = document.getElementById('aiApiKey').value || config.keys?.[provider];
+            
+            if (!apiKey) {
+                showToast('Please enter an API key', 'error');
+                return;
+            }
+            
+            // Get current model JSON
+            const currentJson = document.getElementById('jsonEditor').value;
+            let currentModel = null;
+            try {
+                currentModel = JSON.parse(currentJson);
+            } catch (e) {
+                // Editor might be empty or invalid
+            }
+            
+            let userPrompt = '';
+            let contextInfo = '';
+            
+            if (aiCurrentMode === 'enhance') {
+                userPrompt = document.getElementById('aiPromptEnhance').value.trim();
+                
+                if (!userPrompt) {
+                    showToast('Please describe what you want to add or change', 'error');
+                    return;
+                }
+                
+                if (!currentModel) {
+                    showToast('No data model loaded. Create or load a model first.', 'error');
+                    return;
+                }
+                
+                // Extract table and column info
+                const elements = currentModel.pages?.[0]?.elements || [];
+                const existingTables = elements.filter(e => e.type === 'table').map(t => ({
+                    name: t.name,
+                    id: t.id,
+                    columns: (t.columns || []).map(c => ({ name: c.name, sourceName: c.sourceName, type: c.type, id: c.id }))
+                }));
+                
+                contextInfo = `
+## Existing Tables and Columns in This Model
+${JSON.stringify(existingTables, null, 2)}
+
+IMPORTANT: When referencing columns in formulas, use just [Column Name] - do NOT include the table name. Use the "name" field (friendly name), not sourceName.
+When adding calculated columns, add them to the columns array of the appropriate table using its ID from above.`;
+                
+            } else if (aiCurrentMode === 'addtable') {
+                const connectionId = document.getElementById('aiConnection').value;
+                const connectionName = document.getElementById('aiConnection').selectedOptions[0]?.textContent || '';
+                const database = document.getElementById('aiDatabase').value.trim();
+                const schema = document.getElementById('aiSchema').value.trim();
+                const table = document.getElementById('aiTable').value.trim();
+                const columnsText = document.getElementById('aiColumns').value.trim();
+                const additionalInstructions = document.getElementById('aiPromptAddTable').value.trim();
+                
+                if (!connectionId) {
+                    showToast('Please select a connection', 'error');
+                    return;
+                }
+                
+                if (!database || !schema || !table) {
+                    showToast('Please enter the database, schema, and table name', 'error');
+                    return;
+                }
+                
+                // Parse columns from user input
+                let parsedColumns = [];
+                if (columnsText) {
+                    const lines = columnsText.split('\n').filter(l => l.trim());
+                    parsedColumns = lines.map(line => {
+                        // Try to parse "COLUMN_NAME (type)" format
+                        const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\((\w+)\))?/);
+                        if (match) {
+                            return {
+                                sourceName: match[1].toUpperCase(),
+                                type: match[2]?.toLowerCase() || 'text'
+                            };
+                        }
+                        return null;
+                    }).filter(Boolean);
+                }
+                
+                userPrompt = `Create a table element for the ${table} table.${additionalInstructions ? ' ' + additionalInstructions : ''}`;
+                
+                contextInfo = `
+## Connection Details
+- Connection ID: ${connectionId}
+- Connection Name: ${connectionName}
+IMPORTANT: Use this exact connectionId: "${connectionId}"
+
+## Table Path
+- Database: ${database}
+- Schema: ${schema}  
+- Table: ${table}
+- Path array: ["${database}", "${schema}", "${table}"]
+
+## Column Definitions (USE THESE EXACT COLUMNS)
+${parsedColumns.length > 0 ? parsedColumns.map(c => `- ${c.sourceName} (${c.type})`).join('\n') : 'No columns provided - create reasonable columns based on the table name, or ask user to provide them.'}
+
+${parsedColumns.length > 0 ? 'CRITICAL: Only use the columns listed above. Do NOT invent additional columns.' : ''}`;
+            }
+            
+            // Show loading
+            document.getElementById('aiResults').style.display = 'none';
+            document.getElementById('aiLoading').style.display = 'block';
+            document.getElementById('aiGenerateBtn').disabled = true;
+            
+            try {
+                const systemPrompt = `You are a Sigma Computing data model expert. You help users build and modify data models using JSON.
+
+${DATA_MODEL_SCHEMA}
+
+## Current Data Model
+${currentModel ? JSON.stringify(currentModel, null, 2) : 'No model loaded yet - creating new elements.'}
+${contextInfo}
+
+## Instructions
+1. Based on the user's request, generate the JSON snippet that should be added or modified
+2. Use proper Sigma formula syntax: reference columns as [Column Name] - do NOT include table name in formulas
+3. Generate unique IDs using pattern: type_name_${Date.now()}
+4. Return your response in this exact format:
+
+JSON:
+\`\`\`json
+{
+  // your suggested JSON here
+}
+\`\`\`
+
+EXPLANATION:
+Explain what the JSON does and how to use it.
+
+IMPORTANT: The JSON should be a snippet that can be merged into the model, not the entire model.`;
+
+                let response;
+                
+                if (provider === 'openai') {
+                    response = await callOpenAI(apiKey, systemPrompt, userPrompt);
+                } else if (provider === 'anthropic') {
+                    response = await callAnthropic(apiKey, systemPrompt, userPrompt);
+                } else if (provider === 'gemini') {
+                    response = await callGemini(apiKey, systemPrompt, userPrompt);
+                }
+                
+                // Parse response
+                const jsonMatch = response.match(/```json\n?([\s\S]*?)\n?```/);
+                const explanationMatch = response.match(/EXPLANATION:\s*([\s\S]*?)(?:$|```)/i);
+                
+                const jsonSuggestion = jsonMatch ? jsonMatch[1].trim() : response;
+                const explanation = explanationMatch ? explanationMatch[1].trim() : 'Generated based on your request.';
+                
+                document.getElementById('aiSuggestion').value = jsonSuggestion;
+                document.getElementById('aiExplanation').textContent = explanation;
+                document.getElementById('aiResults').style.display = 'block';
+                
+                // Generate insertion preview
+                try {
+                    generateInsertionPreview(jsonSuggestion);
+                } catch (e) {
+                    console.warn('Could not generate preview:', e);
+                    document.getElementById('aiPreview').style.display = 'none';
+                }
+                
+            } catch (error) {
+                console.error('AI Error:', error);
+                showToast(`AI Error: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('aiLoading').style.display = 'none';
+                document.getElementById('aiGenerateBtn').disabled = false;
+            }
+        }
+        
+        async function callOpenAI(apiKey, systemPrompt, userMessage) {
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model: 'gpt-4o',
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userMessage }
+                    ],
+                    max_tokens: 2000,
+                    temperature: 0.7
+                })
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error?.message || 'OpenAI API error');
+            }
+            
+            const data = await response.json();
+            return data.choices[0].message.content;
+        }
+        
+        async function callAnthropic(apiKey, systemPrompt, userMessage) {
+            const response = await fetch('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': apiKey,
+                    'anthropic-version': '2023-06-01'
+                },
+                body: JSON.stringify({
+                    model: 'claude-sonnet-4-20250514',
+                    max_tokens: 2000,
+                    messages: [
+                        { role: 'user', content: systemPrompt + '\n\nUser Request: ' + userMessage }
+                    ]
+                })
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error?.message || 'Anthropic API error');
+            }
+            
+            const data = await response.json();
+            return data.content[0].text;
+        }
+        
+        async function callGemini(apiKey, systemPrompt, userMessage) {
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    contents: [
+                        {
+                            role: 'user',
+                            parts: [{ text: systemPrompt + '\n\nUser Request: ' + userMessage }]
+                        }
+                    ],
+                    generationConfig: {
+                        temperature: 0.7,
+                        maxOutputTokens: 2000
+                    }
+                })
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error?.message || 'Gemini API error');
+            }
+            
+            const data = await response.json();
+            return data.candidates[0].content.parts[0].text;
+        }
+        
+        function copyAISuggestion() {
+            const suggestion = document.getElementById('aiSuggestion').value;
+            navigator.clipboard.writeText(suggestion);
+            showToast('Copied! Paste into the appropriate location in your JSON editor.', 'success');
+        }
+        
+        // Smart Insert AI Suggestion
+        async function smartInsertAISuggestion() {
+            const editor = document.getElementById('jsonEditor');
+            const suggestion = document.getElementById('aiSuggestion').value;
+            
+            try {
+                // Parse the suggestion to understand what it is
+                let suggestionObj;
+                try {
+                    suggestionObj = JSON.parse(suggestion);
+                } catch (e) {
+                    showToast('❌ AI suggestion is not valid JSON. Check for syntax errors.', 'error');
+                    return;
+                }
+                
+                // Parse the current editor content
+                let currentJson;
+                try {
+                    currentJson = JSON.parse(editor.value);
+                } catch (e) {
+                    showToast('❌ Current JSON is invalid. Please fix errors first:\n' + e.message, 'error');
+                    return;
+                }
+                
+                // Validate data model structure
+                if (!currentJson.pages || !Array.isArray(currentJson.pages)) {
+                    showToast('❌ Data model must have a "pages" array.', 'error');
+                    return;
+                }
+                
+                // Detect what type of suggestion this is
+                const suggestionType = detectSuggestionType(suggestionObj);
+                
+                if (suggestionType === 'unknown') {
+                    showToast('❌ Could not determine suggestion type. The JSON structure may not match expected patterns.', 'error');
+                    return;
+                }
+                
+                // Find the best place to insert it
+                const insertionResult = findInsertionPoint(currentJson, suggestionType, suggestionObj);
+                
+                if (!insertionResult.success) {
+                    showToast(`❌ ${insertionResult.error}`, 'error');
+                    return;
+                }
+                
+                // Insert the suggestion
+                const updatedJson = insertSuggestion(currentJson, insertionResult.path, suggestionObj, suggestionType);
+                
+                // Validate the result is still valid JSON
+                try {
+                    JSON.stringify(updatedJson);
+                } catch (e) {
+                    showToast('❌ Insertion would create invalid JSON. Please check the suggestion.', 'error');
+                    return;
+                }
+                
+                // Update the editor
+                editor.value = JSON.stringify(updatedJson, null, 2);
+                
+                // Close modal and show success
+                closeAIModal();
+                
+                const name = suggestionObj.name || suggestionObj.id || 'item';
+                showToast(`✅ Inserted "${name}" at: ${insertionResult.description}`, 'success');
+                
+                // Auto-format
+                setTimeout(() => formatJson(), 100);
+                
+            } catch (e) {
+                console.error('Smart insert error:', e);
+                showToast(`❌ Failed to insert: ${e.message}. Try copying and pasting manually.`, 'error');
+            }
+        }
+        
+        // Detect what type of JSON suggestion this is
+        function detectSuggestionType(obj) {
+            // Check for column
+            if (obj.id && obj.formula && (obj.name || obj.description)) {
+                return 'column';
+            }
+            
+            // Check for metric
+            if (obj.id && obj.formula && obj.name && !obj.description) {
+                return 'metric';
+            }
+            
+            // Check for relationship
+            if (obj.id && obj.targetElementId && obj.keys) {
+                return 'relationship';
+            }
+            
+            // Check for filter
+            if (obj.id && obj.columnId && obj.kind) {
+                return 'filter';
+            }
+            
+            // Check for element (table)
+            if (obj.id && obj.name && obj.kind === 'table' && obj.source) {
+                return 'element';
+            }
+            
+            // Check for page
+            if (obj.id && obj.name && obj.elements) {
+                return 'page';
+            }
+            
+            return 'unknown';
+        }
+        
+        // Find where to insert the suggestion
+        function findInsertionPoint(json, suggestionType, suggestionObj) {
+            switch (suggestionType) {
+                case 'column':
+                    // Find the first table element with columns array
+                    for (let pageIdx = 0; pageIdx < json.pages.length; pageIdx++) {
+                        const page = json.pages[pageIdx];
+                        for (let elemIdx = 0; elemIdx < (page.elements || []).length; elemIdx++) {
+                            const element = page.elements[elemIdx];
+                            if (element.kind === 'table' && Array.isArray(element.columns)) {
+                                return {
+                                    success: true,
+                                    path: ['pages', pageIdx, 'elements', elemIdx, 'columns'],
+                                    description: `Page "${page.name}" → Table "${element.name}" → Columns`
+                                };
+                            }
+                        }
+                    }
+                    return {
+                        success: false,
+                        error: 'No table with columns array found. Create a table element first.'
+                    };
+                    
+                case 'metric':
+                    // Find the first table element with metrics array (or create it)
+                    for (let pageIdx = 0; pageIdx < json.pages.length; pageIdx++) {
+                        const page = json.pages[pageIdx];
+                        for (let elemIdx = 0; elemIdx < (page.elements || []).length; elemIdx++) {
+                            const element = page.elements[elemIdx];
+                            if (element.kind === 'table') {
+                                return {
+                                    success: true,
+                                    path: ['pages', pageIdx, 'elements', elemIdx, 'metrics'],
+                                    description: `Page "${page.name}" → Table "${element.name}" → Metrics`
+                                };
+                            }
+                        }
+                    }
+                    return {
+                        success: false,
+                        error: 'No table element found. Create a table element first.'
+                    };
+                    
+                case 'relationship':
+                    // Find the first table element with relationships array (or create it)
+                    for (let pageIdx = 0; pageIdx < json.pages.length; pageIdx++) {
+                        const page = json.pages[pageIdx];
+                        for (let elemIdx = 0; elemIdx < (page.elements || []).length; elemIdx++) {
+                            const element = page.elements[elemIdx];
+                            if (element.kind === 'table') {
+                                return {
+                                    success: true,
+                                    path: ['pages', pageIdx, 'elements', elemIdx, 'relationships'],
+                                    description: `Page "${page.name}" → Table "${element.name}" → Relationships`
+                                };
+                            }
+                        }
+                    }
+                    return {
+                        success: false,
+                        error: 'No table element found. Create a table element first.'
+                    };
+                    
+                case 'filter':
+                    // Find the first table element with filters array (or create it)
+                    for (let pageIdx = 0; pageIdx < json.pages.length; pageIdx++) {
+                        const page = json.pages[pageIdx];
+                        for (let elemIdx = 0; elemIdx < (page.elements || []).length; elemIdx++) {
+                            const element = page.elements[elemIdx];
+                            if (element.kind === 'table') {
+                                return {
+                                    success: true,
+                                    path: ['pages', pageIdx, 'elements', elemIdx, 'filters'],
+                                    description: `Page "${page.name}" → Table "${element.name}" → Filters`
+                                };
+                            }
+                        }
+                    }
+                    return {
+                        success: false,
+                        error: 'No table element found. Create a table element first.'
+                    };
+                    
+                case 'element':
+                    // Add to the first page's elements array
+                    if (json.pages && json.pages.length > 0) {
+                        return {
+                            success: true,
+                            path: ['pages', 0, 'elements'],
+                            description: `Page "${json.pages[0].name}" → Elements`
+                        };
+                    }
+                    return {
+                        success: false,
+                        error: 'No pages found in data model.'
+                    };
+                    
+                case 'page':
+                    // Add to the pages array
+                    return {
+                        success: true,
+                        path: ['pages'],
+                        description: 'Root → Pages'
+                    };
+                    
+                default:
+                    return {
+                        success: false,
+                        error: 'Could not determine suggestion type. Try copying and pasting manually.'
+                    };
+            }
+        }
+        
+        // Insert the suggestion at the specified path
+        function insertSuggestion(json, path, suggestion, suggestionType) {
+            // Deep clone the JSON
+            const newJson = JSON.parse(JSON.stringify(json));
+            
+            // Navigate to the insertion point
+            let target = newJson;
+            for (let i = 0; i < path.length - 1; i++) {
+                target = target[path[i]];
+            }
+            
+            const lastKey = path[path.length - 1];
+            
+            // Ensure the array exists
+            if (!Array.isArray(target[lastKey])) {
+                target[lastKey] = [];
+            }
+            
+            // Check for duplicate IDs before inserting
+            const existingIds = target[lastKey].map(item => item.id);
+            if (existingIds.includes(suggestion.id)) {
+                // Generate a new unique ID
+                let counter = 1;
+                let newId = `${suggestion.id}_${counter}`;
+                while (existingIds.includes(newId)) {
+                    counter++;
+                    newId = `${suggestion.id}_${counter}`;
+                }
+                suggestion.id = newId;
+                console.log(`Duplicate ID detected, changed to: ${newId}`);
+            }
+            
+            // Add the suggestion to the array
+            target[lastKey].push(suggestion);
+            
+            return newJson;
+        }
+        
+        // Generate a preview of where the suggestion will be inserted
+        function generateInsertionPreview(suggestionText) {
+            const editor = document.getElementById('jsonEditor');
+            const previewDiv = document.getElementById('aiPreview');
+            const typeDiv = document.getElementById('aiPreviewType');
+            const locationDiv = document.getElementById('aiPreviewLocation');
+            const detailsDiv = document.getElementById('aiPreviewDetails');
+            
+            try {
+                // Parse suggestion and current JSON
+                const suggestion = JSON.parse(suggestionText);
+                const currentJson = JSON.parse(editor.value);
+                
+                // Detect type
+                const suggestionType = detectSuggestionType(suggestion);
+                
+                // Find insertion point
+                const insertionResult = findInsertionPoint(currentJson, suggestionType, suggestion);
+                
+                if (insertionResult.success) {
+                    // Show preview
+                    const typeLabels = {
+                        'column': '📊 Column',
+                        'metric': '📈 Metric',
+                        'relationship': '🔗 Relationship',
+                        'filter': '🔍 Filter',
+                        'element': '📦 Table Element',
+                        'page': '📄 Page'
+                    };
+                    
+                    typeDiv.textContent = typeLabels[suggestionType] || suggestionType;
+                    locationDiv.textContent = `Will be inserted at: ${insertionResult.description}`;
+                    
+                    // Show what will be added
+                    const name = suggestion.name || suggestion.id || 'Unnamed';
+                    detailsDiv.textContent = `Adding "${name}" with ID: ${suggestion.id}`;
+                    
+                    previewDiv.style.display = 'block';
+                } else {
+                    // Show error in preview
+                    typeDiv.textContent = '⚠️ Cannot Auto-Insert';
+                    locationDiv.textContent = insertionResult.error;
+                    detailsDiv.textContent = 'Use "Copy" and paste manually.';
+                    previewDiv.style.display = 'block';
+                }
+            } catch (e) {
+                // Hide preview if there's an error
+                previewDiv.style.display = 'none';
+            }
+        }
+        
+        // Validate AI Suggestion
+        function validateAISuggestion() {
+            const editor = document.getElementById('jsonEditor');
+            const suggestion = document.getElementById('aiSuggestion').value;
+            
+            let errors = [];
+            let warnings = [];
+            let info = [];
+            
+            // Check 1: Is the suggestion valid JSON?
+            let suggestionObj;
+            try {
+                suggestionObj = JSON.parse(suggestion);
+                info.push('✓ Valid JSON syntax');
+            } catch (e) {
+                errors.push('✗ Invalid JSON syntax: ' + e.message);
+                showValidationResults(errors, warnings, info);
+                return;
+            }
+            
+            // Check 2: Can we detect the type?
+            const suggestionType = detectSuggestionType(suggestionObj);
+            if (suggestionType === 'unknown') {
+                warnings.push('⚠ Cannot auto-detect suggestion type');
+                info.push('This may require manual placement');
+            } else {
+                info.push(`✓ Detected as: ${suggestionType}`);
+            }
+            
+            // Check 3: Is the current JSON valid?
+            let currentJson;
+            try {
+                currentJson = JSON.parse(editor.value);
+                info.push('✓ Current data model is valid JSON');
+            } catch (e) {
+                errors.push('✗ Current data model has JSON errors: ' + e.message);
+                showValidationResults(errors, warnings, info);
+                return;
+            }
+            
+            // Check 4: Can we find an insertion point?
+            if (suggestionType !== 'unknown') {
+                const insertionResult = findInsertionPoint(currentJson, suggestionType, suggestionObj);
+                if (insertionResult.success) {
+                    info.push(`✓ Will insert at: ${insertionResult.description}`);
+                } else {
+                    warnings.push(`⚠ ${insertionResult.error}`);
+                }
+            }
+            
+            // Check 5: Does the ID already exist?
+            if (suggestionObj.id && currentJson.pages) {
+                const allIds = [];
+                currentJson.pages.forEach(page => {
+                    if (page.id) allIds.push(page.id);
+                    (page.elements || []).forEach(elem => {
+                        if (elem.id) allIds.push(elem.id);
+                        ['columns', 'metrics', 'relationships', 'filters'].forEach(arrayName => {
+                            (elem[arrayName] || []).forEach(item => {
+                                if (item.id) allIds.push(item.id);
+                            });
+                        });
+                    });
+                });
+                
+                if (allIds.includes(suggestionObj.id)) {
+                    warnings.push(`⚠ ID "${suggestionObj.id}" already exists - will auto-rename on insert`);
+                } else {
+                    info.push(`✓ ID "${suggestionObj.id}" is unique`);
+                }
+            }
+            
+            // Check 6: Required fields check
+            const requiredFields = {
+                'column': ['id', 'formula'],
+                'metric': ['id', 'formula'],
+                'relationship': ['id', 'targetElementId', 'keys'],
+                'filter': ['id', 'columnId', 'kind'],
+                'element': ['id', 'name', 'kind', 'source'],
+                'page': ['id', 'name', 'elements']
+            };
+            
+            if (suggestionType !== 'unknown' && requiredFields[suggestionType]) {
+                const missing = requiredFields[suggestionType].filter(field => !suggestionObj[field]);
+                if (missing.length > 0) {
+                    errors.push(`✗ Missing required fields: ${missing.join(', ')}`);
+                } else {
+                    info.push(`✓ All required fields present`);
+                }
+            }
+            
+            showValidationResults(errors, warnings, info);
+        }
+        
+        // Show validation results
+        function showValidationResults(errors, warnings, info) {
+            let message = '';
+            
+            if (errors.length > 0) {
+                message += '❌ ERRORS:\n' + errors.join('\n') + '\n\n';
+            }
+            
+            if (warnings.length > 0) {
+                message += '⚠️ WARNINGS:\n' + warnings.join('\n') + '\n\n';
+            }
+            
+            if (info.length > 0) {
+                message += '✓ INFO:\n' + info.join('\n');
+            }
+            
+            if (errors.length === 0 && warnings.length === 0) {
+                showToast('✅ Validation passed! Ready to insert.', 'success');
+            } else if (errors.length > 0) {
+                alert(message);
+            } else {
+                alert(message + '\n\n⚠️ You can proceed but review the warnings above.');
+            }
         }
         
         // Auto-resize textarea
