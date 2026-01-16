@@ -80,6 +80,7 @@
             justify-content: center;
             font-weight: 700;
             font-size: 18px;
+            transition: transform 0.1s ease;
         }
         
         .logo-text {
@@ -836,10 +837,10 @@
         <aside class="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
-                    <div class="logo-icon">Σ</div>
+                    <div class="logo-icon" id="logoIcon" style="cursor: pointer;" title="Click 5 times to enable developer mode">Σ</div>
                     <span class="logo-text">Data Model Manager</span>
                 </div>
-                <div class="logo-subtitle">Direct Sigma Integration <span class="badge beta">Standalone</span></div>
+                <div class="logo-subtitle">Direct Sigma Integration <span class="badge beta">Standalone</span><span class="badge" id="devModeBadge" style="display: none; margin-left: 8px; background: rgba(255, 123, 114, 0.15); color: #ff7b72;">DEV</span></div>
             </div>
             
             <div class="credentials-section">
@@ -875,6 +876,12 @@
                             <option value="https://api.eu.azure.sigmacomputing.com">api.eu.azure.sigmacomputing.com (Azure Europe)</option>
                             <option value="https://api.ca.azure.sigmacomputing.com">api.ca.azure.sigmacomputing.com (Azure Canada)</option>
                             <option value="https://api.uk.azure.sigmacomputing.com">api.uk.azure.sigmacomputing.com (Azure UK)</option>
+                        </optgroup>
+                        <optgroup label="Staging Environments" id="stagingOptgroup" style="display: none;">
+                            <option value="https://api.staging.sigmacomputing.io">api.staging.sigmacomputing.io (Staging GCP)</option>
+                            <option value="https://api.staging.us.aws.sigmacomputing.io">api.staging.us.aws.sigmacomputing.io (Staging AWS US)</option>
+                            <option value="https://api.staging.us.azure.sigmacomputing.io">api.staging.us.azure.sigmacomputing.io (Staging Azure US)</option>
+                            <option value="https://api.staging.ca.aws.sigmacomputing.io">api.staging.ca.aws.sigmacomputing.io (Staging AWS Canada)</option>
                         </optgroup>
                     </select>
                 </div>
@@ -1944,8 +1951,70 @@ This is the standalone version - changes are saved directly to Sigma."></textare
             showToast('Saved credentials cleared', 'success');
         }
         
+        // Developer mode (for staging environments)
+        const DEV_MODE_KEY = 'sigma_standalone_dev_mode';
+        let devModeClickCount = 0;
+        let devModeClickTimeout = null;
+        
+        function checkDevMode() {
+            const devMode = localStorage.getItem(DEV_MODE_KEY) === 'true';
+            if (devMode) {
+                enableDevMode();
+            }
+        }
+        
+        function enableDevMode() {
+            document.getElementById('stagingOptgroup').style.display = '';
+            document.getElementById('devModeBadge').style.display = 'inline-flex';
+            localStorage.setItem(DEV_MODE_KEY, 'true');
+            showToast('Developer mode enabled - staging environments available', 'success');
+        }
+        
+        function disableDevMode() {
+            document.getElementById('stagingOptgroup').style.display = 'none';
+            document.getElementById('devModeBadge').style.display = 'none';
+            localStorage.setItem(DEV_MODE_KEY, 'false');
+            showToast('Developer mode disabled', 'success');
+        }
+        
+        // Set up logo click handler for dev mode
+        function setupDevMode() {
+            const logoIcon = document.getElementById('logoIcon');
+            
+            // Check if dev mode is already enabled
+            checkDevMode();
+            
+            logoIcon.addEventListener('click', () => {
+                clearTimeout(devModeClickTimeout);
+                devModeClickCount++;
+                
+                // Reset count after 2 seconds of no clicks
+                devModeClickTimeout = setTimeout(() => {
+                    devModeClickCount = 0;
+                }, 2000);
+                
+                // Show click progress
+                if (devModeClickCount >= 1 && devModeClickCount < 5) {
+                    logoIcon.style.transform = 'scale(1.1)';
+                    setTimeout(() => logoIcon.style.transform = '', 100);
+                }
+                
+                // Enable dev mode after 5 clicks
+                if (devModeClickCount === 5) {
+                    const isDevMode = localStorage.getItem(DEV_MODE_KEY) === 'true';
+                    if (isDevMode) {
+                        disableDevMode();
+                    } else {
+                        enableDevMode();
+                    }
+                    devModeClickCount = 0;
+                }
+            });
+        }
+        
         // Initialize on page load
         loadSavedCredentials();
+        setupDevMode();
     </script>
 </body>
 </html>
