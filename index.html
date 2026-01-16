@@ -878,10 +878,10 @@
                             <option value="https://api.uk.azure.sigmacomputing.com">api.uk.azure.sigmacomputing.com (Azure UK)</option>
                         </optgroup>
                         <optgroup label="Staging Environments" id="stagingOptgroup" style="display: none;">
-                            <option value="https://api.staging.sigmacomputing.io">api.staging.sigmacomputing.io (Staging GCP)</option>
-                            <option value="https://api.staging.us.aws.sigmacomputing.io">api.staging.us.aws.sigmacomputing.io (Staging AWS US)</option>
-                            <option value="https://api.staging.us.azure.sigmacomputing.io">api.staging.us.azure.sigmacomputing.io (Staging Azure US)</option>
-                            <option value="https://api.staging.ca.aws.sigmacomputing.io">api.staging.ca.aws.sigmacomputing.io (Staging AWS Canada)</option>
+                            <option value="https://api.staging.sigmacomputing.io" class="staging-option" style="display: none;">api.staging.sigmacomputing.io (Staging GCP)</option>
+                            <option value="https://api.staging.us.aws.sigmacomputing.io" class="staging-option" style="display: none;">api.staging.us.aws.sigmacomputing.io (Staging AWS US)</option>
+                            <option value="https://api.staging.us.azure.sigmacomputing.io" class="staging-option" style="display: none;">api.staging.us.azure.sigmacomputing.io (Staging Azure US)</option>
+                            <option value="https://api.staging.ca.aws.sigmacomputing.io" class="staging-option" style="display: none;">api.staging.ca.aws.sigmacomputing.io (Staging AWS Canada)</option>
                         </optgroup>
                     </select>
                 </div>
@@ -1965,6 +1965,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
         
         function enableDevMode() {
             document.getElementById('stagingOptgroup').style.display = '';
+            document.querySelectorAll('.staging-option').forEach(opt => opt.style.display = '');
             document.getElementById('devModeBadge').style.display = 'inline-flex';
             localStorage.setItem(DEV_MODE_KEY, 'true');
             showToast('Developer mode enabled - staging environments available', 'success');
@@ -1972,6 +1973,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
         
         function disableDevMode() {
             document.getElementById('stagingOptgroup').style.display = 'none';
+            document.querySelectorAll('.staging-option').forEach(opt => opt.style.display = 'none');
             document.getElementById('devModeBadge').style.display = 'none';
             localStorage.setItem(DEV_MODE_KEY, 'false');
             showToast('Developer mode disabled', 'success');
