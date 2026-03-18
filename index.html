@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sigma Data Model Manager (Standalone)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
         
@@ -917,6 +918,156 @@
         .remove-selected-btn:hover {
             color: var(--error);
         }
+
+        /* dbt Converter Panel */
+        .dbt-converter {
+            flex: 1;
+            display: none;
+            flex-direction: row;
+            overflow: hidden;
+            background: var(--bg-primary);
+        }
+
+        .dbt-converter.active {
+            display: flex;
+        }
+
+        .dbt-pane {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            padding: 20px;
+            gap: 12px;
+        }
+
+        .dbt-pane + .dbt-pane {
+            border-left: 1px solid var(--border);
+        }
+
+        .dbt-pane-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        .dbt-pane-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .dbt-pane textarea {
+            flex: 1;
+            width: 100%;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.7;
+            color: var(--text-primary);
+            resize: none;
+            tab-size: 2;
+        }
+
+        .dbt-pane textarea:focus {
+            outline: none;
+            border-color: var(--border-focus);
+        }
+
+        .dbt-pane textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        .dbt-config-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .dbt-config-row .form-group {
+            margin-bottom: 0;
+        }
+
+        .dbt-config-row label {
+            font-size: 11px;
+        }
+
+        .dbt-config-row input {
+            font-size: 12px;
+            padding: 7px 10px;
+        }
+
+        .dbt-convert-row {
+            display: flex;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .dbt-badge-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            flex-shrink: 0;
+            min-height: 28px;
+        }
+
+        .dbt-stat-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .dbt-stat-badge.dimensions {
+            background: rgba(88, 101, 242, 0.15);
+            color: #7c8cf8;
+        }
+        .dbt-stat-badge.measures {
+            background: rgba(67, 181, 129, 0.15);
+            color: var(--success);
+        }
+        .dbt-stat-badge.metrics {
+            background: rgba(250, 166, 26, 0.15);
+            color: var(--warning);
+        }
+        .dbt-stat-badge.entities {
+            background: rgba(240, 71, 71, 0.15);
+            color: #f47878;
+        }
+        .dbt-stat-badge.models {
+            background: rgba(139, 92, 246, 0.15);
+            color: #a78bfa;
+        }
+
+        .dbt-warning-box {
+            background: rgba(250, 166, 26, 0.08);
+            border: 1px solid rgba(250, 166, 26, 0.25);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 12px;
+            color: var(--warning);
+            flex-shrink: 0;
+        }
+
+        .dbt-example-btn {
+            background: none;
+            border: none;
+            color: var(--accent);
+            font-size: 12px;
+            cursor: pointer;
+            padding: 0;
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -1051,9 +1202,11 @@
             
             <div class="editor-container">
                 <div class="editor-tabs">
-                    <div class="editor-tab active">JSON Representation</div>
+                    <div class="editor-tab active" id="tabJson" onclick="switchEditorTab('json')">JSON Representation</div>
+                    <div class="editor-tab" id="tabDbt" onclick="switchEditorTab('dbt')">🔄 dbt Converter</div>
+                    <div class="editor-tab" id="tabSnow" onclick="switchEditorTab('snow')">❄️ Snowflake Converter</div>
                 </div>
-                <div class="json-editor">
+                <div class="json-editor" id="panelJson">
                     <textarea id="jsonEditor" placeholder="Select a data model from the sidebar to view and edit its JSON representation...
 
 WORKFLOW:
@@ -1064,8 +1217,219 @@ WORKFLOW:
 
 This is the standalone version - changes are saved directly to Sigma."></textarea>
                 </div>
+
+                <!-- dbt Converter Panel -->
+                <div class="dbt-converter" id="panelDbt">
+                    <!-- Left: dbt Input -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">dbt Semantic Model YAML</span>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <button class="btn btn-secondary btn-small" onclick="openDbtImportModal()" style="gap: 5px;">📥 Import from dbt</button>
+                                <button class="dbt-example-btn" onclick="loadDbtExample()">Load example</button>
+                            </div>
+                        </div>
+
+                        <div class="dbt-config-row">
+                            <div class="form-group">
+                                <label>Database</label>
+                                <input type="text" id="dbtDatabase" placeholder="ANALYTICS" title="Snowflake/warehouse database name">
+                            </div>
+                            <div class="form-group">
+                                <label>Schema</label>
+                                <input type="text" id="dbtSchema" placeholder="DBT_PROD" title="Schema containing the dbt models">
+                            </div>
+                            <div class="form-group">
+                                <label>Connection ID (optional)</label>
+                                <input type="text" id="dbtConnectionId" placeholder="Auto-detected if connected" title="Sigma connection ID — auto-filled if you're connected">
+                            </div>
+                        </div>
+
+                        <textarea id="dbtYamlInput" placeholder="Paste your dbt semantic model YAML here...
+
+Example structure:
+semantic_models:
+  - name: orders
+    model: ref('stg_orders')
+    description: Order fact table
+    entities:
+      - name: order_id
+        type: primary
+    dimensions:
+      - name: order_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: status
+        type: categorical
+    measures:
+      - name: order_count
+        agg: count
+        expr: order_id
+      - name: revenue
+        agg: sum
+        expr: amount
+
+metrics:
+  - name: total_revenue
+    type: simple
+    type_params:
+      measure:
+        name: revenue
+  - name: aov
+    type: ratio
+    type_params:
+      numerator:
+        name: revenue
+      denominator:
+        name: order_count"></textarea>
+
+                        <div class="dbt-badge-row" id="dbtInputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" onclick="runDbtConversion()">
+                                🔄 Convert to Sigma JSON
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Right: Sigma JSON Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copyDbtOutput()" id="dbtCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadDbtOutputToEditor()" id="dbtLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="dbtWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="dbtJsonOutput" readonly placeholder="Converted Sigma JSON will appear here after you click Convert...
+
+Tips:
+• Fill in Database and Schema to get correct table paths
+• After conversion, use '→ Load into Editor' to move the
+  JSON to the main editor where you can save it to Sigma
+• Foreign entity relationships will show placeholder IDs
+  that need to be resolved once all models are created"></textarea>
+
+                        <div class="dbt-badge-row" id="dbtOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="loadAndSaveDbtModel()" id="dbtSaveBtn" disabled>
+                                💾 Load & Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ❄️ Snowflake Semantic View Converter Panel -->
+                <div class="dbt-converter" id="panelSnow">
+
+                    <!-- Left: YAML Input -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Snowflake Semantic View YAML</span>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <button class="btn btn-secondary btn-small" onclick="document.getElementById('snowYamlUpload').click()">📂 Upload YAML</button>
+                                <input type="file" id="snowYamlUpload" accept=".yml,.yaml,.json" style="display:none;" onchange="handleSnowYamlUpload(event)">
+                                <button class="dbt-example-btn" onclick="loadSnowExample()">Load example</button>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; gap: 10px; flex-shrink: 0; align-items: flex-end;">
+                            <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                                <label>Connection ID <span style="color: var(--text-muted); font-weight: 400;">(optional — auto-detected if connected)</span></label>
+                                <input type="text" id="snowConnectionId" placeholder="Leave blank to auto-fill from Sigma connection">
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 6px; padding-bottom: 2px; flex-shrink: 0;">
+                                <input type="checkbox" id="snowAutoMetrics" checked style="width: auto; accent-color: var(--accent);">
+                                <label for="snowAutoMetrics" style="margin: 0; font-size: 12px; white-space: nowrap; cursor: pointer;">Auto-generate metrics from facts</label>
+                            </div>
+                        </div>
+
+                        <textarea id="snowYamlInput" placeholder="Paste your Snowflake semantic view YAML here...
+
+Expected structure:
+name: MY_SEMANTIC_VIEW
+tables:
+  - name: FACT_TABLE
+    description: ...
+    base_table:
+      database: MY_DB
+      schema: MY_SCHEMA
+      table: MY_TABLE
+    dimensions:
+      - name: STATUS
+        expr: STATUS
+        data_type: VARCHAR(255)
+        description: ...
+    time_dimensions:
+      - name: CREATED_AT
+        expr: CREATED_AT
+        data_type: TIMESTAMP_NTZ(9)
+    facts:
+      - name: REVENUE_AMOUNT
+        expr: REVENUE_AMOUNT
+        data_type: NUMBER(38,12)
+        access_modifier: public_access
+    primary_key:
+      columns: [RECORD_ID]
+
+relationships:
+  - name: FACT_TO_DIM
+    left_table: FACT_TABLE
+    right_table: DIM_TABLE
+    relationship_columns:
+      - left_column: DIM_KEY
+        right_column: DIM_KEY
+    relationship_type: many_to_one
+    join_type: left_outer"></textarea>
+
+                        <div class="dbt-badge-row" id="snowInputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" onclick="runSnowConversion()">
+                                ❄️ Convert to Sigma JSON
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Right: Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copySnowOutput()" id="snowCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadSnowOutputToEditor()" id="snowLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="snowWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="snowJsonOutput" readonly placeholder="Converted Sigma JSON will appear here...
+
+Conversion notes:
+• dimensions → columns (text / number / date types)
+• time_dimensions → columns (datetime type)
+• facts → columns + optional Sum() metrics
+• primary_key → noted but not stored (Sigma infers keys from relationships)
+• relationships → Sigma element relationships
+• DB/schema/table paths are read directly
+  from each table's base_table block"></textarea>
+
+                        <div class="dbt-badge-row" id="snowOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="loadAndSaveSnowModel()" id="snowSaveBtn" disabled>
+                                💾 Load & Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
-            
+
             <div class="status-bar">
                 <div class="status-indicator" id="statusIndicator"></div>
                 <span id="statusText">Not connected</span>
@@ -1556,7 +1920,7 @@ PRODUCT_NAME
             
             try {
                 // Fetch the JSON representation using v3alpha/spec endpoint
-                const response = await fetch(`${state.baseUrl}/v3alpha/dataModels/${dataModelId}/spec`, {
+                const response = await fetch(`${state.baseUrl}/v2/dataModels/${dataModelId}/spec`, {
                     headers: {
                         'Authorization': `Bearer ${state.accessToken}`
                     }
@@ -1627,7 +1991,7 @@ PRODUCT_NAME
             btn.innerHTML = '<div class="spinner" style="width: 14px; height: 14px;"></div>';
             
             try {
-                const response = await fetch(`${state.baseUrl}/v3alpha/dataModels/${dataModelId}/spec`, {
+                const response = await fetch(`${state.baseUrl}/v2/dataModels/${dataModelId}/spec`, {
                     headers: { 'Authorization': `Bearer ${state.accessToken}` }
                 });
                 
@@ -1664,115 +2028,109 @@ PRODUCT_NAME
             }
             
             const btn = document.getElementById('saveBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<div class="spinner"></div><span>Saving...</span>';
             
-            // Check if this is a new model or existing
-            const isNew = state.isNewModel === true;
+            const isNew = state.isNewModel === true && !jsonData.dataModelId;
             
             if (!isNew && !state.selectedModel?.dataModelId) {
                 showToast('No data model selected', 'error');
-                btn.disabled = false;
-                btn.innerHTML = 'Save to Sigma';
                 return;
             }
-            
-            updateStatus('loading', isNew ? 'Creating data model...' : 'Saving changes...');
-            
+
+            if (isNew && !jsonData.folderId) {
+                if (!state.accessToken) {
+                    showToast('Connect to Sigma in the sidebar first, then click Save to Sigma.', 'warning');
+                    return;
+                }
+                openSaveLocationModal();
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner"></div><span>Saving...</span>';
+
+            // Helper: strip internal _ fields
+            function cleanPages(pages) {
+                return JSON.parse(JSON.stringify(pages, (key, value) =>
+                    (typeof key === 'string' && key.startsWith('_')) ? undefined : value
+                ));
+            }
+
+            // Helper: does this spec have any relationships?
+            function hasRelationships(pages) {
+                return (pages || []).some(p =>
+                    (p.elements || []).some(e => e.relationships && e.relationships.length > 0)
+                );
+            }
+
             try {
-                // Strip out metadata - only send spec fields that Sigma API expects
+                const cleanedPages = cleanPages(jsonData.pages);
+
+                // Build the full spec — columns, metrics, relationships all in one POST
+                // dataModelId is our local tracking field, not a valid API field — strip it
+                const { dataModelId: _dmId, ...specBase } = jsonData;
                 const spec = {
-                    schemaVersion: jsonData.schemaVersion || 1,
-                    name: jsonData.name,
-                    pages: jsonData.pages
+                    schemaVersion: specBase.schemaVersion || 1,
+                    name: specBase.name,
+                    pages: cleanedPages
                 };
-                
-                // Include optional fields if present
-                if (jsonData.description) spec.description = jsonData.description;
-                if (jsonData.folderId) spec.folderId = jsonData.folderId;
-                
+                if (specBase.description) spec.description = specBase.description;
+                if (specBase.folderId) spec.folderId = specBase.folderId;
+
+                console.log('[Sigma Save] Sending spec:', JSON.stringify(spec, null, 2));
+                updateStatus('loading', isNew ? 'Creating data model...' : 'Saving changes...');
+
                 let response;
-                
                 if (isNew) {
-                    // POST to create new data model
-                    response = await fetch(`${state.baseUrl}/v3alpha/dataModels/spec`, {
+                    response = await fetch(`${state.baseUrl}/v2/dataModels/spec`, {
                         method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${state.accessToken}`,
-                            'Content-Type': 'application/json'
-                        },
+                        headers: { 'Authorization': `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
                         body: JSON.stringify(spec)
                     });
                 } else {
-                    // PUT to update existing data model - try with /spec
-                    const dataModelId = state.selectedModel.dataModelId;
-                    response = await fetch(`${state.baseUrl}/v3alpha/dataModels/${dataModelId}/spec`, {
+                    const dataModelId = jsonData.dataModelId || state.selectedModel.dataModelId;
+                    response = await fetch(`${state.baseUrl}/v2/dataModels/${dataModelId}/spec`, {
                         method: 'PUT',
-                        headers: {
-                            'Authorization': `Bearer ${state.accessToken}`,
-                            'Content-Type': 'application/json'
-                        },
+                        headers: { 'Authorization': `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
                         body: JSON.stringify(spec)
                     });
                 }
-                
+
                 if (!response.ok) {
-                    // Try to get error message from response
                     let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
                     try {
                         const errorData = await response.text();
-                        if (errorData) {
-                            const errorJson = JSON.parse(errorData);
-                            errorMessage = errorJson.message || errorMessage;
-                        }
-                    } catch (e) {
-                        // If can't parse error, use status text
-                    }
+                        console.log('[Sigma Save] Error response:', errorData);
+                        try { errorMessage = JSON.parse(errorData).message || errorMessage; } catch(e) { errorMessage = errorData.slice(0, 500); }
+                    } catch(e) {}
                     throw new Error(errorMessage);
                 }
-                
-                // Handle response - might be empty for some endpoints
+
                 let result = {};
-                const contentType = response.headers.get('content-type');
-                if (contentType && contentType.includes('application/json')) {
+                const ct = response.headers.get('content-type');
+                if (ct && ct.includes('application/json')) {
                     const text = await response.text();
-                    if (text) {
-                        result = JSON.parse(text);
-                    }
+                    if (text) result = JSON.parse(text);
                 }
-                
-                // Get the dataModelId from result or state
-                const dataModelId = result.dataModelId || state.selectedModel?.dataModelId;
-                
-                // Fetch the full spec back from Sigma to ensure we have complete data
-                const refreshResponse = await fetch(`${state.baseUrl}/v3alpha/dataModels/${dataModelId}/spec`, {
+
+                const dataModelId = result.dataModelId || jsonData.dataModelId || state.selectedModel?.dataModelId;
+                const refreshResponse = await fetch(`${state.baseUrl}/v2/dataModels/${dataModelId}/spec`, {
                     headers: { 'Authorization': `Bearer ${state.accessToken}` }
                 });
-                
-                if (!refreshResponse.ok) {
-                    throw new Error('Saved but failed to refresh data');
-                }
-                
+                if (!refreshResponse.ok) throw new Error('Saved but failed to refresh data');
+
                 const fullSpec = await refreshResponse.json();
-                
-                // Update state with the full spec from Sigma
-                state.selectedModel = { ...fullSpec, dataModelId: dataModelId };
+                // Embed dataModelId into the editor JSON — this is the source of truth
+                // for whether a subsequent save should POST (new) or PUT (existing).
+                fullSpec.dataModelId = dataModelId;
+                state.selectedModel = { ...fullSpec, dataModelId };
                 state.originalJson = JSON.stringify(fullSpec, null, 2);
-                state.isNewModel = false; // No longer new after saving
+                state.isNewModel = false;
                 editor.value = state.originalJson;
-                
-                // Update the title bar with new name
                 document.getElementById('editorTitle').textContent = fullSpec.name || jsonData.name || 'Untitled Data Model';
-                
-                // Enable refresh button now that model exists
                 document.getElementById('refreshSigmaBtn').disabled = false;
-                
                 updateStatus('connected', isNew ? 'Data model created!' : 'Changes saved');
                 showToast(isNew ? 'Data model created in Sigma!' : 'Data model saved to Sigma!', 'success');
-                
-                // Refresh the list to get updated data
                 await loadDataModels();
-                
             } catch (error) {
                 console.error('Save error:', error);
                 updateStatus('error', 'Failed to save');
@@ -3225,6 +3583,1421 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
         // Initialize on page load
         loadSavedCredentials();
         setupDevMode();
+
+        // ── Editor Tab Switching ────────────────────────────────────────────
+        function switchEditorTab(tab) {
+            const tabs = { json: 'tabJson', dbt: 'tabDbt', snow: 'tabSnow' };
+            const panels = { json: 'panelJson', dbt: 'panelDbt', snow: 'panelSnow' };
+            Object.keys(tabs).forEach(k => {
+                document.getElementById(tabs[k]).classList.toggle('active', k === tab);
+            });
+            Object.keys(panels).forEach(k => {
+                const el = document.getElementById(panels[k]);
+                if (k === 'json') {
+                    el.style.display = (k === tab) ? '' : 'none';
+                } else {
+                    el.classList.toggle('active', k === tab);
+                }
+            });
+        }
+
+        // ── Shared ID / Formula Utilities ──────────────────────────────────
+
+        const SIGMA_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+        function sigmaShortId(len = 10) {
+            return Array.from({length: len}, () =>
+                SIGMA_CHARS[Math.floor(Math.random() * SIGMA_CHARS.length)]).join('');
+        }
+
+        // Column IDs use Sigma's inode format: inode-{22-char base62}/{IDENTIFIER}
+        function sigmaInodeId(identifier) {
+            return `inode-${sigmaShortId(22)}/${identifier.toUpperCase()}`;
+        }
+
+        // SNAKE_CASE or snake_case → "Title Case" display name
+        // e.g. ORDER_NUMBER → "Order Number", revenue_amount → "Revenue Amount"
+        function sigmaDisplayName(s) {
+            return (s || '').toLowerCase().split('_')
+                .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+                .join(' ');
+        }
+
+        // Column formula: [TABLE_NAME/Display Name]
+        function sigmaColFormula(tableName, identifier) {
+            return `[${tableName}/${sigmaDisplayName(identifier)}]`;
+        }
+
+        // Metric formula: aggregation referencing column by display name (no table prefix)
+        function sigmaAggFormula(agg, identifier) {
+            const dn = sigmaDisplayName(identifier);
+            const map = {
+                sum:            `Sum([${dn}])`,
+                avg:            `Avg([${dn}])`,
+                average:        `Avg([${dn}])`,
+                min:            `Min([${dn}])`,
+                max:            `Max([${dn}])`,
+                count:          `CountIf(IsNotNull([${dn}]))`,
+                count_distinct: `CountDistinct([${dn}])`,
+                count_distict:  `CountDistinct([${dn}])`,
+            };
+            return map[agg?.toLowerCase()] || `Sum([${dn}])`;
+        }
+
+        // ── Snowflake Semantic View Converter ──────────────────────────────
+
+        function snowIsIndicator(col) {
+            const dt = (col.data_type || col.data_type || '').toUpperCase();
+            const n  = (col.name || '').toUpperCase();
+            if (/^NUMBER\(1[,\s]*[01]?\)$/.test(dt)) return true;
+            if (n.endsWith('_INDICATOR') || n.endsWith('_IND') || n.endsWith('_FLAG')) return true;
+            return false;
+        }
+
+        // Build a Sigma element from a Snowflake semantic view table definition.
+        // extraIdentifiers: Set of UPPERCASE column names (FK join keys) that must
+        // exist as columns even if absent from dimensions/facts/time_dimensions.
+        function snowConvertTable(table, connectionId, extraIdentifiers) {
+            extraIdentifiers = extraIdentifiers || new Set();
+            const bt = table.base_table || {};
+            const db        = bt.database;
+            const schema    = bt.schema;
+            const tableName = bt.table || table.name;
+
+            const elementId = sigmaShortId();
+            const element = {
+                id: elementId,
+                kind: 'table',
+                source: {
+                    connectionId: connectionId || '<CONNECTION_ID>',
+                    kind: 'warehouse-table',
+                    path: [db, schema, tableName].filter(Boolean)
+                },
+                columns: [],
+                metrics: [],
+                order: []
+            };
+
+            const colIdMap = {};   // IDENTIFIER_UPPER → inodeId (both physical and semantic names map here)
+            const addedIds = new Set();
+
+            // Add a column using its PHYSICAL identifier (what Sigma looks for in the warehouse).
+            // Also registers an optional semantic alias so relationship key lookups still work.
+            function addColById(physicalId, semanticAlias) {
+                if (addedIds.has(physicalId)) {
+                    // Already added — just register the alias if given
+                    if (semanticAlias && semanticAlias !== physicalId) colIdMap[semanticAlias] = colIdMap[physicalId];
+                    return colIdMap[physicalId];
+                }
+                const id = sigmaInodeId(physicalId);
+                colIdMap[physicalId] = id;
+                addedIds.add(physicalId);
+                element.columns.push({ id, formula: sigmaColFormula(tableName, physicalId) });
+                element.order.push(id);
+                // Register semantic alias (e.g. CUST_CITY → same inode as CITY)
+                if (semanticAlias && semanticAlias !== physicalId) colIdMap[semanticAlias] = id;
+                return id;
+            }
+
+            // Extract BOTH the physical column identifier (from expression, stripped of table prefix)
+            // AND the semantic alias (from name). The formula must use the physical column so Sigma
+            // can find it in the warehouse. The semantic alias is stored in colIdMap as a fallback
+            // for relationship key lookups that reference the alias name.
+            function resolveCol(col) {
+                if (typeof col === 'string') return { physical: col.toUpperCase(), semantic: col.toUpperCase() };
+                const semantic = (col.name || '').toUpperCase();
+                const expr = (col.expression || col.expr || '').trim();
+                const physical = expr ? expr.split('.').pop().toUpperCase() : semantic;
+                return { physical, semantic };
+            }
+
+            // 1. Dimensions
+            for (const col of table.dimensions || []) {
+                const { physical, semantic } = resolveCol(col);
+                if (physical) addColById(physical, semantic);
+            }
+            // 2. Time dimensions
+            for (const col of table.time_dimensions || []) {
+                const { physical, semantic } = resolveCol(col);
+                if (physical) addColById(physical, semantic);
+            }
+            // 3. Facts + auto-metrics
+            const autoMetrics = document.getElementById('snowAutoMetrics') ? document.getElementById('snowAutoMetrics').checked !== false : true;
+            for (const col of table.facts || []) {
+                const { physical, semantic } = resolveCol(col);
+                if (!physical) continue;
+                addColById(physical, semantic);
+                if (autoMetrics && !snowIsIndicator(col)) {
+                    if (physical.endsWith('_KEY') || physical.endsWith('_CODE')) continue;
+                    element.metrics.push({
+                        id: sigmaShortId(),
+                        formula: 'Sum([' + sigmaDisplayName(physical) + '])',
+                        name: sigmaDisplayName(semantic || physical)
+                    });
+                }
+            }
+            // 4. FK join columns — use physical name (these come from relationship foreign_key arrays
+            //    which reference the semantic name, so look up physical via colIdMap first)
+            extraIdentifiers.forEach(function(id) {
+                // id here is already the semantic/relationship key name
+                if (!colIdMap[id]) addColById(id, id); // add as-is if not already mapped
+            });
+
+            if (element.metrics.length === 0) delete element.metrics;
+            return { element: element, elementId: elementId, colIdMap: colIdMap };
+        }
+
+        function runSnowConversion() {
+            var yamlText = document.getElementById('snowYamlInput').value.trim();
+            if (!yamlText) { showToast('Paste some Snowflake semantic view YAML first', 'warning'); return; }
+
+            var parsed;
+            try { parsed = jsyaml.load(yamlText); }
+            catch(e) {
+                showToast('YAML parse error: ' + e.message, 'error');
+                document.getElementById('snowJsonOutput').value = '// YAML parse error:\n// ' + e.message;
+                return;
+            }
+
+            var views = Array.isArray(parsed) ? parsed : [parsed];
+            var allTables = views.reduce(function(a, v) { return a.concat(v.tables || []); }, []);
+            // Snowflake Cortex stores relationships INSIDE each table definition
+            // Also support legacy top-level relationships for backward compat
+            var topLevelRels = views.reduce(function(a, v) { return a.concat(v.relationships || []); }, []);
+            var viewName = (views[0] && views[0].name) || 'Snowflake Semantic View';
+
+            if (!allTables.length) { showToast('No tables found in YAML', 'warning'); return; }
+
+            var connectionId = document.getElementById('snowConnectionId').value.trim();
+            if (!connectionId && state.accessToken) {
+                var s = document.getElementById('newModelConnectionId');
+                if (s && s.value) connectionId = s.value;
+            }
+
+            // ── Pass 1: Pre-scan inline relationships to collect FK column names per table
+            // so they can be added as columns (required for relationship key resolution)
+            var fkColsByTable = {};
+            allTables.forEach(function(table) {
+                var tname = table.name.toUpperCase();
+                (table.relationships || []).forEach(function(rel) {
+                    var fks = [].concat(rel.foreign_key || rel.foreignKey || []);
+                    if (!fkColsByTable[tname]) fkColsByTable[tname] = new Set();
+                    fks.filter(Boolean).forEach(function(fk) { fkColsByTable[tname].add(fk.toUpperCase()); });
+                });
+            });
+
+            // ── Pass 2: Convert each table to a Sigma element
+            var warnings = [];
+            var elements = [];
+            var tableIndex = {};
+
+            allTables.forEach(function(table) {
+                try {
+                    var extra = fkColsByTable[table.name.toUpperCase()] || new Set();
+                    var result = snowConvertTable(table, connectionId, extra);
+                    elements.push(result.element);
+                    tableIndex[table.name.toUpperCase()] = result;
+                } catch(e) {
+                    warnings.push('Failed to convert table "' + table.name + '": ' + e.message);
+                }
+            });
+
+            // ── Pass 3: Resolve inline Snowflake relationships (table.relationships[])
+            // Format: { name, foreign_key: [COL,...], ref_table: TABLE, ref_key: [COL,...] }
+            allTables.forEach(function(table) {
+                var srcEntry = tableIndex[table.name.toUpperCase()];
+                if (!srcEntry) return;
+
+                (table.relationships || []).forEach(function(rel) {
+                    var refTable = (rel.ref_table || rel.refTable || '').toUpperCase();
+                    var tgtEntry = tableIndex[refTable];
+
+                    if (!tgtEntry) {
+                        warnings.push('Relationship "' + rel.name + '": ref_table "' + (rel.ref_table || rel.refTable) + '" not found');
+                        return;
+                    }
+
+                    var fks = [].concat(rel.foreign_key || rel.foreignKey || []);
+                    var rks = [].concat(rel.ref_key || rel.refKey || []);
+
+                    var keys = [];
+                    for (var i = 0; i < fks.length; i++) {
+                        var srcId = srcEntry.colIdMap[fks[i].toUpperCase()];
+                        var rk = (rks[i] || rks[0] || '');
+                        var tgtId = tgtEntry.colIdMap[rk.toUpperCase()];
+                        if (srcId && tgtId) {
+                            keys.push({ sourceColumnId: srcId, targetColumnId: tgtId });
+                        } else {
+                            warnings.push('Relationship "' + rel.name + '": column "' + (!srcId ? fks[i] : rk) + '" not found');
+                        }
+                    }
+
+                    if (keys.length) {
+                        if (!srcEntry.element.relationships) srcEntry.element.relationships = [];
+                        srcEntry.element.relationships.push({
+                            id: sigmaShortId(),
+                            targetElementId: tgtEntry.elementId,
+                            keys: keys,
+                            name: (rel.name || '').replace(/_/g, ' ')
+                        });
+                    }
+                });
+            });
+
+            // ── Pass 4: Resolve top-level relationships (legacy format)
+            // Format: { name, left_table, right_table, relationship_columns: [{left_column, right_column}] }
+            topLevelRels.forEach(function(rel) {
+                var leftKey  = (rel.left_table  || '').toUpperCase();
+                var rightKey = (rel.right_table || '').toUpperCase();
+                var left  = tableIndex[leftKey];
+                var right = tableIndex[rightKey];
+
+                if (!left || !right) {
+                    warnings.push('Relationship "' + rel.name + '": table "' + (!left ? rel.left_table : rel.right_table) + '" not found');
+                    return;
+                }
+
+                var keys = [];
+                (rel.relationship_columns || []).forEach(function(rc) {
+                    var srcId = left.colIdMap[(rc.left_column  || '').toUpperCase()];
+                    var tgtId = right.colIdMap[(rc.right_column || '').toUpperCase()];
+                    if (srcId && tgtId) {
+                        keys.push({ sourceColumnId: srcId, targetColumnId: tgtId });
+                    } else {
+                        warnings.push('Relationship "' + rel.name + '": column "' + (!srcId ? rc.left_column : rc.right_column) + '" not found');
+                    }
+                });
+
+                if (keys.length) {
+                    if (!left.element.relationships) left.element.relationships = [];
+                    left.element.relationships.push({
+                        id: sigmaShortId(),
+                        targetElementId: right.elementId,
+                        keys: keys,
+                        name: rel.name ? rel.name.replace(/_/g, ' ')
+                            : sigmaDisplayName(rel.left_table) + ' to ' + sigmaDisplayName(rel.right_table)
+                    });
+                }
+            });
+
+            // ── Pass 5: Deduplicate same-physical-path elements ─────────────────
+            // Sigma's API does not allow two elements that reference the same warehouse
+            // path (db/schema/table) in the same data model — even with different element
+            // IDs. When this happens with role-playing dimensions, we keep only the FIRST
+            // relationship to each physical table and warn about the rest.
+            // Users can add additional role-playing joins manually in Sigma's UI.
+            elements.forEach(function(srcEl) {
+                if (!srcEl.relationships) return;
+
+                // Build a set of physical paths already used as targets from this element
+                var usedPaths = {};  // "DB|SCHEMA|TABLE" → relationship name that claimed it
+
+                srcEl.relationships = srcEl.relationships.filter(function(rel) {
+                    var tgtEl = elements.find(function(e) { return e.id === rel.targetElementId; });
+                    if (!tgtEl) return true; // keep — target not found, will be caught elsewhere
+
+                    var pathKey = (tgtEl.source && tgtEl.source.path)
+                        ? tgtEl.source.path.join('|')
+                        : rel.targetElementId;
+
+                    if (usedPaths[pathKey]) {
+                        warnings.push(
+                            'Role-playing dimension: "' + rel.name + '" dropped — ' +
+                            pathKey.split('|').pop() +
+                            ' is already joined as "' + usedPaths[pathKey] + '". ' +
+                            'Add this join manually in Sigma after import.'
+                        );
+                        return false; // drop this relationship
+                    }
+
+                    usedPaths[pathKey] = rel.name;
+                    return true; // keep
+                });
+
+                if (srcEl.relationships.length === 0) delete srcEl.relationships;
+            });
+
+            var sigmaModel = {
+                name: sigmaDisplayName(viewName),
+                pages: [{ id: sigmaShortId(), name: 'Page 1', elements: elements }]
+            };
+
+            document.getElementById('snowJsonOutput').value = JSON.stringify(sigmaModel, null, 2);
+
+            var totalDims      = allTables.reduce(function(s, t) { return s + ((t.dimensions || []).length); }, 0);
+            var totalTimes     = allTables.reduce(function(s, t) { return s + ((t.time_dimensions || []).length); }, 0);
+            var totalFacts     = allTables.reduce(function(s, t) { return s + ((t.facts || []).length); }, 0);
+            var inlineRels     = allTables.reduce(function(s, t) { return s + ((t.relationships || []).length); }, 0);
+            var totalRels      = inlineRels + topLevelRels.length;
+            var totalCols      = elements.reduce(function(s, e) { return s + ((e.columns || []).length); }, 0);
+            var totalMetrics   = elements.reduce(function(s, e) { return s + ((e.metrics || []).length); }, 0);
+            var totalSigmaRels = elements.reduce(function(s, e) { return s + ((e.relationships || []).length); }, 0);
+
+            document.getElementById('snowInputStats').innerHTML =
+                '<span class="dbt-stat-badge models">\uD83D\uDDC3\uFE0F ' + allTables.length + ' table' + (allTables.length !== 1 ? 's' : '') + '</span>' +
+                '<span class="dbt-stat-badge dimensions">' + totalDims + ' dims \u00B7 ' + totalTimes + ' time dims</span>' +
+                '<span class="dbt-stat-badge measures">' + totalFacts + ' facts</span>' +
+                (totalRels ? '<span class="dbt-stat-badge entities">' + totalRels + ' rel' + (totalRels !== 1 ? 's' : '') + '</span>' : '');
+
+            document.getElementById('snowOutputStats').innerHTML =
+                '<span class="dbt-stat-badge models">\uD83D\uDD37 ' + elements.length + ' element' + (elements.length !== 1 ? 's' : '') + '</span>' +
+                '<span class="dbt-stat-badge dimensions">' + totalCols + ' columns</span>' +
+                '<span class="dbt-stat-badge measures">' + totalMetrics + ' metrics</span>' +
+                (totalSigmaRels ? '<span class="dbt-stat-badge entities">' + totalSigmaRels + ' relationship' + (totalSigmaRels !== 1 ? 's' : '') + '</span>' : '');
+
+            var allWarnings = warnings.slice();
+            if (!connectionId) allWarnings.unshift('\u26A0 Connection ID not set \u2014 update in the JSON before saving to Sigma');
+            var warnBox = document.getElementById('snowWarningBox');
+            if (allWarnings.length) { warnBox.style.display = ''; warnBox.innerHTML = allWarnings.map(function(w) { return '\u2022 ' + w; }).join('<br>'); }
+            else warnBox.style.display = 'none';
+
+            document.getElementById('snowCopyBtn').disabled = false;
+            document.getElementById('snowLoadBtn').disabled = false;
+            document.getElementById('snowSaveBtn').disabled = false;
+
+            showToast('Converted ' + allTables.length + ' table' + (allTables.length !== 1 ? 's' : '') + ' \u2192 ' + elements.length + ' element' + (elements.length !== 1 ? 's' : '') + ' \u00B7 ' + totalSigmaRels + ' relationship' + (totalSigmaRels !== 1 ? 's' : '') + ' \u00B7 ' + totalMetrics + ' metrics', 'success');
+        }
+
+
+
+        function copySnowOutput() {
+            const val = document.getElementById('snowJsonOutput').value;
+            if (!val) return;
+            navigator.clipboard.writeText(val).then(() => showToast('Copied to clipboard', 'success'));
+        }
+
+        function loadSnowOutputToEditor() {
+            const val = document.getElementById('snowJsonOutput').value;
+            if (!val) return;
+            document.getElementById('jsonEditor').value = val;
+            state.isNewModel = true;
+            state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from Snowflake Semantic View (unsaved)';
+            ['formatBtn','copyBtn','saveBtn'].forEach(id => document.getElementById(id).disabled = false);
+            switchEditorTab('json');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
+        }
+
+        async function loadAndSaveSnowModel() {
+            loadSnowOutputToEditor();
+            if (!state.accessToken) {
+                showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning');
+                return;
+            }
+            openSaveLocationModal();
+        }
+
+        async function loadAndSaveDbtModel() {
+            loadDbtOutputToEditor();
+            if (!state.accessToken) {
+                showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning');
+                return;
+            }
+            openSaveLocationModal();
+        }
+
+        // ── Save Location Modal ─────────────────────────────────────────────
+        async function openSaveLocationModal() {
+            const modal = document.getElementById('saveLocationModal');
+            modal.classList.add('active');
+
+            // Pre-fill name from current editor JSON
+            try {
+                const json = JSON.parse(document.getElementById('jsonEditor').value);
+                document.getElementById('slModelName').value = json.name || '';
+            } catch(e) {}
+
+            // Load workspaces into the modal's own selects
+            await loadSaveLocationWorkspaces();
+        }
+
+        function closeSaveLocationModal() {
+            document.getElementById('saveLocationModal').classList.remove('active');
+        }
+
+        async function loadSaveLocationWorkspaces() {
+            const sel = document.getElementById('slWorkspaceId');
+            sel.innerHTML = '<option value="">Loading workspaces…</option>';
+            document.getElementById('slFolderId').innerHTML = '<option value="">Select a workspace first…</option>';
+            document.getElementById('slFolderId').disabled = true;
+            document.getElementById('slSaveBtn').disabled = true;
+
+            try {
+                const resp = await fetch(`${state.baseUrl}/v2/workspaces`, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                const data = await resp.json();
+                const workspaces = data.entries || [];
+                sel.innerHTML = '<option value="">Select a workspace…</option>';
+                workspaces.forEach(ws => {
+                    const o = document.createElement('option');
+                    o.value = ws.workspaceId;
+                    o.textContent = ws.name || ws.workspaceId;
+                    sel.appendChild(o);
+                });
+            } catch(e) {
+                sel.innerHTML = '<option value="">Failed to load workspaces</option>';
+            }
+        }
+
+        async function onSaveLocationWorkspaceChange() {
+            const workspaceId = document.getElementById('slWorkspaceId').value;
+            const folderSel = document.getElementById('slFolderId');
+            document.getElementById('slSaveBtn').disabled = true;
+
+            if (!workspaceId) {
+                folderSel.innerHTML = '<option value="">Select a workspace first…</option>';
+                folderSel.disabled = true;
+                return;
+            }
+
+            folderSel.innerHTML = '<option value="">Loading folders…</option>';
+            folderSel.disabled = true;
+
+            try {
+                const resp = await fetch(
+                    `${state.baseUrl}/v2/files?typeFilters=folder&parentId=${workspaceId}`,
+                    { headers: { 'Authorization': `Bearer ${state.accessToken}` } }
+                );
+                const data = await resp.json();
+                const folders = data.entries || [];
+
+                folderSel.innerHTML = '';
+                const root = document.createElement('option');
+                root.value = workspaceId;
+                root.textContent = '📁 (Workspace Root)';
+                folderSel.appendChild(root);
+
+                folders.forEach(f => {
+                    const o = document.createElement('option');
+                    o.value = f.id || f.inodeId;
+                    o.textContent = '📁 ' + (f.name || f.id);
+                    folderSel.appendChild(o);
+                });
+
+                folderSel.disabled = false;
+                document.getElementById('slSaveBtn').disabled = false;
+            } catch(e) {
+                folderSel.innerHTML = '<option value="">Failed to load folders</option>';
+            }
+        }
+
+        async function confirmSaveLocation() {
+            const name     = document.getElementById('slModelName').value.trim();
+            const folderId = document.getElementById('slFolderId').value;
+
+            if (!name)     { showToast('Enter a model name', 'warning'); return; }
+            if (!folderId) { showToast('Select a folder', 'warning'); return; }
+
+            // Inject name + folderId into the editor JSON, then save
+            try {
+                const json = JSON.parse(document.getElementById('jsonEditor').value);
+                json.name     = name;
+                json.folderId = folderId;
+                document.getElementById('jsonEditor').value = JSON.stringify(json, null, 2);
+            } catch(e) {
+                showToast('Invalid JSON in editor', 'error');
+                return;
+            }
+
+            closeSaveLocationModal();
+            await saveDataModel();
+        }
+
+        async function handleSnowYamlUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const text = await file.text();
+            document.getElementById('snowYamlInput').value = text;
+            showToast(`Loaded ${file.name}`, 'success');
+            runSnowConversion();
+        }
+
+        function loadSnowExample() {
+            document.getElementById('snowYamlInput').value = `name: SALES_SEMANTIC_VIEW
+tables:
+  - name: ORDER_FACT
+    description: Core order transactions
+    base_table:
+      database: ANALYTICS
+      schema: SALES
+      table: ORDER_FACT
+    dimensions:
+      - name: ORDER_ID
+        expr: ORDER_ID
+        data_type: NUMBER(38,0)
+        description: Unique order identifier
+      - name: CUSTOMER_ID
+        expr: CUSTOMER_ID
+        data_type: NUMBER(38,0)
+        description: Customer foreign key
+      - name: STATUS
+        expr: STATUS
+        data_type: VARCHAR(50)
+        description: Order status
+      - name: CHANNEL
+        expr: CHANNEL
+        data_type: VARCHAR(100)
+        description: Sales channel
+    time_dimensions:
+      - name: ORDER_DATE
+        expr: ORDER_DATE
+        data_type: TIMESTAMP_NTZ(9)
+        description: Date the order was placed
+      - name: SHIPPED_DATE
+        expr: SHIPPED_DATE
+        data_type: TIMESTAMP_NTZ(9)
+        description: Date the order shipped
+    facts:
+      - name: REVENUE_AMOUNT
+        expr: REVENUE_AMOUNT
+        data_type: NUMBER(38,2)
+        description: Gross revenue
+        access_modifier: public_access
+      - name: DISCOUNT_AMOUNT
+        expr: DISCOUNT_AMOUNT
+        data_type: NUMBER(38,2)
+        description: Discount applied
+        access_modifier: public_access
+      - name: LINE_COUNT
+        expr: LINE_COUNT
+        data_type: NUMBER(38,0)
+        description: Number of line items on the order
+        access_modifier: public_access
+      - name: RETURNED_INDICATOR
+        expr: RETURNED_INDICATOR
+        data_type: NUMBER(1,0)
+        description: 1 if any item was returned
+        access_modifier: public_access
+    primary_key:
+      columns:
+        - ORDER_ID
+
+  - name: CUSTOMER_DIM
+    description: Customer master dimension
+    base_table:
+      database: ANALYTICS
+      schema: SALES
+      table: CUSTOMER_DIM
+    dimensions:
+      - name: CUSTOMER_ID
+        expr: CUSTOMER_ID
+        data_type: NUMBER(38,0)
+        description: Customer primary key
+      - name: CUSTOMER_NAME
+        expr: CUSTOMER_NAME
+        data_type: VARCHAR(255)
+        description: Full customer name
+      - name: SEGMENT
+        expr: SEGMENT
+        data_type: VARCHAR(100)
+        description: Customer segment
+      - name: REGION
+        expr: REGION
+        data_type: VARCHAR(100)
+        description: Geographic region
+    time_dimensions:
+      - name: CREATED_AT
+        expr: CREATED_AT
+        data_type: TIMESTAMP_NTZ(9)
+        description: Account creation date
+    facts:
+      - name: LIFETIME_ORDER_COUNT
+        expr: LIFETIME_ORDER_COUNT
+        data_type: NUMBER(38,0)
+        description: Total historical orders
+        access_modifier: public_access
+    primary_key:
+      columns:
+        - CUSTOMER_ID
+
+relationships:
+  - name: ORDER_FACT_TO_CUSTOMER_DIM
+    left_table: ORDER_FACT
+    right_table: CUSTOMER_DIM
+    relationship_columns:
+      - left_column: CUSTOMER_ID
+        right_column: CUSTOMER_ID
+    relationship_type: many_to_one
+    join_type: left_outer`;
+            showToast('Example loaded', 'success');
+        }
+
+        // ── dbt Converter ───────────────────────────────────────────────────
+
+        // Keep for backward compat (used in dbt example name display)
+        function dbtSlugToTitle(s) { return sigmaDisplayName(s); }
+
+        function convertDbtSemanticModel(model, config, allMeasuresByModel) {
+            const connectionId = config.connectionId || '<CONNECTION_ID>';
+
+            // Resolve table path — prefer manifest node_relation, else ref(), else model name
+            let db        = config.database || null;
+            let schema    = config.schema   || null;
+            let tableName = model.name.toUpperCase();
+
+            if (model.node_relation) {
+                const nr = model.node_relation;
+                db     = nr.database   || db;
+                schema = nr.schema_name || nr.schema || schema;
+                if (nr.alias) tableName = nr.alias.toUpperCase();
+                else if (nr.relation_name)
+                    tableName = nr.relation_name.split('.').pop().replace(/"/g, '').toUpperCase();
+            } else if (model.model) {
+                const m = model.model.match(/ref\(['"]([^'"]+)['"]\)/);
+                if (m) tableName = m[1].toUpperCase();
+            }
+
+            const path = [db, schema, tableName].filter(Boolean);
+
+            const elementId = sigmaShortId();
+            const element = {
+                id: elementId,
+                kind: 'table',
+                source: { connectionId, kind: 'warehouse-table', path },
+                columns: [],
+                metrics: [],
+                order: []
+            };
+
+            // colIdMap: IDENTIFIER_UPPERCASE → inodeId  (for relationship key resolution)
+            const colIdMap = {};
+
+            function addCol(identifier) {
+                const id = sigmaInodeId(identifier.toUpperCase());
+                colIdMap[identifier.toUpperCase()] = id;
+                element.columns.push({ id, formula: sigmaColFormula(tableName, identifier) });
+                element.order.push(id);
+                return id;
+            }
+
+            // Entities (primary/unique) → columns
+            for (const entity of model.entities || []) {
+                if (entity.type === 'primary' || entity.type === 'unique') {
+                    addCol((entity.expr || entity.name).toUpperCase());
+                }
+            }
+
+            // Dimensions → columns
+            for (const dim of model.dimensions || []) {
+                addCol((dim.expr || dim.name).toUpperCase());
+            }
+
+            // Measures → source column (if not already present) + metric
+            for (const measure of model.measures || []) {
+                const exprId = (measure.expr || measure.name).toUpperCase();
+                if (!colIdMap[exprId]) addCol(exprId);
+                element.metrics.push({
+                    id: sigmaShortId(),
+                    formula: sigmaAggFormula(measure.agg, exprId),
+                    name: sigmaDisplayName(measure.name)
+                });
+                allMeasuresByModel[measure.name] = { agg: measure.agg, exprId };
+            }
+
+            if (element.metrics.length === 0) delete element.metrics;
+            return { element, elementId, colIdMap };
+        }
+
+        function convertDbtMetrics(metrics, allMeasuresByModel, elements) {
+            const result = [];
+            for (const metric of metrics || []) {
+                const tp   = metric.type_params || {};
+                const name = sigmaDisplayName(metric.name);
+                let formula = '';
+
+                if (metric.type === 'simple') {
+                    const mName = tp.measure?.name || tp.measure;
+                    const src   = allMeasuresByModel[mName];
+                    formula = src ? sigmaAggFormula(src.agg, src.exprId) : `/* measure: ${mName} */`;
+                } else if (metric.type === 'ratio') {
+                    const num = tp.numerator?.name   || tp.numerator;
+                    const den = tp.denominator?.name || tp.denominator;
+                    const ns = allMeasuresByModel[num], ds = allMeasuresByModel[den];
+                    const nf = ns ? sigmaAggFormula(ns.agg, ns.exprId) : `[${sigmaDisplayName(num || '')}]`;
+                    const df = ds ? sigmaAggFormula(ds.agg, ds.exprId) : `[${sigmaDisplayName(den || '')}]`;
+                    formula = `${nf} / NullIf(${df}, 0)`;
+                } else if (metric.type === 'derived') {
+                    formula = (tp.expr || '').replace(
+                        /\{\{\s*metric\(['"]([^'"]+)['"]\)\s*\}\}/g,
+                        (_, m) => { const s = allMeasuresByModel[m]; return s ? sigmaAggFormula(s.agg, s.exprId) : `[${sigmaDisplayName(m)}]`; }
+                    ) || `/* derived: ${metric.name} */`;
+                } else {
+                    formula = `/* unsupported type: ${metric.type} */`;
+                }
+
+                if (formula && elements[0]) {
+                    result.push({ targetElementId: elements[0].id, metric: { id: sigmaShortId(), formula, name } });
+                }
+            }
+            return result;
+        }
+
+        function runDbtConversion() {
+            const yamlText = document.getElementById('dbtYamlInput').value.trim();
+            const database = document.getElementById('dbtDatabase').value.trim();
+            const schema   = document.getElementById('dbtSchema').value.trim();
+
+            let connectionId = document.getElementById('dbtConnectionId').value.trim();
+            if (!connectionId && state.accessToken) {
+                const s = document.getElementById('newModelConnectionId');
+                if (s?.value) connectionId = s.value;
+            }
+
+            if (!yamlText) { showToast('Paste some dbt YAML first', 'warning'); return; }
+
+            let parsed;
+            try { parsed = jsyaml.load(yamlText); }
+            catch(e) {
+                showToast('YAML parse error: ' + e.message, 'error');
+                document.getElementById('dbtJsonOutput').value = '// YAML parse error:\n// ' + e.message;
+                return;
+            }
+
+            let semanticModels = [], dbtMetrics = [];
+            if (parsed.semantic_models)     semanticModels = parsed.semantic_models;
+            else if (Array.isArray(parsed)) semanticModels = parsed.filter(x => x.entities || x.dimensions || x.measures);
+            else if (parsed.name && (parsed.entities || parsed.dimensions || parsed.measures)) semanticModels = [parsed];
+            if (parsed.metrics) dbtMetrics = parsed.metrics;
+
+            if (!semanticModels.length) { showToast('No semantic models found in the YAML', 'warning'); return; }
+
+            const config = { database, schema, connectionId };
+            const allMeasuresByModel = {};
+            const elements = [], warnings = [];
+
+            for (const model of semanticModels) {
+                try {
+                    const { element } = convertDbtSemanticModel(model, config, allMeasuresByModel);
+                    elements.push(element);
+                } catch(e) {
+                    warnings.push(`Failed to convert model "${model.name}": ${e.message}`);
+                }
+            }
+
+            // Resolve foreign entity cross-references → Sigma relationships
+            semanticModels.forEach((model, i) => {
+                const element = elements[i];
+                if (!element) return;
+                for (const entity of model.entities || []) {
+                    if (entity.type !== 'foreign') continue;
+                    const entityId = (entity.expr || entity.name).toUpperCase();
+                    const targetIdx = semanticModels.findIndex(m =>
+                        m.entities?.some(en =>
+                            (en.expr || en.name).toUpperCase() === entityId &&
+                            (en.type === 'primary' || en.type === 'unique')
+                        )
+                    );
+                    if (targetIdx >= 0 && elements[targetIdx]) {
+                        const targetEl = elements[targetIdx];
+                        const srcColId = element.columns.find(c => c.id.endsWith('/' + entityId))?.id;
+                        const tgtColId = targetEl.columns.find(c => c.id.endsWith('/' + entityId))?.id;
+                        if (srcColId && tgtColId) {
+                            if (!element.relationships) element.relationships = [];
+                            element.relationships.push({
+                                id: sigmaShortId(),
+                                targetElementId: targetEl.id,
+                                keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
+                                name: `${sigmaDisplayName(model.name)} to ${sigmaDisplayName(semanticModels[targetIdx].name)}`
+                            });
+                        }
+                    } else {
+                        warnings.push(`Foreign entity "${entity.name}" on "${model.name}" — target not found in this YAML`);
+                    }
+                }
+            });
+
+            // Add derived / ratio metrics from the metrics: block
+            for (const { targetElementId, metric } of convertDbtMetrics(dbtMetrics, allMeasuresByModel, elements)) {
+                const el = elements.find(e => e.id === targetElementId);
+                if (el) { if (!el.metrics) el.metrics = []; el.metrics.push(metric); }
+            }
+
+            const sigmaModel = {
+                name: semanticModels.length === 1
+                    ? sigmaDisplayName(semanticModels[0].name)
+                    : 'Dbt Semantic Models',
+                pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
+            };
+
+            document.getElementById('dbtJsonOutput').value = JSON.stringify(sigmaModel, null, 2);
+
+            const totalCols    = elements.reduce((s, e) => s + (e.columns?.length    || 0), 0);
+            const totalMetrics = elements.reduce((s, e) => s + (e.metrics?.length    || 0), 0);
+            const totalRels    = elements.reduce((s, e) => s + (e.relationships?.length || 0), 0);
+
+            document.getElementById('dbtInputStats').innerHTML = `
+                <span class="dbt-stat-badge models">📦 ${semanticModels.length} model${semanticModels.length !== 1 ? 's' : ''}</span>
+                <span class="dbt-stat-badge dimensions">${semanticModels.reduce((s, m) => s + (m.dimensions?.length || 0), 0)} dimensions</span>
+                <span class="dbt-stat-badge measures">${semanticModels.reduce((s, m) => s + (m.measures?.length || 0), 0)} measures</span>
+                <span class="dbt-stat-badge metrics">${dbtMetrics.length} metrics</span>
+            `;
+            document.getElementById('dbtOutputStats').innerHTML = `
+                <span class="dbt-stat-badge models">🔷 ${elements.length} element${elements.length !== 1 ? 's' : ''}</span>
+                <span class="dbt-stat-badge dimensions">${totalCols} columns</span>
+                <span class="dbt-stat-badge measures">${totalMetrics} metrics</span>
+                ${totalRels > 0 ? `<span class="dbt-stat-badge entities">${totalRels} relationship${totalRels !== 1 ? 's' : ''}</span>` : ''}
+            `;
+
+            const allWarnings = [...warnings];
+            if (!connectionId) allWarnings.unshift('⚠ Connection ID not set — add it in the JSON before saving to Sigma');
+            if (!database || !schema) allWarnings.unshift('⚠ Database/Schema not filled in — path will only contain table name');
+            const warnBox = document.getElementById('dbtWarningBox');
+            if (allWarnings.length) { warnBox.style.display = ''; warnBox.innerHTML = allWarnings.map(w => `• ${w}`).join('<br>'); }
+            else warnBox.style.display = 'none';
+
+            document.getElementById('dbtCopyBtn').disabled = false;
+            document.getElementById('dbtLoadBtn').disabled = false;
+            document.getElementById('dbtSaveBtn').disabled = false;
+
+            showToast(`Converted ${semanticModels.length} model${semanticModels.length !== 1 ? 's' : ''} → ${elements.length} element${elements.length !== 1 ? 's' : ''}`, 'success');
+        }
+
+        function copyDbtOutput() {
+            const val = document.getElementById('dbtJsonOutput').value;
+            if (!val) return;
+            navigator.clipboard.writeText(val).then(() => showToast('Copied to clipboard', 'success'));
+        }
+
+        function loadDbtOutputToEditor() {
+            const val = document.getElementById('dbtJsonOutput').value;
+            if (!val) return;
+            document.getElementById('jsonEditor').value = val;
+            state.isNewModel = true;
+            state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from dbt (unsaved)';
+            ['formatBtn','copyBtn','saveBtn'].forEach(id => document.getElementById(id).disabled = false);
+            switchEditorTab('json');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
+        }
+
+        function loadDbtExample() {
+            document.getElementById('dbtYamlInput').value = `semantic_models:
+  - name: orders
+    model: ref('stg_orders')
+    description: Core order fact table
+    entities:
+      - name: order_id
+        type: primary
+      - name: customer_id
+        type: foreign
+    dimensions:
+      - name: order_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: status
+        type: categorical
+      - name: region
+        type: categorical
+        expr: shipping_region
+    measures:
+      - name: order_count
+        agg: count
+        expr: order_id
+        description: Total number of orders
+      - name: revenue
+        agg: sum
+        expr: amount
+        description: Total revenue
+      - name: avg_order_value
+        agg: avg
+        expr: amount
+
+  - name: customers
+    model: ref('stg_customers')
+    description: Customer dimension table
+    entities:
+      - name: customer_id
+        type: primary
+    dimensions:
+      - name: customer_name
+        type: categorical
+      - name: customer_segment
+        type: categorical
+      - name: signup_date
+        type: time
+        type_params:
+          time_granularity: day
+    measures:
+      - name: customer_count
+        agg: count_distinct
+        expr: customer_id
+
+metrics:
+  - name: total_revenue
+    description: Sum of all order revenue
+    type: simple
+    type_params:
+      measure:
+        name: revenue
+
+  - name: avg_order_value
+    description: Average revenue per order
+    type: ratio
+    type_params:
+      numerator:
+        name: revenue
+      denominator:
+        name: order_count`;
+            showToast('Example loaded', 'success');
+        }
+
+        function dbtAutoFillConnection() {
+            if (state.accessToken) {
+                const connSelect = document.getElementById('newModelConnectionId');
+                if (connSelect?.value && !document.getElementById('dbtConnectionId').value) {
+                    document.getElementById('dbtConnectionId').value = connSelect.value;
+                }
+            }
+        }
+
+        // ── dbt Import Modal ────────────────────────────────────────────────
+
+        let dbtImportState = {
+            tab: 'cloud',
+            manifest: null,
+            cloudHost: 'https://cloud.getdbt.com',
+            cloudAccountId: '',
+            cloudToken: '',
+            cloudConnected: false
+        };
+
+        function openDbtImportModal() {
+            document.getElementById('dbtImportModal').classList.add('active');
+            const saved = JSON.parse(localStorage.getItem('dbt_cloud_creds') || '{}');
+            if (saved.accountId) document.getElementById('dbtAccountId').value = saved.accountId;
+            if (saved.token)     document.getElementById('dbtServiceToken').value = saved.token;
+            if (saved.host)      document.getElementById('dbtCloudHost').value = saved.host;
+        }
+
+        function closeDbtImportModal() {
+            document.getElementById('dbtImportModal').classList.remove('active');
+        }
+
+        function switchDbtImportTab(tab) {
+            dbtImportState.tab = tab;
+            ['cloud','core'].forEach(t => {
+                document.getElementById('dbtImportTab_' + t).classList.toggle('active', t === tab);
+                document.getElementById('dbtImportPane_' + t).style.display = t === tab ? '' : 'none';
+            });
+        }
+
+        // ── dbt Cloud ────────────────────────────────────────────────────────
+
+        async function connectToDbtCloud() {
+            const host      = document.getElementById('dbtCloudHost').value;
+            const accountId = document.getElementById('dbtAccountId').value.trim();
+            const token     = document.getElementById('dbtServiceToken').value.trim();
+
+            if (!accountId || !token) { showToast('Enter Account ID and Service Token', 'warning'); return; }
+
+            const btn = document.getElementById('dbtCloudConnectBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner" style="display:inline-block;"></span> Connecting…';
+
+            try {
+                const resp = await fetch(`${host}/api/v2/accounts/${accountId}/`, {
+                    headers: { 'Authorization': `Token ${token}`, 'Content-Type': 'application/json' }
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status} — check your Account ID and token`);
+
+                const data = await resp.json();
+                const acctName = data.data?.name || `Account ${accountId}`;
+
+                localStorage.setItem('dbt_cloud_creds', JSON.stringify({ host, accountId, token }));
+                Object.assign(dbtImportState, { cloudHost: host, cloudAccountId: accountId, cloudToken: token, cloudConnected: true });
+
+                btn.innerHTML = `✓ Connected to ${acctName}`;
+                btn.style.background = 'var(--success)';
+
+                await loadDbtCloudProjects();
+
+            } catch(e) {
+                const isCors = e.message.includes('Failed to fetch') || e.message.includes('NetworkError');
+                showToast(isCors
+                    ? 'CORS error — dbt Cloud may require a proxy or browser extension for direct API access'
+                    : 'Connection failed: ' + e.message,
+                    'error');
+                document.getElementById('dbtCloudConnectErr').textContent =
+                    isCors ? '⚠ Browser CORS restriction. Try running this tool from a server, or use the dbt Core / file upload option instead.' : '✗ ' + e.message;
+                document.getElementById('dbtCloudConnectErr').style.display = '';
+                btn.disabled = false;
+                btn.innerHTML = 'Connect to dbt Cloud';
+            }
+        }
+
+        async function loadDbtCloudProjects() {
+            const { cloudHost: host, cloudAccountId: accountId, cloudToken: token } = dbtImportState;
+            const resp = await fetch(`${host}/api/v2/accounts/${accountId}/projects/?limit=100`, {
+                headers: { 'Authorization': `Token ${token}` }
+            });
+            const data = await resp.json();
+            const projects = (data.data || []).filter(p => p.state === 1); // active only
+
+            const sel = document.getElementById('dbtCloudProject');
+            sel.innerHTML = '<option value="">Select a project…</option>';
+            projects.forEach(p => {
+                const o = document.createElement('option');
+                o.value = p.id;
+                o.textContent = p.name;
+                sel.appendChild(o);
+            });
+
+            document.getElementById('dbtCloudProjectSection').style.display = '';
+            showToast(`Found ${projects.length} project${projects.length !== 1 ? 's' : ''}`, 'success');
+        }
+
+        function onDbtProjectChange() {
+            const pid = document.getElementById('dbtCloudProject').value;
+            document.getElementById('dbtFetchModelsBtn').disabled = !pid;
+            document.getElementById('dbtCloudRunInfo').style.display = 'none';
+            document.getElementById('dbtCloudPreview').style.display = 'none';
+            document.getElementById('dbtImportConfirmBtn').disabled = true;
+            dbtImportState.manifest = null;
+        }
+
+        async function fetchDbtCloudModels() {
+            const { cloudHost: host, cloudAccountId: accountId, cloudToken: token } = dbtImportState;
+            const projectId = document.getElementById('dbtCloudProject').value;
+
+            const btn = document.getElementById('dbtFetchModelsBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner" style="display:inline-block;"></span> Fetching…';
+
+            const runInfoEl = document.getElementById('dbtCloudRunInfo');
+
+            try {
+                // Fetch latest successful runs (status=10) for this project
+                const runsResp = await fetch(
+                    `${host}/api/v2/accounts/${accountId}/runs/?project_id=${projectId}&status=10&order_by=-finished_at&limit=20`,
+                    { headers: { 'Authorization': `Token ${token}` } }
+                );
+                const runsData = await runsResp.json();
+                const runs = runsData.data || [];
+
+                if (runs.length === 0) {
+                    runInfoEl.className = 'dbt-warning-box';
+                    runInfoEl.style.display = '';
+                    runInfoEl.textContent = '⚠ No successful runs found. Run dbt in dbt Cloud first.';
+                    return;
+                }
+
+                // Try to fetch semantic_manifest.json from the 5 most recent runs
+                let manifest = null, usedRun = null;
+                for (const run of runs.slice(0, 5)) {
+                    try {
+                        const artResp = await fetch(
+                            `${host}/api/v2/accounts/${accountId}/runs/${run.id}/artifacts/semantic_manifest.json`,
+                            { headers: { 'Authorization': `Token ${token}` } }
+                        );
+                        if (artResp.ok) {
+                            const raw = await artResp.json();
+                            if (raw.semantic_models?.length) { manifest = raw; usedRun = run; break; }
+                        }
+                    } catch(e) { /* try next */ }
+                }
+
+                // Fallback: try manifest.json (older dbt / no semantic layer)
+                if (!manifest) {
+                    for (const run of runs.slice(0, 3)) {
+                        try {
+                            const artResp = await fetch(
+                                `${host}/api/v2/accounts/${accountId}/runs/${run.id}/artifacts/manifest.json`,
+                                { headers: { 'Authorization': `Token ${token}` } }
+                            );
+                            if (artResp.ok) {
+                                const mf = await artResp.json();
+                                const extracted = extractSemanticFromManifest(mf);
+                                if (extracted.semantic_models?.length) { manifest = extracted; usedRun = run; break; }
+                            }
+                        } catch(e) { /* try next */ }
+                    }
+                }
+
+                if (!manifest?.semantic_models?.length) {
+                    runInfoEl.className = 'dbt-warning-box';
+                    runInfoEl.style.display = '';
+                    runInfoEl.innerHTML = `⚠ No semantic models found in recent runs.<br>Make sure your project uses dbt Semantic Layer (dbt ≥ 1.6) and has run successfully.`;
+                    return;
+                }
+
+                dbtImportState.manifest = manifest;
+                const models = manifest.semantic_models, metrics = manifest.metrics || [];
+                const ts = usedRun.finished_at ? new Date(usedRun.finished_at).toLocaleString() : '';
+
+                runInfoEl.className = '';
+                runInfoEl.style.cssText = 'padding: 8px 12px; font-size: 12px; color: var(--success); background: rgba(67,181,129,0.08); border-radius: 6px; border: 1px solid rgba(67,181,129,0.2);';
+                runInfoEl.innerHTML = `✓ Run #${usedRun.id}${ts ? ' · ' + ts : ''}`;
+                runInfoEl.style.display = '';
+
+                document.getElementById('dbtCloudPreview').style.display = '';
+                document.getElementById('dbtCloudPreview').innerHTML = dbtPreviewBadges(models, metrics);
+                document.getElementById('dbtImportConfirmBtn').disabled = false;
+                showToast(`Found ${models.length} semantic model${models.length !== 1 ? 's' : ''}`, 'success');
+
+            } catch(e) {
+                runInfoEl.className = 'dbt-warning-box';
+                runInfoEl.style.display = '';
+                runInfoEl.textContent = '✗ ' + e.message;
+                showToast('Failed to fetch models: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔍 Fetch Semantic Models';
+            }
+        }
+
+        function extractSemanticFromManifest(manifest) {
+            if (manifest.semantic_models?.length) return manifest;
+            const semanticModels = Object.values(manifest.nodes || {})
+                .filter(n => n.resource_type === 'semantic_model');
+            return {
+                semantic_models: semanticModels,
+                metrics: Object.values(manifest.metrics || {})
+            };
+        }
+
+        // ── dbt Core ────────────────────────────────────────────────────────
+
+        function handleDbtManifestUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                try {
+                    const manifest = JSON.parse(e.target.result);
+                    const models = manifest.semantic_models || [];
+                    if (!models.length) {
+                        showToast('No semantic_models key found in this file', 'warning');
+                        document.getElementById('dbtManifestStatus').textContent = '⚠ No semantic models found';
+                        return;
+                    }
+                    dbtImportState.manifest = manifest;
+                    const metrics = manifest.metrics || [];
+                    document.getElementById('dbtManifestStatus').textContent =
+                        `✓ ${models.length} model${models.length !== 1 ? 's' : ''}, ${metrics.length} metric${metrics.length !== 1 ? 's' : ''}`;
+                    document.getElementById('dbtCorePreview').style.display = '';
+                    document.getElementById('dbtCorePreview').innerHTML = dbtPreviewBadges(models, metrics);
+                    document.getElementById('dbtImportConfirmBtn').disabled = false;
+                    showToast(`Loaded ${models.length} model${models.length !== 1 ? 's' : ''} from ${file.name}`, 'success');
+                } catch(e) {
+                    showToast('JSON parse error: ' + e.message, 'error');
+                    document.getElementById('dbtManifestStatus').textContent = '✗ Parse error: ' + e.message;
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        async function handleDbtYamlUpload(event) {
+            const files = Array.from(event.target.files);
+            if (!files.length) return;
+            const allModels = [], allMetrics = [];
+            let errors = 0;
+            for (const file of files) {
+                try {
+                    const text = await file.text();
+                    const parsed = jsyaml.load(text);
+                    if (!parsed) continue;
+                    if (parsed.semantic_models) allModels.push(...parsed.semantic_models);
+                    else if (parsed.name && (parsed.entities || parsed.dimensions || parsed.measures)) allModels.push(parsed);
+                    if (parsed.metrics) allMetrics.push(...parsed.metrics);
+                } catch(e) { errors++; }
+            }
+            if (!allModels.length) { showToast('No valid semantic models found in uploaded files', 'error'); return; }
+            dbtImportState.manifest = { semantic_models: allModels, metrics: allMetrics };
+            const statusEl = document.getElementById('dbtYamlStatus');
+            statusEl.textContent = `✓ ${allModels.length} model${allModels.length !== 1 ? 's' : ''} from ${files.length - errors} file${files.length !== 1 ? 's' : ''}` + (errors ? ` (${errors} skipped)` : '');
+            document.getElementById('dbtCorePreview').style.display = '';
+            document.getElementById('dbtCorePreview').innerHTML = dbtPreviewBadges(allModels, allMetrics);
+            document.getElementById('dbtImportConfirmBtn').disabled = false;
+            showToast(`Loaded ${allModels.length} model${allModels.length !== 1 ? 's' : ''} from ${files.length} file${files.length !== 1 ? 's' : ''}`, 'success');
+        }
+
+        // ── Shared import logic ─────────────────────────────────────────────
+
+        function dbtPreviewBadges(models, metrics) {
+            return `<div class="dbt-badge-row" style="justify-content:center;">
+                <span class="dbt-stat-badge models">📦 ${models.length} model${models.length !== 1 ? 's' : ''}</span>
+                <span class="dbt-stat-badge dimensions">${models.reduce((s,m)=>s+(m.dimensions?.length||0),0)} dimensions</span>
+                <span class="dbt-stat-badge measures">${models.reduce((s,m)=>s+(m.measures?.length||0),0)} measures</span>
+                <span class="dbt-stat-badge metrics">${metrics.length} metric${metrics.length !== 1 ? 's' : ''}</span>
+            </div>`;
+        }
+
+        function importDbtModels() {
+            const manifest = dbtImportState.manifest;
+            if (!manifest) return;
+
+            const models = manifest.semantic_models || [];
+            const metrics = manifest.metrics || [];
+
+            // Auto-extract db/schema from node_relation (manifest format)
+            let autoDb = '', autoSchema = '';
+            for (const m of models) {
+                if (m.node_relation) {
+                    autoDb   = autoDb   || m.node_relation.database   || '';
+                    autoSchema = autoSchema || m.node_relation.schema_name || m.node_relation.schema || '';
+                }
+                if (autoDb && autoSchema) break;
+            }
+            if (autoDb    && !document.getElementById('dbtDatabase').value) document.getElementById('dbtDatabase').value = autoDb;
+            if (autoSchema && !document.getElementById('dbtSchema').value)   document.getElementById('dbtSchema').value = autoSchema;
+
+            // Populate YAML textarea with a clean YAML dump so users can inspect/edit
+            try {
+                document.getElementById('dbtYamlInput').value = jsyaml.dump(
+                    { semantic_models: models, metrics },
+                    { indent: 2, lineWidth: -1, noRefs: true }
+                );
+            } catch(e) {
+                document.getElementById('dbtYamlInput').value = JSON.stringify({ semantic_models: models, metrics }, null, 2);
+            }
+
+            closeDbtImportModal();
+            runDbtConversion();
+            showToast(`Imported ${models.length} model${models.length !== 1 ? 's' : ''} from dbt`, 'success');
+        }
     </script>
+
+    <!-- dbt Import Modal -->
+    <div class="modal-overlay" id="dbtImportModal">
+        <div class="modal" style="max-width: 640px;">
+            <div class="modal-header">
+                <div class="modal-title">📥 Import from dbt</div>
+                <button class="modal-close" onclick="closeDbtImportModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+
+                <!-- Source Tabs -->
+                <div class="ai-mode-tabs" style="margin-bottom: 20px;">
+                    <button class="ai-mode-tab active" id="dbtImportTab_cloud" onclick="switchDbtImportTab('cloud')">☁️ dbt Cloud</button>
+                    <button class="ai-mode-tab" id="dbtImportTab_core" onclick="switchDbtImportTab('core')">🖥️ dbt Core</button>
+                </div>
+
+                <!-- ── dbt Cloud ── -->
+                <div id="dbtImportPane_cloud">
+                    <div class="form-group">
+                        <label class="form-label">dbt Cloud Host</label>
+                        <select class="form-input" id="dbtCloudHost">
+                            <option value="https://cloud.getdbt.com">cloud.getdbt.com (North America)</option>
+                            <option value="https://emea.dbt.com">emea.dbt.com (Europe)</option>
+                            <option value="https://au.dbt.com">au.dbt.com (Pacific)</option>
+                        </select>
+                    </div>
+                    <div class="form-row" style="margin-bottom: 14px;">
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label">Account ID</label>
+                            <input type="text" class="form-input" id="dbtAccountId" placeholder="12345">
+                            <div class="form-hint">Found in dbt Cloud URL: /accounts/{id}/</div>
+                        </div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label">Service Token</label>
+                            <input type="password" class="form-input" id="dbtServiceToken" placeholder="dbtst_…">
+                            <div class="form-hint">Account Settings → Service Tokens</div>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary" id="dbtCloudConnectBtn" onclick="connectToDbtCloud()" style="width:100%; margin-bottom: 8px;">
+                        Connect to dbt Cloud
+                    </button>
+                    <div id="dbtCloudConnectErr" style="display:none; font-size: 12px; color: var(--warning); padding: 8px 0; line-height: 1.5;"></div>
+
+                    <!-- Post-connect: project + run selection -->
+                    <div id="dbtCloudProjectSection" style="display:none; margin-top: 12px; border-top: 1px solid var(--border); padding-top: 16px;">
+                        <div class="form-group">
+                            <label class="form-label">Project</label>
+                            <select class="form-input" id="dbtCloudProject" onchange="onDbtProjectChange()">
+                                <option value="">Select a project…</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-secondary" id="dbtFetchModelsBtn" onclick="fetchDbtCloudModels()" style="width:100%; margin-bottom: 10px;" disabled>
+                            🔍 Fetch Semantic Models
+                        </button>
+                        <div id="dbtCloudRunInfo" style="display:none; margin-bottom: 10px;"></div>
+                        <div id="dbtCloudPreview" style="display:none;"></div>
+                    </div>
+                </div>
+
+                <!-- ── dbt Core ── -->
+                <div id="dbtImportPane_core" style="display:none;">
+                    <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.6;">
+                        Upload your dbt artifact files. Run <code style="background:var(--bg-tertiary); padding: 1px 6px; border-radius:4px; font-size: 12px;">dbt parse</code> or <code style="background:var(--bg-tertiary); padding: 1px 6px; border-radius:4px; font-size: 12px;">dbt compile</code> first to generate them.
+                    </p>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
+                        <!-- Manifest upload -->
+                        <div onclick="document.getElementById('dbtManifestUpload').click()"
+                             style="background: var(--bg-tertiary); border: 2px dashed var(--border); border-radius: 10px; padding: 20px; text-align: center; cursor: pointer; transition: border-color 0.15s;"
+                             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+                            <div style="font-size: 26px; margin-bottom: 8px;">📄</div>
+                            <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px; font-family: 'JetBrains Mono', monospace;">semantic_manifest.json</div>
+                            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">target/ after dbt parse / compile</div>
+                            <div style="font-size: 11px; color: var(--accent);">Click to select file</div>
+                            <input type="file" id="dbtManifestUpload" accept=".json" style="display:none;" onchange="handleDbtManifestUpload(event)">
+                            <div id="dbtManifestStatus" style="font-size: 11px; color: var(--success); margin-top: 8px; min-height: 16px;"></div>
+                        </div>
+
+                        <!-- YAML upload -->
+                        <div onclick="document.getElementById('dbtYamlUpload').click()"
+                             style="background: var(--bg-tertiary); border: 2px dashed var(--border); border-radius: 10px; padding: 20px; text-align: center; cursor: pointer; transition: border-color 0.15s;"
+                             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+                            <div style="font-size: 26px; margin-bottom: 8px;">📁</div>
+                            <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">Semantic Model YAMLs</div>
+                            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">Select one or more .yml files</div>
+                            <div style="font-size: 11px; color: var(--accent);">Click to select files</div>
+                            <input type="file" id="dbtYamlUpload" accept=".yml,.yaml" multiple style="display:none;" onchange="handleDbtYamlUpload(event)">
+                            <div id="dbtYamlStatus" style="font-size: 11px; color: var(--success); margin-top: 8px; min-height: 16px;"></div>
+                        </div>
+                    </div>
+
+                    <div id="dbtCorePreview" style="display:none; margin-bottom: 4px;"></div>
+                </div>
+
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeDbtImportModal()">Cancel</button>
+                <button class="btn btn-primary" id="dbtImportConfirmBtn" onclick="importDbtModels()" disabled>
+                    📥 Import & Convert
+                </button>
+            </div>
+        </div>
+    </div>
+    <!-- Save Location Modal (used by converters) -->
+    <div class="modal-overlay" id="saveLocationModal">
+        <div class="modal" style="max-width: 480px;">
+            <div class="modal-header">
+                <div class="modal-title">📁 Choose Save Location</div>
+                <button class="modal-close" onclick="closeSaveLocationModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.5;">
+                    Choose where to save this data model in Sigma. The converted JSON will be posted as a new data model.
+                </p>
+                <div class="form-group">
+                    <label class="form-label">Data Model Name *</label>
+                    <input type="text" class="form-input" id="slModelName" placeholder="e.g., Posting Fact Semantic View">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Workspace *</label>
+                    <select class="form-input" id="slWorkspaceId" onchange="onSaveLocationWorkspaceChange()">
+                        <option value="">Loading workspaces…</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Folder *</label>
+                    <select class="form-input" id="slFolderId" disabled>
+                        <option value="">Select a workspace first…</option>
+                    </select>
+                    <div class="form-hint">Select the workspace root or a specific folder within it</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeSaveLocationModal()">Cancel</button>
+                <button class="btn btn-success" id="slSaveBtn" onclick="confirmSaveLocation()" disabled>
+                    💾 Save to Sigma
+                </button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
