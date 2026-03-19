@@ -1147,17 +1147,24 @@
             </div>
             
             <div class="models-section">
-                <div class="models-header">
-                    <div style="display: flex; align-items: center; gap: 6px;">
+                <div class="models-header" style="flex-direction: column; gap: 12px; align-items: stretch;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
                         <span class="section-title" style="margin: 0;">Data Models</span>
-                        <span id="modelsCount" style="font-size: 11px; color: var(--text-muted);"></span>
+                        <span id="modelsCount" style="font-size: 12px; color: var(--text-muted); font-weight: 500;"></span>
                     </div>
-                    <div style="display: flex; gap: 6px;">
-                        <button class="btn btn-secondary" onclick="newDataModel()" style="padding: 6px 12px; font-size: 12px;" id="newModelBtn" disabled>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+                        <button class="btn btn-secondary" onclick="newDataModel()" style="padding: 8px 10px; font-size: 12px; justify-content: center;" id="newModelBtn" disabled>
                             + New
                         </button>
-                        <button class="btn btn-secondary" onclick="refreshModels()" style="padding: 6px 12px; font-size: 12px;" id="refreshBtn" disabled>
+                        <button class="btn btn-secondary" onclick="refreshModels()" style="padding: 8px 10px; font-size: 12px; justify-content: center;" id="refreshBtn" disabled>
                             ↻ Refresh
+                        </button>
+                        <button class="btn btn-secondary" onclick="bulkDownload()" style="padding: 8px 10px; font-size: 12px; justify-content: center;" id="downloadAllBtn" disabled title="Download all data models as JSON files">
+                            ⬇ Export
+                        </button>
+                        <input type="file" id="bulkUploadInput" accept=".json" multiple style="display:none" onchange="showBulkUploadOptions(this.files)">
+                        <button class="btn btn-secondary" onclick="document.getElementById('bulkUploadInput').click()" style="padding: 8px 10px; font-size: 12px; justify-content: center;" id="uploadBtn" disabled title="Upload JSON files to create or update data models">
+                            ⬆ Import
                         </button>
                     </div>
                 </div>
@@ -1188,10 +1195,21 @@
                     <button class="btn btn-secondary" onclick="refreshFromSigma()" id="refreshSigmaBtn" disabled title="Refresh from Sigma API">
                         ↻ Refresh
                     </button>
-                    <button class="btn btn-secondary" onclick="formatJson()" id="formatBtn" disabled>
-                        Format JSON
+                    <!-- JSON / YAML toggle -->
+                    <div style="display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; opacity: 0.4; pointer-events: none;" id="editorModeToggle">
+                        <button id="modeJsonBtn" onclick="setEditorMode('json')"
+                            style="padding: 8px 14px; font-size: 12px; font-weight: 600; font-family: 'JetBrains Mono', monospace; background: var(--accent); color: white; border: none; cursor: pointer; transition: all 0.15s;">
+                            JSON
+                        </button>
+                        <button id="modeYamlBtn" onclick="setEditorMode('yaml')"
+                            style="padding: 8px 14px; font-size: 12px; font-weight: 600; font-family: 'JetBrains Mono', monospace; background: var(--bg-tertiary); color: var(--text-secondary); border: none; cursor: pointer; transition: all 0.15s;">
+                            YAML
+                        </button>
+                    </div>
+                    <button class="btn btn-secondary" onclick="formatEditor()" id="formatBtn" disabled>
+                        Format
                     </button>
-                    <button class="btn btn-secondary" onclick="copyJson()" id="copyBtn" disabled>
+                    <button class="btn btn-secondary" onclick="copyEditor()" id="copyBtn" disabled>
                         Copy
                     </button>
                     <button class="btn btn-success" onclick="saveDataModel()" id="saveBtn" disabled>
@@ -1240,8 +1258,10 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                                 <input type="text" id="dbtSchema" placeholder="DBT_PROD" title="Schema containing the dbt models">
                             </div>
                             <div class="form-group">
-                                <label>Connection ID (optional)</label>
-                                <input type="text" id="dbtConnectionId" placeholder="Auto-detected if connected" title="Sigma connection ID — auto-filled if you're connected">
+                                <label>Connection</label>
+                                <select id="dbtConnectionId" style="font-size: 12px; padding: 7px 10px; width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); font-family: inherit; cursor: pointer; appearance: none; background-image: url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239090a0' d='M6 8L1 3h10z'/%3E%3C/svg%3E&quot;); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px;">
+                                    <option value="">— Connect to Sigma to load —</option>
+                                </select>
                             </div>
                         </div>
 
@@ -1340,8 +1360,10 @@ Tips:
 
                         <div style="display: flex; gap: 10px; flex-shrink: 0; align-items: flex-end;">
                             <div class="form-group" style="flex: 1; margin-bottom: 0;">
-                                <label>Connection ID <span style="color: var(--text-muted); font-weight: 400;">(optional — auto-detected if connected)</span></label>
-                                <input type="text" id="snowConnectionId" placeholder="Leave blank to auto-fill from Sigma connection">
+                                <label>Connection <span style="color: var(--text-muted); font-weight: 400;">(auto-loaded when connected)</span></label>
+                                <select id="snowConnectionId" class="form-input">
+                                    <option value="">— Connect to Sigma to load —</option>
+                                </select>
                             </div>
                             <div style="display: flex; align-items: center; gap: 6px; padding-bottom: 2px; flex-shrink: 0;">
                                 <input type="checkbox" id="snowAutoMetrics" checked style="width: auto; accent-color: var(--accent);">
@@ -1760,9 +1782,14 @@ PRODUCT_NAME
                 // Enable buttons
                 document.getElementById('refreshBtn').disabled = false;
                 document.getElementById('newModelBtn').disabled = false;
+                document.getElementById('downloadAllBtn').disabled = false;
+                document.getElementById('uploadBtn').disabled = false;
                 
                 // Load data models
                 await loadDataModels();
+                
+                // Populate connection dropdowns in converters
+                await populateConverterConnections();
                 
             } catch (error) {
                 console.error('Connection error:', error);
@@ -1865,14 +1892,9 @@ PRODUCT_NAME
             const totalCount = state.dataModels?.length || 0;
             const filteredCount = models.length;
             
-            // Update count display
             const countDisplay = document.getElementById('modelsCount');
             if (countDisplay) {
-                if (filteredCount !== totalCount) {
-                    countDisplay.textContent = `(${filteredCount}/${totalCount})`;
-                } else {
-                    countDisplay.textContent = `(${totalCount})`;
-                }
+                countDisplay.textContent = filteredCount !== totalCount ? `(${filteredCount}/${totalCount})` : `(${totalCount})`;
             }
             
             if (models.length === 0) {
@@ -1886,7 +1908,7 @@ PRODUCT_NAME
             }
             
             container.innerHTML = models.map(model => `
-                <div class="model-item ${state.selectedModel?.dataModelId === model.dataModelId ? 'active' : ''}" 
+                <div class="model-item ${state.selectedModel?.dataModelId === model.dataModelId ? 'active' : ''}"
                      onclick="selectModel('${model.dataModelId}')">
                     <div class="model-name">${escapeHtml(model.name || 'Untitled')}</div>
                     <div class="model-meta">
@@ -1894,6 +1916,360 @@ PRODUCT_NAME
                     </div>
                 </div>
             `).join('');
+        }
+
+        // ── Bulk Download (all models) ───────────────────────────────────────
+        async function bulkDownload() {
+            const models = state.dataModels || [];
+            if (!models.length) { showToast('No data models to download', 'warning'); return; }
+
+            openBulkModal('Exporting All Data Models', models.length);
+
+            let done = 0, failed = 0;
+            for (const model of models) {
+                const id = model.dataModelId;
+                const name = model.name || 'Untitled';
+                updateBulkModal(done + failed, models.length, `Downloading: ${name}`);
+                try {
+                    const r = await fetch(`${state.baseUrl}/v2/dataModels/${id}/spec`, {
+                        headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                    });
+                    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                    const spec = await r.json();
+                    spec.dataModelId = id; // embed so re-upload targets existing model
+                    const blob = new Blob([JSON.stringify(spec, null, 2)], { type: 'application/json' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `${name.replace(/[^a-z0-9_-]/gi, '_')}.json`;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                    done++;
+                    addBulkLog(`✅ ${name}`, 'success');
+                } catch(e) {
+                    failed++;
+                    addBulkLog(`❌ ${name}: ${e.message}`, 'error');
+                }
+                await new Promise(r => setTimeout(r, 300));
+            }
+
+            finishBulkModal(`Exported ${done} model${done !== 1 ? 's' : ''}${failed ? `, ${failed} failed` : ''}.`, false);
+        }
+
+        // ── Bulk Upload Options Modal ────────────────────────────────────────
+        let _pendingBulkFiles = null;
+        let _bulkFilesMeta = []; // [{file, name, existingId|null}]
+
+        async function showBulkUploadOptions(files) {
+            if (!files || !files.length) return;
+            if (!state.accessToken) {
+                showToast('Connect to Sigma first before uploading', 'warning');
+                document.getElementById('bulkUploadInput').value = '';
+                return;
+            }
+            _pendingBulkFiles = Array.from(files);
+
+            // Pre-read each file to determine update vs create
+            _bulkFilesMeta = [];
+            for (const file of _pendingBulkFiles) {
+                try {
+                    const text = await file.text();
+                    const parsed = JSON.parse(text);
+                    _bulkFilesMeta.push({ file, name: parsed.name || file.name, existingId: parsed.dataModelId || null });
+                } catch(e) {
+                    _bulkFilesMeta.push({ file, name: file.name, existingId: null, parseError: e.message });
+                }
+            }
+
+            const updates = _bulkFilesMeta.filter(m => m.existingId && !m.parseError).length;
+            const creates = _bulkFilesMeta.filter(m => !m.existingId && !m.parseError).length;
+            const errors  = _bulkFilesMeta.filter(m => m.parseError).length;
+
+            // Render summary badges
+            const summaryEl = document.getElementById('bulkUploadFileSummary');
+            summaryEl.innerHTML = '';
+            const addBadge = (label, color) => {
+                const b = document.createElement('span');
+                b.style.cssText = `display:inline-flex;align-items:center;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;background:${color};`;
+                b.textContent = label;
+                summaryEl.appendChild(b);
+            };
+            if (updates) addBadge(`↺ ${updates} update${updates!==1?'s':''}`, 'rgba(88,101,242,.2)');
+            if (creates) addBadge(`+ ${creates} new`, 'rgba(67,181,129,.2)');
+            if (errors)  addBadge(`✗ ${errors} invalid`, 'rgba(240,71,71,.2)');
+
+            // Destination note
+            const destNote = document.getElementById('bulkUploadDestNote');
+            const destSection = document.getElementById('bulkUploadDestSection');
+            if (creates > 0) {
+                destNote.textContent = `${creates} file${creates!==1?' files':' file'} ${creates!==1?'have':'has'} no existing model ID and will be created as new — select a destination workspace and folder.`;
+                destSection.style.display = '';
+                document.getElementById('bulkUploadProceedBtn').disabled = true; // wait for folder selection
+            } else {
+                destNote.textContent = `All files have existing model IDs and will update in place.`;
+                destSection.style.display = updates > 0 ? '' : 'none';
+                document.getElementById('bulkUploadProceedBtn').disabled = false;
+                // Hide workspace/folder for update-only runs
+                if (updates > 0 && creates === 0) {
+                    destNote.textContent = `${updates} model${updates!==1?'s':''} will be updated in place (existing IDs found). No destination needed.`;
+                    document.getElementById('buWorkspaceId').closest('.form-group').style.display = 'none';
+                    document.getElementById('buFolderId').closest('.form-group').style.display = 'none';
+                }
+            }
+
+            // Load workspaces + connections
+            await Promise.all([loadBulkUploadWorkspaces(), populateConverterConnections()]);
+
+            document.getElementById('bulkUploadOptionsModal').classList.add('active');
+        }
+
+        async function loadBulkUploadWorkspaces() {
+            const sel = document.getElementById('buWorkspaceId');
+            sel.innerHTML = '<option value="">Loading workspaces…</option>';
+            document.getElementById('buFolderId').innerHTML = '<option value="">Select a workspace first…</option>';
+            document.getElementById('buFolderId').disabled = true;
+            try {
+                const resp = await fetch(`${state.baseUrl}/v2/workspaces`, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                const data = await resp.json();
+                sel.innerHTML = '<option value="">Select a workspace…</option>';
+                (data.entries || []).forEach(ws => {
+                    const o = document.createElement('option');
+                    o.value = ws.workspaceId;
+                    o.textContent = ws.name || ws.workspaceId;
+                    sel.appendChild(o);
+                });
+            } catch(e) {
+                sel.innerHTML = '<option value="">Failed to load workspaces</option>';
+            }
+        }
+
+        async function onBulkUploadWorkspaceChange() {
+            const wsId = document.getElementById('buWorkspaceId').value;
+            const folderSel = document.getElementById('buFolderId');
+            document.getElementById('bulkUploadProceedBtn').disabled = true;
+            if (!wsId) {
+                folderSel.innerHTML = '<option value="">Select a workspace first…</option>';
+                folderSel.disabled = true;
+                return;
+            }
+            folderSel.innerHTML = '<option value="">Loading folders…</option>';
+            folderSel.disabled = true;
+            try {
+                const resp = await fetch(`${state.baseUrl}/v2/files?typeFilters=folder&parentId=${wsId}`, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                const data = await resp.json();
+                folderSel.innerHTML = '';
+                const root = document.createElement('option');
+                root.value = wsId;
+                root.textContent = '📁 (Workspace Root)';
+                folderSel.appendChild(root);
+                (data.entries || []).forEach(f => {
+                    const o = document.createElement('option');
+                    o.value = f.id || f.inodeId;
+                    o.textContent = '📁 ' + (f.name || f.id);
+                    folderSel.appendChild(o);
+                });
+                folderSel.disabled = false;
+                document.getElementById('bulkUploadProceedBtn').disabled = false;
+            } catch(e) {
+                folderSel.innerHTML = '<option value="">Failed to load folders</option>';
+            }
+        }
+
+        function closeBulkUploadOptionsModal() {
+            document.getElementById('bulkUploadOptionsModal').classList.remove('active');
+            // Restore hidden form groups for next open
+            document.getElementById('buWorkspaceId').closest('.form-group').style.display = '';
+            document.getElementById('buFolderId').closest('.form-group').style.display = '';
+            _pendingBulkFiles = null;
+            _bulkFilesMeta = [];
+            document.getElementById('bulkUploadInput').value = '';
+        }
+
+        async function proceedBulkUpload() {
+            const folderId = document.getElementById('buFolderId').value || document.getElementById('buWorkspaceId').value;
+            const connectionOverride = document.getElementById('bulkUploadConnectionId').value;
+            const meta = _bulkFilesMeta;
+            closeBulkUploadOptionsModal();
+            await handleBulkUpload(meta, folderId, connectionOverride);
+        }
+
+        // ── Bulk Upload ──────────────────────────────────────────────────────
+        async function handleBulkUpload(fileMeta, folderId, connectionIdOverride) {
+            if (!fileMeta || !fileMeta.length) return;
+            if (!state.accessToken) {
+                showToast('Connect to Sigma first before uploading', 'warning');
+                return;
+            }
+
+            openBulkModal('Uploading Data Models', fileMeta.length);
+
+            let done = 0, failed = 0;
+            for (const meta of fileMeta) {
+                updateBulkModal(done + failed, fileMeta.length, `Uploading: ${meta.name}`);
+
+                if (meta.parseError) {
+                    failed++;
+                    addBulkLog(`❌ ${meta.file.name}: JSON parse error — ${meta.parseError}`, 'error');
+                    continue;
+                }
+
+                try {
+                    const text = await meta.file.text();
+                    const jsonData = JSON.parse(text);
+                    const { dataModelId: existingId, ...specBase } = jsonData;
+
+                    const spec = {
+                        schemaVersion: specBase.schemaVersion || 1,
+                        name: specBase.name,
+                        pages: specBase.pages
+                    };
+                    if (specBase.description) spec.description = specBase.description;
+
+                    // Strip internal _ fields from pages
+                    spec.pages = JSON.parse(JSON.stringify(spec.pages, (k, v) =>
+                        (typeof k === 'string' && k.startsWith('_')) ? undefined : v
+                    ));
+
+                    // Inject connection override into every element source
+                    if (connectionIdOverride) {
+                        spec.pages = spec.pages.map(page => ({
+                            ...page,
+                            elements: (page.elements || []).map(el => {
+                                if (el.source && 'connectionId' in el.source) {
+                                    return { ...el, source: { ...el.source, connectionId: connectionIdOverride } };
+                                }
+                                return el;
+                            })
+                        }));
+                    }
+
+                    let r, action;
+                    if (existingId) {
+                        // Try to update existing model
+                        r = await fetch(`${state.baseUrl}/v2/dataModels/${existingId}/spec`, {
+                            method: 'PUT',
+                            headers: { 'Authorization': `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
+                            body: JSON.stringify(spec)
+                        });
+
+                        if (r.status === 404) {
+                            // Model no longer exists — fall back to creating new
+                            if (!folderId) throw new Error('Model not found (404) and no destination folder selected for fallback creation');
+                            spec.folderId = folderId;
+                            r = await fetch(`${state.baseUrl}/v2/dataModels/spec`, {
+                                method: 'POST',
+                                headers: { 'Authorization': `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify(spec)
+                            });
+                            action = 'Created (model not found, created new)';
+                        } else {
+                            action = 'Updated';
+                        }
+                    } else {
+                        // New model — must have folderId
+                        if (!folderId) throw new Error('No destination folder selected for new model');
+                        spec.folderId = folderId;
+                        r = await fetch(`${state.baseUrl}/v2/dataModels/spec`, {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
+                            body: JSON.stringify(spec)
+                        });
+                        action = 'Created';
+                    }
+
+                    if (!r.ok) {
+                        const errText = await r.text();
+                        let msg = `HTTP ${r.status}`;
+                        try { msg = JSON.parse(errText).message || msg; } catch(e) {}
+                        throw new Error(msg);
+                    }
+
+                    const connNote = connectionIdOverride ? ' [conn overridden]' : '';
+                    done++;
+                    addBulkLog(`✅ ${action}: ${meta.name}${connNote}`, 'success');
+                } catch(e) {
+                    failed++;
+                    addBulkLog(`❌ ${meta.name}: ${e.message}`, 'error');
+                }
+            }
+
+            document.getElementById('bulkUploadInput').value = '';
+            finishBulkModal(`Uploaded ${done} model${done !== 1 ? 's' : ''}${failed ? `, ${failed} failed` : ''}.`, done > 0);
+        }
+
+        // ── Bulk Progress Modal ──────────────────────────────────────────────
+        function openBulkModal(title, total) {
+            let modal = document.getElementById('bulkProgressModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'bulkProgressModal';
+                modal.style.cssText = 'position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);';
+                modal.innerHTML = `
+                    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;padding:28px;width:460px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column;gap:16px;">
+                        <div style="font-size:16px;font-weight:600;color:var(--text-primary);" id="bulkModalTitle"></div>
+                        <div style="background:var(--bg-tertiary);border-radius:6px;height:8px;overflow:hidden;">
+                            <div id="bulkProgressBar" style="height:100%;background:var(--accent);transition:width 0.3s;width:0%;"></div>
+                        </div>
+                        <div style="font-size:12px;color:var(--text-secondary);" id="bulkProgressLabel"></div>
+                        <div id="bulkProgressLog" style="flex:1;overflow-y:auto;max-height:220px;font-size:12px;font-family:monospace;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:4px;"></div>
+                        <button id="bulkModalCloseBtn" class="btn btn-secondary" onclick="closeBulkModal()" style="display:none;">Close</button>
+                    </div>`;
+                document.body.appendChild(modal);
+            }
+            document.getElementById('bulkModalTitle').textContent = title;
+            document.getElementById('bulkProgressBar').style.width = '0%';
+            document.getElementById('bulkProgressLabel').textContent = `0 / ${total}`;
+            document.getElementById('bulkProgressLog').innerHTML = '';
+            document.getElementById('bulkModalCloseBtn').style.display = 'none';
+            modal.style.display = 'flex';
+            modal._total = total;
+        }
+
+        function updateBulkModal(done, total, label) {
+            const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+            document.getElementById('bulkProgressBar').style.width = pct + '%';
+            document.getElementById('bulkProgressLabel').textContent = `${done} / ${total} — ${label}`;
+        }
+
+        function addBulkLog(msg, type) {
+            const log = document.getElementById('bulkProgressLog');
+            const line = document.createElement('div');
+            line.style.color = type === 'error' ? '#f87171' : type === 'success' ? '#4ade80' : 'var(--text-secondary)';
+            line.textContent = msg;
+            log.appendChild(line);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function finishBulkModal(summary, shouldRefresh) {
+            document.getElementById('bulkProgressBar').style.width = '100%';
+            document.getElementById('bulkProgressLabel').textContent = summary;
+            const closeBtn = document.getElementById('bulkModalCloseBtn');
+            closeBtn.style.display = 'block';
+            if (shouldRefresh) {
+                closeBtn.textContent = '↻ Close & Refresh';
+                closeBtn.onclick = async () => {
+                    closeBulkModal();
+                    updateStatus('loading', 'Refreshing model list…');
+                    await new Promise(r => setTimeout(r, 1500)); // give API time to propagate
+                    try {
+                        await loadDataModels();
+                        showToast('Model list refreshed', 'success');
+                    } catch(e) {
+                        showToast('Upload done — click ↻ Refresh if models are missing', 'warning');
+                    }
+                };
+            } else {
+                closeBtn.textContent = 'Close';
+                closeBtn.onclick = closeBulkModal;
+            }
+        }
+
+        function closeBulkModal() {
+            const modal = document.getElementById('bulkProgressModal');
+            if (modal) modal.style.display = 'none';
         }
         
         // Escape HTML to prevent XSS
@@ -1938,7 +2314,7 @@ PRODUCT_NAME
                 state.isNewModel = false; // This is an existing model
                 
                 // Update UI
-                document.getElementById('jsonEditor').value = state.originalJson;
+                setEditorContent(data);
                 document.getElementById('editorTitle').textContent = data.name || 'Untitled Data Model';
                 
                 // Enable buttons
@@ -1947,6 +2323,7 @@ PRODUCT_NAME
                 document.getElementById('saveBtn').disabled = false;
                 document.getElementById('refreshSigmaBtn').disabled = false;
                 document.getElementById('aiBtn').disabled = false;
+                enableEditorModeToggle();
                 
                 renderModelsList();
                 updateStatus('connected', `Editing: ${data.name || 'Untitled'}`);
@@ -1959,25 +2336,108 @@ PRODUCT_NAME
             }
         }
         
-        // Format JSON
-        function formatJson() {
+        // ── Editor Mode (JSON / YAML) ───────────────────────────────────────
+        let editorMode = 'json'; // 'json' | 'yaml'
+
+        function setEditorMode(mode) {
+            if (mode === editorMode) return;
             const editor = document.getElementById('jsonEditor');
+            const currentText = editor.value.trim();
+            if (!currentText) { editorMode = mode; _updateModeToggleUI(); return; }
+
             try {
-                const parsed = JSON.parse(editor.value);
-                editor.value = JSON.stringify(parsed, null, 2);
-                showToast('JSON formatted', 'success');
-            } catch (error) {
-                showToast('Invalid JSON - cannot format', 'error');
+                if (mode === 'yaml') {
+                    // Convert current JSON → YAML
+                    const parsed = JSON.parse(currentText);
+                    editor.value = jsyaml.dump(parsed, { indent: 2, lineWidth: -1, noRefs: true });
+                } else {
+                    // Convert current YAML → JSON
+                    const parsed = jsyaml.load(currentText);
+                    editor.value = JSON.stringify(parsed, null, 2);
+                }
+                editorMode = mode;
+                _updateModeToggleUI();
+            } catch(e) {
+                showToast(`Cannot switch mode — fix ${editorMode.toUpperCase()} errors first: ${e.message}`, 'error');
             }
         }
-        
-        // Copy JSON
-        function copyJson() {
-            const editor = document.getElementById('jsonEditor');
-            navigator.clipboard.writeText(editor.value);
-            showToast('JSON copied to clipboard', 'success');
+
+        function _updateModeToggleUI() {
+            const jsonBtn = document.getElementById('modeJsonBtn');
+            const yamlBtn = document.getElementById('modeYamlBtn');
+            if (editorMode === 'json') {
+                jsonBtn.style.background = 'var(--accent)';
+                jsonBtn.style.color = 'white';
+                yamlBtn.style.background = 'var(--bg-tertiary)';
+                yamlBtn.style.color = 'var(--text-secondary)';
+            } else {
+                yamlBtn.style.background = 'var(--accent)';
+                yamlBtn.style.color = 'white';
+                jsonBtn.style.background = 'var(--bg-tertiary)';
+                jsonBtn.style.color = 'var(--text-secondary)';
+            }
         }
-        
+
+        // Enable the mode toggle once a model is loaded
+        function enableEditorModeToggle() {
+            const toggle = document.getElementById('editorModeToggle');
+            toggle.style.opacity = '1';
+            toggle.style.pointerEvents = 'auto';
+        }
+
+        // Get the current editor content always as a parsed JS object
+        // (handles both JSON and YAML mode)
+        function getEditorJson() {
+            const text = document.getElementById('jsonEditor').value.trim();
+            if (!text) return null;
+            if (editorMode === 'yaml') {
+                return jsyaml.load(text);
+            }
+            return JSON.parse(text);
+        }
+
+        // Set editor content from a JS object, respecting current mode
+        function setEditorContent(obj) {
+            const editor = document.getElementById('jsonEditor');
+            if (editorMode === 'yaml') {
+                editor.value = jsyaml.dump(obj, { indent: 2, lineWidth: -1, noRefs: true });
+            } else {
+                editor.value = JSON.stringify(obj, null, 2);
+            }
+        }
+
+        // Format the editor content in current mode
+        function formatEditor() {
+            try {
+                const obj = getEditorJson();
+                if (!obj) { showToast('Nothing to format', 'warning'); return; }
+                setEditorContent(obj);
+                showToast(`${editorMode.toUpperCase()} formatted`, 'success');
+            } catch(e) {
+                showToast(`Invalid ${editorMode.toUpperCase()} — cannot format`, 'error');
+            }
+        }
+
+        // Copy editor content (always copies JSON regardless of display mode)
+        function copyEditor() {
+            try {
+                const obj = getEditorJson();
+                if (!obj) return;
+                // Always copy as JSON (canonical format)
+                navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
+                showToast(`Copied as JSON`, 'success');
+            } catch(e) {
+                // Fallback: copy raw text
+                navigator.clipboard.writeText(document.getElementById('jsonEditor').value);
+                showToast('Copied to clipboard', 'success');
+            }
+        }
+
+        // Legacy aliases (used in a few places internally)
+        function formatJson() { formatEditor(); }
+        function copyJson()   { copyEditor(); }
+
+
         // Refresh from Sigma (reload current model)
         async function refreshFromSigma() {
             if (!state.accessToken || !state.selectedModel?.dataModelId) {
@@ -2001,7 +2461,7 @@ PRODUCT_NAME
                 // Preserve the dataModelId (spec may not include it)
                 state.selectedModel = { ...spec, dataModelId: dataModelId };
                 state.originalJson = JSON.stringify(spec, null, 2);
-                document.getElementById('jsonEditor').value = state.originalJson;
+                setEditorContent(spec);
                 document.getElementById('editorTitle').textContent = spec.name || 'Untitled Data Model';
                 
                 showToast('Refreshed from Sigma', 'success');
@@ -2017,13 +2477,13 @@ PRODUCT_NAME
         
         // Save data model
         async function saveDataModel() {
-            const editor = document.getElementById('jsonEditor');
             let jsonData;
             
             try {
-                jsonData = JSON.parse(editor.value);
+                jsonData = getEditorJson();
+                if (!jsonData) throw new Error('Editor is empty');
             } catch (error) {
-                showToast('Invalid JSON - please fix errors before saving', 'error');
+                showToast(`Invalid ${editorMode.toUpperCase()} — please fix errors before saving`, 'error');
                 return;
             }
             
@@ -2125,7 +2585,7 @@ PRODUCT_NAME
                 state.selectedModel = { ...fullSpec, dataModelId };
                 state.originalJson = JSON.stringify(fullSpec, null, 2);
                 state.isNewModel = false;
-                editor.value = state.originalJson;
+                setEditorContent(fullSpec);
                 document.getElementById('editorTitle').textContent = fullSpec.name || jsonData.name || 'Untitled Data Model';
                 document.getElementById('refreshSigmaBtn').disabled = false;
                 updateStatus('connected', isNew ? 'Data model created!' : 'Changes saved');
@@ -2334,6 +2794,54 @@ PRODUCT_NAME
                 console.error('Failed to load connections:', error);
                 select.innerHTML = '<option value="">Failed to load connections</option>';
             }
+        }
+
+        // Fetch connections from the API and return the list (uses cache from wizardState if available)
+        async function fetchConnectionsList() {
+            if (wizardState.connections && wizardState.connections.length > 0) {
+                return wizardState.connections;
+            }
+            try {
+                const response = await fetch(`${state.baseUrl}/v2/connections`, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                if (!response.ok) throw new Error('Failed to load connections');
+                const data = await response.json();
+                wizardState.connections = data.entries || [];
+                return wizardState.connections;
+            } catch (error) {
+                console.error('Failed to fetch connections:', error);
+                return [];
+            }
+        }
+
+        // Populate connection dropdowns in the dbt & Snow converters + bulk upload modal
+        async function populateConverterConnections() {
+            if (!state.accessToken) return;
+            const connections = await fetchConnectionsList();
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId'];
+            targetIds.forEach(id => {
+                const sel = document.getElementById(id);
+                if (!sel) return;
+                const isOverride = id === 'bulkUploadConnectionId';
+                const currentVal = sel.value;
+                sel.innerHTML = isOverride
+                    ? '<option value="">Keep existing connection IDs from files</option>'
+                    : '<option value="">— Select a connection —</option>';
+                connections.forEach(conn => {
+                    const opt = document.createElement('option');
+                    opt.value = conn.connectionId;
+                    opt.textContent = conn.name || conn.connectionId;
+                    sel.appendChild(opt);
+                });
+                // Restore previous selection if still valid
+                if (currentVal && [...sel.options].some(o => o.value === currentVal)) {
+                    sel.value = currentVal;
+                } else if (!isOverride && connections.length > 0) {
+                    // Auto-select the first connection for converters
+                    sel.value = connections[0].connectionId;
+                }
+            });
         }
         
         function newDataModel() {
@@ -2557,7 +3065,7 @@ PRODUCT_NAME
             
             // Update UI - show JSON for review
             document.getElementById('editorTitle').textContent = modelName + ' (New - Unsaved)';
-            document.getElementById('jsonEditor').value = JSON.stringify(spec, null, 2);
+            setEditorContent(spec);
             
             // Enable buttons
             document.getElementById('formatBtn').disabled = false;
@@ -2565,6 +3073,7 @@ PRODUCT_NAME
             document.getElementById('saveBtn').disabled = false;
             document.getElementById('refreshSigmaBtn').disabled = true; // Can't refresh unsaved model
             document.getElementById('aiBtn').disabled = false;
+            enableEditorModeToggle();
             
             // Close modal
             closeNewModelModal();
@@ -3599,6 +4108,10 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
                     el.classList.toggle('active', k === tab);
                 }
             });
+            // Auto-populate connection dropdowns when opening a converter tab
+            if ((tab === 'dbt' || tab === 'snow') && state.accessToken) {
+                populateConverterConnections();
+            }
         }
 
         // ── Shared ID / Formula Utilities ──────────────────────────────────
@@ -3768,7 +4281,8 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
 
             if (!allTables.length) { showToast('No tables found in YAML', 'warning'); return; }
 
-            var connectionId = document.getElementById('snowConnectionId').value.trim();
+            var connectionId = document.getElementById('snowConnectionId').value;
+            // Fallback: if converter select not yet populated, try wizard select
             if (!connectionId && state.accessToken) {
                 var s = document.getElementById('newModelConnectionId');
                 if (s && s.value) connectionId = s.value;
@@ -3969,11 +4483,19 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
         function loadSnowOutputToEditor() {
             const val = document.getElementById('snowJsonOutput').value;
             if (!val) return;
-            document.getElementById('jsonEditor').value = val;
+            try {
+                const obj = JSON.parse(val);
+                editorMode = 'json';
+                _updateModeToggleUI();
+                setEditorContent(obj);
+            } catch(e) {
+                document.getElementById('jsonEditor').value = val;
+            }
             state.isNewModel = true;
             state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from Snowflake Semantic View (unsaved)';
             ['formatBtn','copyBtn','saveBtn'].forEach(id => document.getElementById(id).disabled = false);
+            enableEditorModeToggle();
             switchEditorTab('json');
             showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
         }
@@ -4091,12 +4613,12 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
 
             // Inject name + folderId into the editor JSON, then save
             try {
-                const json = JSON.parse(document.getElementById('jsonEditor').value);
+                const json = getEditorJson();
                 json.name     = name;
                 json.folderId = folderId;
-                document.getElementById('jsonEditor').value = JSON.stringify(json, null, 2);
+                setEditorContent(json);
             } catch(e) {
-                showToast('Invalid JSON in editor', 'error');
+                showToast(`Invalid ${editorMode.toUpperCase()} in editor`, 'error');
                 return;
             }
 
@@ -4338,7 +4860,8 @@ relationships:
             const database = document.getElementById('dbtDatabase').value.trim();
             const schema   = document.getElementById('dbtSchema').value.trim();
 
-            let connectionId = document.getElementById('dbtConnectionId').value.trim();
+            let connectionId = document.getElementById('dbtConnectionId').value;
+            // Fallback: if the converter select is empty (not yet populated), try the wizard select
             if (!connectionId && state.accessToken) {
                 const s = document.getElementById('newModelConnectionId');
                 if (s?.value) connectionId = s.value;
@@ -4462,11 +4985,20 @@ relationships:
         function loadDbtOutputToEditor() {
             const val = document.getElementById('dbtJsonOutput').value;
             if (!val) return;
-            document.getElementById('jsonEditor').value = val;
+            // dbt output is always JSON — load it respecting current mode
+            try {
+                const obj = JSON.parse(val);
+                editorMode = 'json'; // reset to JSON first, then set content
+                _updateModeToggleUI();
+                setEditorContent(obj);
+            } catch(e) {
+                document.getElementById('jsonEditor').value = val;
+            }
             state.isNewModel = true;
             state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from dbt (unsaved)';
             ['formatBtn','copyBtn','saveBtn'].forEach(id => document.getElementById(id).disabled = false);
+            enableEditorModeToggle();
             switchEditorTab('json');
             showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
         }
@@ -4541,15 +5073,6 @@ metrics:
       denominator:
         name: order_count`;
             showToast('Example loaded', 'success');
-        }
-
-        function dbtAutoFillConnection() {
-            if (state.accessToken) {
-                const connSelect = document.getElementById('newModelConnectionId');
-                if (connSelect?.value && !document.getElementById('dbtConnectionId').value) {
-                    document.getElementById('dbtConnectionId').value = connSelect.value;
-                }
-            }
         }
 
         // ── dbt Import Modal ────────────────────────────────────────────────
@@ -4858,6 +5381,61 @@ metrics:
             showToast(`Imported ${models.length} model${models.length !== 1 ? 's' : ''} from dbt`, 'success');
         }
     </script>
+
+    <!-- Bulk Upload Options Modal -->
+    <div class="modal-overlay" id="bulkUploadOptionsModal">
+        <div class="modal" style="max-width: 520px;">
+            <div class="modal-header">
+                <div class="modal-title">⬆ Import Data Models</div>
+                <button class="modal-close" onclick="closeBulkUploadOptionsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+
+                <!-- File summary badges -->
+                <div id="bulkUploadFileSummary" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px;"></div>
+
+                <!-- Destination (required when any new models) -->
+                <div id="bulkUploadDestSection">
+                    <div style="font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); margin-bottom:12px;">
+                        Destination
+                    </div>
+                    <div id="bulkUploadDestNote" style="font-size:12px; color:var(--text-secondary); margin-bottom:14px; line-height:1.5;"></div>
+                    <div class="form-group">
+                        <label class="form-label">Workspace</label>
+                        <select class="form-input" id="buWorkspaceId" onchange="onBulkUploadWorkspaceChange()">
+                            <option value="">Loading workspaces…</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Folder</label>
+                        <select class="form-input" id="buFolderId" disabled>
+                            <option value="">Select a workspace first…</option>
+                        </select>
+                    </div>
+                </div>
+
+                <hr style="border:none; border-top:1px solid var(--border); margin:16px 0;">
+
+                <!-- Connection override -->
+                <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label" style="display:flex; align-items:center; gap:6px;">
+                        Connection Override
+                        <span style="font-size:11px; color:var(--text-muted); font-weight:400;">(optional)</span>
+                    </label>
+                    <select class="form-input" id="bulkUploadConnectionId">
+                        <option value="">Keep existing connection IDs from files</option>
+                    </select>
+                    <div class="form-hint">Override the connection ID on every element across all uploaded files.</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeBulkUploadOptionsModal()">Cancel</button>
+                <button class="btn btn-primary" id="bulkUploadProceedBtn" onclick="proceedBulkUpload()" disabled>
+                    ⬆ Upload Files
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- dbt Import Modal -->
     <div class="modal-overlay" id="dbtImportModal">
