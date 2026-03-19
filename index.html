@@ -435,6 +435,7 @@
         
         /* Status Messages */
         .status-bar {
+            margin-top: auto;
             padding: 10px 24px;
             background: var(--bg-secondary);
             border-top: 1px solid var(--border);
@@ -473,7 +474,7 @@
         /* Toast Notifications */
         .toast-container {
             position: fixed;
-            top: 20px;
+            top: 70px;
             right: 20px;
             z-index: 1000;
             display: flex;
@@ -1182,6 +1183,10 @@
                     </div>
                 </div>
             </div>
+            <div class="status-bar">
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span id="statusText">Not connected</span>
+            </div>
         </aside>
         
         <!-- Main Content -->
@@ -1221,8 +1226,9 @@
             <div class="editor-container">
                 <div class="editor-tabs">
                     <div class="editor-tab active" id="tabJson" onclick="switchEditorTab('json')">JSON Representation</div>
-                    <div class="editor-tab" id="tabDbt" onclick="switchEditorTab('dbt')">🔄 dbt Converter</div>
-                    <div class="editor-tab" id="tabSnow" onclick="switchEditorTab('snow')">❄️ Snowflake Converter</div>
+                    <div class="editor-tab" id="tabDbt" onclick="switchEditorTab('dbt')">🔄 dbt Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
+                    <div class="editor-tab" id="tabSnow" onclick="switchEditorTab('snow')">❄️ Snowflake Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
+                    <div class="editor-tab" id="tabLook" onclick="switchEditorTab('look')">🔍 LookML Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
                 </div>
                 <div class="json-editor" id="panelJson">
                     <textarea id="jsonEditor" placeholder="Select a data model from the sidebar to view and edit its JSON representation...
@@ -1450,12 +1456,105 @@ Conversion notes:
                         </div>
                     </div>
                 </div>
+
+                <!-- 🔍 LookML Converter Panel -->
+                <div class="dbt-converter" id="panelLook">
+
+                <!-- Left: File Upload + Config -->
+                <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
+                    <div class="dbt-pane-header">
+                        <span class="dbt-pane-title">LookML Project Files</span>
+                        <button class="dbt-example-btn" onclick="loadLookExample()">Load example</button>
+                    </div>
+
+                    <!-- Drop zone -->
+                    <div id="lookDropZone"
+                         onclick="document.getElementById('lookFileInput').click()"
+                         ondragover="event.preventDefault(); this.style.borderColor='var(--accent)'"
+                         ondragleave="this.style.borderColor='var(--border)'"
+                         ondrop="handleLookDrop(event)"
+                         style="border: 2px dashed var(--border); border-radius: 10px; padding: 20px 16px; text-align: center; cursor: pointer; transition: border-color 0.15s; flex-shrink: 0;">
+                        <div style="font-size: 28px; margin-bottom: 8px;">🔍</div>
+                        <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop .lkml files here</div>
+                        <div style="font-size: 11px; color: var(--text-muted);">Upload one .model.lkml + one or more .view.lkml files</div>
+                        <input type="file" id="lookFileInput" accept=".lkml" multiple style="display:none" onchange="handleLookFileInput(event)">
+                    </div>
+
+                    <!-- File list -->
+                    <div id="lookFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                    <!-- Explore selector -->
+                    <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                        <label style="font-size: 11px;">Explore</label>
+                        <select id="lookExploreSelect" class="form-input" style="font-size: 12px;" onchange="onLookExploreChange()">
+                            <option value="">— Upload a model file to load explores —</option>
+                        </select>
+                    </div>
+
+                    <!-- Connection -->
+                    <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                        <label style="font-size: 11px;">Connection</label>
+                        <select id="lookConnectionId" class="form-input" style="font-size: 12px;">
+                            <option value="">— Connect to Sigma to load —</option>
+                        </select>
+                    </div>
+
+                    <!-- Join strategy -->
+                    <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                        <label style="font-size: 11px;">Join Strategy</label>
+                        <select id="lookJoinStrategy" class="form-input" style="font-size: 12px;">
+                            <option value="auto">Auto (relationships where possible, joins otherwise)</option>
+                            <option value="relationships">Force Relationships (many-to-one only)</option>
+                            <option value="joins">Force Physical Joins (pre-joined element)</option>
+                        </select>
+                        <div class="form-hint">Relationships are lazy (join on demand). Physical joins are eager (always joined).</div>
+                    </div>
+
+                    <div class="dbt-badge-row" id="lookInputStats"></div>
+
+                    <div class="dbt-convert-row">
+                        <button class="btn btn-primary" style="flex: 1;" onclick="runLookConversion()">
+                            🔍 Convert to Sigma JSON
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Right: Output -->
+                <div class="dbt-pane">
+                    <div class="dbt-pane-header">
+                        <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-secondary btn-small" onclick="copyLookOutput()" id="lookCopyBtn" disabled>📋 Copy</button>
+                            <button class="btn btn-secondary btn-small" onclick="loadLookOutputToEditor()" id="lookLoadBtn" disabled>→ Load into Editor</button>
+                        </div>
+                    </div>
+
+                    <div id="lookWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                    <textarea id="lookJsonOutput" readonly placeholder="Converted Sigma JSON will appear here after you click Convert...
+
+How it works:
+• Upload a .model.lkml file and one or more .view.lkml files
+• Select which explore to convert
+• many_to_one / one_to_one joins → Sigma relationships (lazy)
+• Role-playing dims (from: alias) → separate elements, each with its own relationship
+• one_to_many / many_to_many / full_outer → physical join element
+• Measures → Sigma metrics (Sum, Count, Avg, CountDistinct)
+• dimension_group → datetime column
+• type: yesno → boolean column
+• derived_table blocks → skipped with warning"></textarea>
+
+                    <div class="dbt-badge-row" id="lookOutputStats"></div>
+
+                    <div class="dbt-convert-row">
+                        <button class="btn btn-success" style="flex: 1;" onclick="loadAndSaveLookModel()" id="lookSaveBtn" disabled>
+                            💾 Load & Save to Sigma
+                        </button>
+                    </div>
+                </div>
+            </div>
             </div>
 
-            <div class="status-bar">
-                <div class="status-indicator" id="statusIndicator"></div>
-                <span id="statusText">Not connected</span>
-            </div>
         </main>
     </div>
     
@@ -2819,7 +2918,7 @@ PRODUCT_NAME
         async function populateConverterConnections() {
             if (!state.accessToken) return;
             const connections = await fetchConnectionsList();
-            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId'];
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId'];
             targetIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (!sel) return;
@@ -4095,8 +4194,8 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
 
         // ── Editor Tab Switching ────────────────────────────────────────────
         function switchEditorTab(tab) {
-            const tabs = { json: 'tabJson', dbt: 'tabDbt', snow: 'tabSnow' };
-            const panels = { json: 'panelJson', dbt: 'panelDbt', snow: 'panelSnow' };
+            const tabs = { json: 'tabJson', dbt: 'tabDbt', snow: 'tabSnow', look: 'tabLook' };
+            const panels = { json: 'panelJson', dbt: 'panelDbt', snow: 'panelSnow', look: 'panelLook' };
             Object.keys(tabs).forEach(k => {
                 document.getElementById(tabs[k]).classList.toggle('active', k === tab);
             });
@@ -4109,7 +4208,7 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
                 }
             });
             // Auto-populate connection dropdowns when opening a converter tab
-            if ((tab === 'dbt' || tab === 'snow') && state.accessToken) {
+            if ((tab === 'dbt' || tab === 'snow' || tab === 'look') && state.accessToken) {
                 populateConverterConnections();
             }
         }
@@ -4118,9 +4217,17 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
 
         const SIGMA_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
+        // Global registry of IDs generated in the current conversion run.
+        // Prevents sigmaShortId() collisions within a single model.
+        const _usedIds = new Set();
         function sigmaShortId(len = 10) {
-            return Array.from({length: len}, () =>
-                SIGMA_CHARS[Math.floor(Math.random() * SIGMA_CHARS.length)]).join('');
+            let id;
+            do {
+                id = Array.from({length: len}, () =>
+                    SIGMA_CHARS[Math.floor(Math.random() * SIGMA_CHARS.length)]).join('');
+            } while (_usedIds.has(id));
+            _usedIds.add(id);
+            return id;
         }
 
         // Column IDs use Sigma's inode format: inode-{22-char base62}/{IDENTIFIER}
@@ -4130,10 +4237,18 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
 
         // SNAKE_CASE or snake_case → "Title Case" display name
         // e.g. ORDER_NUMBER → "Order Number", revenue_amount → "Revenue Amount"
+        // Small words that Sigma keeps lowercase in display names (unless first word)
+        const SIGMA_LOWERCASE_WORDS = new Set([
+            'a','an','the','and','but','or','for','nor','so','yet',
+            'at','by','in','of','on','to','up','as','into','via','per'
+        ]);
         function sigmaDisplayName(s) {
-            return (s || '').toLowerCase().split('_')
-                .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-                .join(' ');
+            const words = (s || '').toLowerCase().split('_');
+            return words.map((w, i) =>
+                (i === 0 || !SIGMA_LOWERCASE_WORDS.has(w))
+                    ? w.charAt(0).toUpperCase() + w.slice(1)
+                    : w
+            ).join(' ');
         }
 
         // Column formula: [TABLE_NAME/Display Name]
@@ -4261,6 +4376,7 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
         }
 
         function runSnowConversion() {
+            _usedIds.clear(); // reset ID registry for this conversion run
             var yamlText = document.getElementById('snowYamlInput').value.trim();
             if (!yamlText) { showToast('Paste some Snowflake semantic view YAML first', 'warning'); return; }
 
@@ -4611,7 +4727,15 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
             if (!name)     { showToast('Enter a model name', 'warning'); return; }
             if (!folderId) { showToast('Select a folder', 'warning'); return; }
 
-            // Inject name + folderId into the editor JSON, then save
+            closeSaveLocationModal();
+
+            // LookML two-step: POST without rels, then PUT with rels
+            if (state._lookTwoStepSpec) {
+                await executeLookTwoStepSave(name, folderId);
+                return;
+            }
+
+            // Standard save
             try {
                 const json = getEditorJson();
                 json.name     = name;
@@ -4621,8 +4745,6 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
                 showToast(`Invalid ${editorMode.toUpperCase()} in editor`, 'error');
                 return;
             }
-
-            closeSaveLocationModal();
             await saveDataModel();
         }
 
@@ -5380,6 +5502,877 @@ metrics:
             runDbtConversion();
             showToast(`Imported ${models.length} model${models.length !== 1 ? 's' : ''} from dbt`, 'success');
         }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // 🔍 LookML CONVERTER
+        // ══════════════════════════════════════════════════════════════════════
+
+        let lookProject = {
+            views: {},      // viewName → { sqlTableName, path[], dimensions[], measures[] }
+            explores: {},   // exploreName → { label, joins: [{alias, from, viewName, relationship, joinType, keys[]}] }
+            modelName: ''
+        };
+
+        // ── LookML Block Parser ───────────────────────────────────────────────
+        // Parses LookML's curly-brace block syntax into a nested object tree.
+        function parseLookML(text) {
+            // Strip line comments
+            text = text.replace(/#[^\n]*/g, '');
+            const tokens = [];
+            // Tokenize — critically: ${...} must be a single token so braces inside
+            // don't get confused with block delimiters
+            const re = /;;;?|\$\{[^}]*\}|[{}]|"(?:[^"\\]|\\.)*"|[^\s{}:;,"]+|:/g;
+            let m;
+            while ((m = re.exec(text)) !== null) tokens.push(m[0]);
+
+            let pos = 0;
+            const peek  = (n) => tokens[pos + (n || 0)];
+            const consume = () => tokens[pos++];
+
+            // Keys where the syntax is:  key: name { ... }  (named sub-block)
+            const NAMED_BLOCK_KEYS = new Set([
+                'dimension','measure','dimension_group','filter','parameter',
+                'join','set','link','action','form_param','option'
+            ]);
+
+            // Keys where the value runs until a ;; terminator
+            const SQL_KEYS = new Set(['sql','sql_on','sql_where','sql_table_name',
+                                      'sql_trigger_value','html','label_from_parameter']);
+
+            function parseBlock() {
+                const obj = {};
+                while (pos < tokens.length) {
+                    const t = peek();
+                    if (t === '}') { consume(); break; }
+                    if (t === undefined) break;
+
+                    const key = consume();
+                    if (peek() !== ':') continue; // not a key:value pair — skip orphan token
+                    consume(); // eat ':'
+
+                    const a0 = peek();   // first token after colon
+                    const a1 = peek(1);  // second token after colon
+
+                    if (SQL_KEYS.has(key)) {
+                        // Consume everything until ;; (or until next apparent key)
+                        const parts = [];
+                        while (pos < tokens.length &&
+                               peek() !== ';;' && peek() !== ';;;' &&
+                               peek() !== '}') {
+                            parts.push(consume());
+                        }
+                        if (peek() === ';;' || peek() === ';;;') consume();
+                        let val = parts.join(' ').trim();
+                        if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+                        obj[key] = val;
+
+                    } else if (NAMED_BLOCK_KEYS.has(key) && a0 && a0 !== '{' && a1 === '{') {
+                        // Named block:  key: name { ... }
+                        const name = consume().replace(/"/g, '');
+                        consume(); // eat '{'
+                        const child = parseBlock();
+                        child._name = name;
+                        // Store repeated named blocks as arrays
+                        if (obj[key] !== undefined) {
+                            if (!Array.isArray(obj[key])) obj[key] = [obj[key]];
+                            obj[key].push(child);
+                        } else {
+                            obj[key] = [child];
+                        }
+
+                    } else if (a0 === '{') {
+                        // Unnamed block:  key: { ... }
+                        consume();
+                        const child = parseBlock();
+                        if (obj[key] !== undefined) {
+                            if (!Array.isArray(obj[key])) obj[key] = [obj[key]];
+                            obj[key].push(child);
+                        } else {
+                            obj[key] = child;
+                        }
+
+                    } else if (a0 === ';;' || a0 === ';;;') {
+                        consume(); obj[key] = '';
+
+                    } else {
+                        // Scalar
+                        let val = consume() || '';
+                        if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+                        if (peek() === ';;' || peek() === ';;;') consume();
+                        obj[key] = val;
+                    }
+                }
+                return obj;
+            }
+
+            // Top-level: view: name { } / explore: name { } / connection: "..." / label: "..."
+            const result = { views: [], explores: [], connection: null, label: null };
+            while (pos < tokens.length) {
+                const keyword = consume();
+                if (!keyword) continue;
+                if ((keyword === 'view' || keyword === 'explore') && peek() === ':') {
+                    consume(); // eat ':'
+                    const name = (consume() || '').replace(/"/g, '');
+                    if (peek() === '{') {
+                        consume();
+                        const block = parseBlock();
+                        block._name = name;
+                        result[keyword + 's'].push(block);
+                    }
+                } else if (keyword === 'connection' && peek() === ':') {
+                    consume(); result.connection = (consume() || '').replace(/"/g, '');
+                } else if (keyword === 'label' && peek() === ':') {
+                    consume(); result.label = (consume() || '').replace(/"/g, '');
+                } else if (peek() === ':') {
+                    // Unknown top-level keyword — skip value/block
+                    consume();
+                    if (peek() === '{') { consume(); parseBlock(); }
+                    else { consume(); if (peek() === ';;' || peek() === ';;;') consume(); }
+                }
+            }
+            return result;
+        }
+
+        // ── Extract sql_table_name path array from a view block ───────────────
+        function lookExtractPath(view) {
+            const raw = (view.sql_table_name || view.from || '').trim().replace(/`/g, '');
+            if (!raw) return [];
+            return raw.split('.').map(p => p.trim().toUpperCase()).filter(Boolean);
+        }
+
+        // ── Strip ${TABLE}. / ${view.field} from a sql: expression ────────────
+        function lookStripSql(sql) {
+            if (!sql) return '';
+            // ${TABLE}.COLUMN → just COLUMN
+            sql = sql.replace(/\$\{TABLE\}\./gi, '').trim();
+            // ${view_name.field} → field (for cross-view refs — just take the field part)
+            sql = sql.replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1');
+            return sql.trim();
+        }
+
+        // ── Map LookML type to Sigma type ─────────────────────────────────────
+        function lookSigmaType(lkType) {
+            const map = {
+                string: 'text', number: 'number', yesno: 'boolean',
+                date: 'datetime', time: 'datetime', datetime: 'datetime',
+                zipcode: 'text', tier: 'text', location: 'text',
+                distance: 'number', duration: 'number', count: 'number'
+            };
+            return map[(lkType || '').toLowerCase()] || 'text';
+        }
+
+        // ── Map LookML measure type to Sigma formula ──────────────────────────
+        function lookSigmaMetric(measureType, colName) {
+            const dn = sigmaDisplayName(colName);
+            const map = {
+                sum: `Sum([${dn}])`,
+                count: `CountIf(IsNotNull([${dn}]))`,
+                count_distinct: `CountDistinct([${dn}])`,
+                average: `Avg([${dn}])`,
+                max: `Max([${dn}])`,
+                min: `Min([${dn}])`,
+                list: `ListAgg([${dn}])`,
+            };
+            return map[(measureType || '').toLowerCase()] || `CountIf(IsNotNull([${dn}]))`;
+        }
+
+        // ── Ingest files ──────────────────────────────────────────────────────
+        async function handleLookFileInput(event) {
+            await ingestLookFiles(Array.from(event.target.files));
+            event.target.value = '';
+        }
+
+        function handleLookDrop(event) {
+            event.preventDefault();
+            document.getElementById('lookDropZone').style.borderColor = 'var(--border)';
+            ingestLookFiles(Array.from(event.dataTransfer.files));
+        }
+
+        async function ingestLookFiles(files) {
+            for (const file of files) {
+                const text = await file.text();
+                const isModel = file.name.endsWith('.model.lkml') || file.name.includes('.model.');
+                try {
+                    const parsed = parseLookML(text);
+                    if (isModel) {
+                        lookProject.modelName = file.name;
+                        parsed.explores.forEach(ex => {
+                            lookProject.explores[ex._name] = ex;
+                        });
+                    }
+                    // Extract views from any file (model files can also have views)
+                    parsed.views.forEach(v => {
+                        lookProject.views[v._name] = v;
+                    });
+                } catch(e) {
+                    showToast(`Parse error in ${file.name}: ${e.message}`, 'error');
+                    return;
+                }
+            }
+            renderLookFileList(files);
+            renderLookExplores();
+            renderLookInputStats();
+        }
+
+        function renderLookFileList(newFiles) {
+            const list = document.getElementById('lookFileList');
+            // Add new badges (don't clear existing)
+            newFiles.forEach(f => {
+                const isModel = f.name.endsWith('.model.lkml') || f.name.includes('.model.');
+                const badge = document.createElement('div');
+                badge.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-tertiary);border-radius:6px;font-size:12px;';
+                badge.innerHTML = `<span style="font-size:14px;">${isModel ? '📋' : '👁'}</span>
+                    <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${f.name}">${f.name}</span>
+                    <span style="font-size:10px;color:var(--text-muted);flex-shrink:0;">${isModel ? 'MODEL' : 'VIEW'}</span>`;
+                list.appendChild(badge);
+            });
+        }
+
+        function renderLookExplores() {
+            const sel = document.getElementById('lookExploreSelect');
+            sel.innerHTML = '<option value="">— Select an explore —</option>';
+            Object.keys(lookProject.explores).forEach(name => {
+                const ex = lookProject.explores[name];
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = ex.label || name;
+                sel.appendChild(opt);
+            });
+            // Auto-select if only one
+            if (Object.keys(lookProject.explores).length === 1) {
+                sel.value = Object.keys(lookProject.explores)[0];
+            }
+        }
+
+        function renderLookInputStats() {
+            const viewCount = Object.keys(lookProject.views).length;
+            const exploreCount = Object.keys(lookProject.explores).length;
+            const el = document.getElementById('lookInputStats');
+            el.innerHTML = [
+                `<span class="dbt-stat-badge">${viewCount} view${viewCount!==1?'s':''}</span>`,
+                `<span class="dbt-stat-badge">${exploreCount} explore${exploreCount!==1?'s':''}</span>`
+            ].join('');
+        }
+
+        function onLookExploreChange() { /* could pre-show join count */ }
+
+        // ── Main Conversion ───────────────────────────────────────────────────
+        function runLookConversion() {
+            _usedIds.clear(); // reset ID registry for this conversion run
+            const exploreName = document.getElementById('lookExploreSelect').value;
+            if (!exploreName) { showToast('Select an explore first', 'warning'); return; }
+
+            const explore = lookProject.explores[exploreName];
+            if (!explore) { showToast('Explore not found in project', 'error'); return; }
+
+            const connectionId = document.getElementById('lookConnectionId').value;
+            const strategy = document.getElementById('lookJoinStrategy').value;
+            const warnings = [];
+
+            // ── Collect all views used by this explore ──────────────────────
+            // Base view is the explore itself (from: or same name)
+            const baseViewName = explore.from || exploreName;
+            const baseAlias = exploreName; // alias used in the explore
+            // sql_on fields reference the VIEW name (e.g. "order_fact"), not the explore alias
+            // ("retail_analytics"), so we must match against both when resolving keys
+            const isBaseView = (name) => name === baseAlias || name === baseViewName;
+
+            // Build join list: [{alias, viewName, relationship, joinType, keys}]
+            const joinDefs = [];
+            const joinsRaw = explore.join
+                ? (Array.isArray(explore.join) ? explore.join : [explore.join])
+                : [];
+
+            joinsRaw.forEach(j => {
+                const alias = j._name || j.join;
+                const viewName = j.from || alias;
+                const rel = (j.relationship || 'many_to_one').toLowerCase();
+                const jType = (j.type || 'left_outer').toLowerCase().replace('_join','').replace(' ','_');
+
+                // Extract join keys from sql_on: ${a.key} = ${b.key}
+                const sqlOn = j.sql_on || '';
+                const keyMatch = sqlOn.match(/\$\{(\w+)\.(\w+)\}\s*=\s*\$\{(\w+)\.(\w+)\}/);
+                const keys = keyMatch ? [{
+                    leftView: keyMatch[1], leftCol: keyMatch[2].toUpperCase(),
+                    rightView: keyMatch[3], rightCol: keyMatch[4].toUpperCase()
+                }] : [];
+
+                if (!keyMatch && sqlOn) {
+                    warnings.push(`⚠ Join "${alias}": complex sql_on could not be parsed automatically — keys may need manual review`);
+                }
+
+                joinDefs.push({ alias, viewName, rel, joinType: jType, keys });
+            });
+
+            // ── Decide per join: relationship or physical join ───────────────
+            // Physical join needed when:
+            //   strategy === 'joins', OR
+            //   strategy === 'auto' AND (one_to_many / many_to_many / full_outer)
+            const usePhysical = (strategy === 'joins');
+            const needsPhysical = (j) => {
+                if (usePhysical) return true;
+                if (strategy === 'relationships') return false;
+                if (j.rel === 'one_to_many' || j.rel === 'many_to_many') return true;
+                if (j.joinType === 'full_outer') return true;
+                return false;
+            };
+
+            const physicalJoins = joinDefs.filter(needsPhysical);
+            const relJoins = joinDefs.filter(j => !needsPhysical(j));
+
+            // ── One Sigma element per unique physical view ───────────────────
+            // Sigma's spec API rejects duplicate source.path values with a
+            // "cycle in dependency order" error. Role-playing dims (multiple
+            // join aliases pointing to the same physical table) must share ONE
+            // element. Additional relationships for the same physical target can
+            // be added manually in the Sigma ERD view after import.
+
+            const elementMap  = {};  // alias   → { element, elementId, colIdMap }
+            const physViewMap = {};  // viewName → { element, elementId, colIdMap }
+
+            // Base view — all columns included (FK cols present, matching Snow SV structure)
+            const baseResult = lookConvertView(baseViewName, baseAlias, connectionId, warnings);
+            elementMap[baseAlias]    = baseResult;
+            physViewMap[baseViewName] = baseResult;
+            if (baseAlias !== baseViewName) elementMap[baseViewName] = baseResult;
+
+            // Join views — create at most ONE element per physical viewName
+            joinDefs.forEach(j => {
+                if (!physViewMap[j.viewName]) {
+                    const res = lookConvertView(j.viewName, j.viewName, connectionId, warnings);
+                    physViewMap[j.viewName] = res;
+                }
+                // Register alias → same physical element
+                elementMap[j.alias] = physViewMap[j.viewName];
+                if (!elementMap[j.viewName]) elementMap[j.viewName] = physViewMap[j.viewName];
+            });
+
+            // ── Build relationships ───────────────────────────────────────────
+            // Track which physical targets already have a relationship to avoid
+            // duplicate-source-column relationships on the same physical element.
+            const baseEl = elementMap[baseAlias].element;
+            const usedTargetCols = new Set(); // "targetElementId|targetColId" combos already wired
+
+            relJoins.forEach(j => {
+                const targetRes = elementMap[j.alias];
+                if (!targetRes) {
+                    warnings.push(`⚠ Join "${j.alias}": view "${j.viewName}" not found in uploaded files`);
+                    return;
+                }
+
+                j.keys.forEach(k => {
+                    const isTarget = (name) => name === j.alias || name === j.viewName;
+                    const srcColId = lookFindColId(elementMap[baseAlias], isBaseView(k.leftView) ? k.leftCol : k.rightCol);
+                    const tgtColId = lookFindColId(targetRes, isTarget(k.leftView) ? k.leftCol : k.rightCol);
+
+                    if (!srcColId || !tgtColId) {
+                        warnings.push(`⚠ Relationship "${j.alias}": could not resolve column IDs for keys (${k.leftCol} / ${k.rightCol}) — ensure FK columns are defined as dimensions in the view files`);
+                        return;
+                    }
+
+                    const pairKey = `${targetRes.elementId}|${tgtColId}`;
+                    if (usedTargetCols.has(pairKey)) {
+                        // Role-playing dim — same physical table already wired via different FK
+                        warnings.push(`ℹ Role-playing join "${j.alias}" (→ ${j.viewName}) shares a physical table already used by another relationship. Add this relationship manually in Sigma's ERD view after import: ${k.leftCol} → ${k.rightCol}`);
+                        return;
+                    }
+                    usedTargetCols.add(pairKey);
+
+                    if (!baseEl.relationships) baseEl.relationships = [];
+                    baseEl.relationships.push({
+                        id: sigmaShortId(),
+                        targetElementId: targetRes.elementId,
+                        keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
+                        name: j.alias
+                    });
+                });
+            });
+
+            // ── Collect unique elements (one per physical view) ───────────────
+            const seenIds = new Set();
+            let allElements = Object.values(physViewMap).filter(r => {
+                if (seenIds.has(r.elementId)) return false;
+                seenIds.add(r.elementId);
+                return true;
+            }).map(r => r.element);
+
+            // Fact element (with relationships) goes FIRST — matches Sigma's own export format
+            allElements.sort((a, b) => {
+                const aHasRel = !!(a.relationships && a.relationships.length > 0);
+                const bHasRel = !!(b.relationships && b.relationships.length > 0);
+                if (aHasRel === bHasRel) return 0;
+                return aHasRel ? -1 : 1;
+            });
+
+            if (physicalJoins.length > 0) {
+                // Build a joined element that starts from base and left-joins each physical join
+                const joinedEl = {
+                    id: sigmaShortId(),
+                    kind: 'table',
+                    source: {
+                        kind: 'join',
+                        joins: [],
+                        primarySource: { elementId: elementMap[baseAlias].elementId, kind: 'table' }
+                    },
+                    columns: [],
+                    order: []
+                };
+
+                // Carry all base columns into joined element with short IDs
+                elementMap[baseAlias].element.columns.forEach(c => {
+                    const newId = sigmaShortId();
+                    joinedEl.columns.push({ id: newId, formula: c.formula });
+                    joinedEl.order.push(newId);
+                });
+
+                physicalJoins.forEach(j => {
+                    const targetRes = elementMap[j.alias] || elementMap[j.viewName];
+                    if (!targetRes) { warnings.push(`⚠ Physical join "${j.alias}": target not found`); return; }
+
+                    const jTypeMap = { left_outer: 'left-outer', inner: 'inner', full_outer: 'full-outer', right_outer: 'right-outer', cross: 'cross' };
+                    const sigmaJoinType = jTypeMap[j.joinType] || 'left-outer';
+
+                    // Build column key pairs
+                    const colPairs = j.keys.map(k => {
+                        const leftDisplay = sigmaDisplayName(isBaseView(k.leftView) ? k.leftCol : k.rightCol);
+                        const rightDisplay = sigmaDisplayName(k.leftView === j.alias ? k.leftCol : k.rightCol);
+                        return { left: `[${leftDisplay}]`, right: `[${rightDisplay}]` };
+                    });
+
+                    joinedEl.source.joins.push({
+                        left: { elementId: elementMap[baseAlias].elementId, kind: 'table' },
+                        right: { elementId: targetRes.elementId, kind: 'table' },
+                        columns: colPairs.length > 0 ? colPairs : [{ left: '[id]', right: '[id]' }],
+                        joinType: sigmaJoinType
+                    });
+
+                    // Add target columns to joined element
+                    targetRes.element.columns.forEach(c => {
+                        const newId = sigmaShortId();
+                        joinedEl.columns.push({ id: newId, formula: c.formula });
+                        joinedEl.order.push(newId);
+                    });
+                });
+
+                if (joinedEl.source.joins.length > 0) {
+                    allElements.push(joinedEl);
+                    warnings.push(`ℹ ${physicalJoins.length} join(s) converted to a physical join element (eager — always joined in SQL)`);
+                }
+            }
+
+            // ── Assemble final data model JSON ───────────────────────────────
+            const modelName = explore.label || exploreName;
+            const outputJson = {
+                name: modelName,
+                pages: [{
+                    id: sigmaShortId(),
+                    name: 'Page 1',
+                    elements: allElements
+                }]
+            };
+
+            // ── Render output ─────────────────────────────────────────────────
+            const out = document.getElementById('lookJsonOutput');
+            out.value = JSON.stringify(outputJson, null, 2);
+
+            const warnBox = document.getElementById('lookWarningBox');
+            if (warnings.length) {
+                warnBox.style.display = '';
+                warnBox.innerHTML = warnings.map(w => `<div>${w}</div>`).join('');
+            } else {
+                warnBox.style.display = 'none';
+            }
+
+            // Stats
+            const relCount = relJoins.length;
+            const phyCount = physicalJoins.length;
+            const elemCount = allElements.length;
+            document.getElementById('lookOutputStats').innerHTML = [
+                `<span class="dbt-stat-badge">${elemCount} element${elemCount!==1?'s':''}</span>`,
+                relCount ? `<span class="dbt-stat-badge" style="color:var(--success);">${relCount} relationship${relCount!==1?'s':''}</span>` : '',
+                phyCount ? `<span class="dbt-stat-badge" style="color:var(--warning);">${phyCount} physical join${phyCount!==1?'s':''}</span>` : '',
+                warnings.length ? `<span class="dbt-stat-badge" style="color:var(--warning);">${warnings.length} warning${warnings.length!==1?'s':''}</span>` : ''
+            ].filter(Boolean).join('');
+
+            ['lookCopyBtn','lookLoadBtn','lookSaveBtn'].forEach(id => document.getElementById(id).disabled = false);
+            showToast(`Converted explore "${exploreName}" → ${elemCount} elements`, 'success');
+        }
+
+        // ── Convert a single LookML view to a Sigma element ──────────────────
+        function lookConvertView(viewName, displayAlias, connectionId, warnings) {
+            const view = lookProject.views[viewName];
+            if (!view) {
+                warnings.push(`⚠ View "${viewName}" not found in uploaded files — element will have no columns`);
+                const id = sigmaShortId();
+                return { element: { id, kind: 'table', source: { connectionId: connectionId || '<CONNECTION_ID>', kind: 'warehouse-table', path: [viewName.toUpperCase()] }, columns: [], order: [] }, elementId: id, colIdMap: {} };
+            }
+
+            if (view.derived_table !== undefined) {
+                warnings.push(`⚠ View "${viewName}" uses derived_table (inline SQL) — converted as passthrough with no source path. You must set the path manually.`);
+            }
+
+            const path = lookExtractPath(view);
+            const tableName = (path[path.length - 1] || viewName).toUpperCase();
+            const elementId = sigmaShortId();
+            const element = {
+                id: elementId,
+                kind: 'table',
+                source: {
+                    connectionId: connectionId || '<CONNECTION_ID>',
+                    kind: 'warehouse-table',
+                    path: path.length > 0 ? path : [viewName.toUpperCase()]
+                },
+                columns: [],
+                metrics: [],
+                order: []
+            };
+
+            const colIdMap = {};
+
+            // ── Dimensions ──────────────────────────────────────────────────
+            const dims = view.dimension
+                ? (Array.isArray(view.dimension) ? view.dimension : [view.dimension])
+                : [];
+
+            dims.forEach(d => {
+                if (!d._name) return;
+                const colName = d._name.toUpperCase();
+                const sqlCol = lookStripSql(d.sql) || colName;
+                const physicalCol = sqlCol.split('.').pop().toUpperCase();
+                const colId = sigmaShortId();
+                colIdMap[colName] = colId;
+                colIdMap[physicalCol] = colId;
+                element.columns.push({
+                    id: colId,
+                    formula: `[${tableName}/${sigmaDisplayName(physicalCol)}]`
+                });
+                element.order.push(colId);
+            });
+
+            // ── Dimension groups (time) ──────────────────────────────────────
+            const dimGroups = view.dimension_group
+                ? (Array.isArray(view.dimension_group) ? view.dimension_group : [view.dimension_group])
+                : [];
+
+            dimGroups.forEach(dg => {
+                if (!dg._name) return;
+                const colName = dg._name.toUpperCase();
+                const sqlCol = lookStripSql(dg.sql) || colName;
+                const physicalCol = sqlCol.split('.').pop().toUpperCase();
+                const colId = sigmaShortId();
+                colIdMap[colName] = colId;
+                colIdMap[physicalCol] = colId;
+                element.columns.push({
+                    id: colId,
+                    formula: `[${tableName}/${sigmaDisplayName(physicalCol)}]`
+                });
+                element.order.push(colId);
+            });
+
+            // ── Measures → metrics ───────────────────────────────────────────
+            const measures = view.measure
+                ? (Array.isArray(view.measure) ? view.measure : [view.measure])
+                : [];
+
+            measures.forEach(ms => {
+                if (!ms._name) return;
+                const msName = ms._name.toUpperCase();
+                const sqlCol = lookStripSql(ms.sql) || msName;
+                const physicalCol = sqlCol.split('.').pop().toUpperCase() || msName;
+                const msType = (ms.type || 'count').toLowerCase();
+
+                if (msType === 'count') {
+                    // Plain row count — no source column needed, use Count()
+                    element.metrics.push({
+                        id: sigmaShortId(),
+                        formula: 'Count()',
+                        name: ms.label || sigmaDisplayName(msName)
+                    });
+                } else if (msType === 'count_distinct') {
+                    // Count distinct requires a column — use physicalCol if available, else fall back to Count()
+                    const cdFormula = physicalCol && physicalCol !== msName
+                        ? `CountDistinct([${sigmaDisplayName(physicalCol)}])`
+                        : `CountDistinct([${sigmaDisplayName(msName)}])`;
+                    // Ensure the source column exists
+                    if (physicalCol && !colIdMap[physicalCol]) {
+                        const colId = sigmaShortId();
+                        colIdMap[physicalCol] = colId;
+                        element.columns.push({
+                            id: colId,
+                            formula: `[${tableName}/${sigmaDisplayName(physicalCol)}]`
+                        });
+                        element.order.push(colId);
+                    }
+                    element.metrics.push({
+                        id: sigmaShortId(),
+                        formula: cdFormula,
+                        name: ms.label || sigmaDisplayName(msName)
+                    });
+                } else {
+                    // Make sure source column exists
+                    if (!colIdMap[physicalCol]) {
+                        const colId = sigmaShortId();
+                        colIdMap[physicalCol] = colId;
+                        element.columns.push({
+                            id: colId,
+                            formula: `[${tableName}/${sigmaDisplayName(physicalCol)}]`
+                        });
+                        element.order.push(colId);
+                    }
+                    element.metrics.push({
+                        id: sigmaShortId(),
+                        formula: lookSigmaMetric(msType, physicalCol),
+                        name: ms.label || sigmaDisplayName(msName)
+                    });
+                }
+            });
+
+            if (element.metrics.length === 0) delete element.metrics;
+            return { element, elementId, colIdMap };
+        }
+
+        // ── Find column ID by physical name in an element result ─────────────
+        function lookFindColId(elementResult, colName) {
+            if (!elementResult) return null;
+            const upper = (colName || '').toUpperCase();
+            return elementResult.colIdMap[upper] || null;
+        }
+
+        // ── Output helpers ────────────────────────────────────────────────────
+        function copyLookOutput() {
+            const val = document.getElementById('lookJsonOutput').value;
+            if (!val) return;
+            navigator.clipboard.writeText(val).then(() => showToast('Copied to clipboard', 'success'));
+        }
+
+        function loadLookOutputToEditor() {
+            const val = document.getElementById('lookJsonOutput').value;
+            if (!val) return;
+            try {
+                const obj = JSON.parse(val);
+                editorMode = 'json';
+                _updateModeToggleUI();
+                setEditorContent(obj);
+            } catch(e) {
+                document.getElementById('jsonEditor').value = val;
+            }
+            state.isNewModel = true;
+            state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from LookML (unsaved)';
+            ['formatBtn','copyBtn','saveBtn'].forEach(id => document.getElementById(id).disabled = false);
+            enableEditorModeToggle();
+            switchEditorTab('json');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
+        }
+
+        async function loadAndSaveLookModel() {
+            const rawVal = document.getElementById('lookJsonOutput').value;
+            if (!rawVal) { showToast('Convert a LookML explore first', 'warning'); return; }
+            let fullSpec;
+            try { fullSpec = JSON.parse(rawVal); } catch(e) { showToast('Invalid JSON in LookML output', 'error'); return; }
+
+            loadLookOutputToEditor();
+
+            if (!state.accessToken) {
+                showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning');
+                return;
+            }
+
+            // Stash for two-step save (POST without rels, then PUT with rels)
+            state._lookTwoStepSpec = fullSpec;
+            openSaveLocationModal();
+        }
+
+        // Two-step LookML save: called from confirmSaveLocation when _lookTwoStepSpec is set
+        async function executeLookTwoStepSave(name, folderId) {
+            // Parse fresh from the output textarea — never trust stashed state
+            delete state._lookTwoStepSpec;
+            const rawVal = document.getElementById('lookJsonOutput').value;
+            if (!rawVal) { showToast('LookML output is empty', 'error'); return; }
+            let fullSpec;
+            try { fullSpec = JSON.parse(rawVal); } catch(e) { showToast('Invalid JSON in LookML output', 'error'); return; }
+
+            const btn = document.getElementById('saveBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner"></div><span>Saving…</span>';
+
+            try {
+                // Single POST with full spec
+                updateStatus('loading', 'Saving model…');
+                const postResp = await fetch(`${state.baseUrl}/v2/dataModels/spec`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ schemaVersion: 1, name, folderId, pages: JSON.parse(JSON.stringify(fullSpec.pages)) })
+                });
+                if (!postResp.ok) {
+                    const t = await postResp.text();
+                    let msg = `HTTP ${postResp.status}`;
+                    try { msg = JSON.parse(t).message || msg; } catch(e) {}
+                    throw new Error(`Save failed: ${msg}`);
+                }
+                const postResult = await postResp.json();
+                const dataModelId = postResult.dataModelId;
+                if (!dataModelId) throw new Error('No dataModelId returned');
+
+                // Refresh editor with saved spec
+                const getResp = await fetch(`${state.baseUrl}/v2/dataModels/${dataModelId}/spec`, {
+                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
+                });
+                if (getResp.ok) {
+                    const saved = await getResp.json();
+                    saved.dataModelId = dataModelId;
+                    state.selectedModel = saved;
+                    state.originalJson = JSON.stringify(saved, null, 2);
+                    state.isNewModel = false;
+                    setEditorContent(saved);
+                    document.getElementById('editorTitle').textContent = name;
+                    document.getElementById('refreshSigmaBtn').disabled = false;
+                    enableEditorModeToggle();
+                }
+
+                updateStatus('connected', 'Saved!');
+                showToast('✅ LookML model saved to Sigma!', 'success');                await loadDataModels();
+
+            } catch(err) {
+                updateStatus('error', 'Save failed');
+                showToast(`Save failed: ${err.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Save to Sigma';
+            }
+        }
+
+        // ── Example loader ────────────────────────────────────────────────────
+        function loadLookExample() {
+            // Inject the example files as if they were uploaded
+            const modelLkml = `connection: "snowflake_csa"
+label: "Retail Analytics"
+
+explore: retail_analytics {
+  label: "Retail Analytics"
+  from: order_fact
+
+  join: customer_dim {
+    type: left_outer
+    sql_on: \${order_fact.customer_key} = \${customer_dim.customer_key} ;;
+    relationship: many_to_one
+  }
+
+  join: product_dim {
+    type: left_outer
+    sql_on: \${order_fact.product_key} = \${product_dim.product_key} ;;
+    relationship: many_to_one
+  }
+
+  join: order_store {
+    from: store_dim
+    type: left_outer
+    sql_on: \${order_fact.order_store_key} = \${order_store.store_key} ;;
+    relationship: many_to_one
+  }
+
+  join: ship_store {
+    from: store_dim
+    type: left_outer
+    sql_on: \${order_fact.ship_store_key} = \${ship_store.store_key} ;;
+    relationship: many_to_one
+  }
+
+  join: order_date {
+    from: date_dim
+    type: left_outer
+    sql_on: \${order_fact.order_date_key} = \${order_date.date_key} ;;
+    relationship: many_to_one
+  }
+
+  join: ship_date {
+    from: date_dim
+    type: left_outer
+    sql_on: \${order_fact.ship_date_key} = \${ship_date.date_key} ;;
+    relationship: many_to_one
+  }
+}`;
+
+            const viewLkml = `view: order_fact {
+  sql_table_name: CSA.TJ.ORDER_FACT ;;
+
+  dimension: order_id { type: string sql: \${TABLE}.ORDER_ID ;; primary_key: yes }
+  dimension: order_line { type: number sql: \${TABLE}.ORDER_LINE ;; }
+  dimension: order_channel { type: string sql: \${TABLE}.ORDER_CHANNEL ;; }
+  dimension: order_status { type: string sql: \${TABLE}.ORDER_STATUS ;; }
+  dimension: customer_key { type: number sql: \${TABLE}.CUSTOMER_KEY ;; hidden: yes }
+  dimension: product_key { type: number sql: \${TABLE}.PRODUCT_KEY ;; hidden: yes }
+  dimension: order_store_key { type: number sql: \${TABLE}.ORDER_STORE_KEY ;; hidden: yes }
+  dimension: ship_store_key { type: number sql: \${TABLE}.SHIP_STORE_KEY ;; hidden: yes }
+  dimension: order_date_key { type: number sql: \${TABLE}.ORDER_DATE_KEY ;; hidden: yes }
+  dimension: ship_date_key { type: number sql: \${TABLE}.SHIP_DATE_KEY ;; hidden: yes }
+  dimension: is_returned { type: yesno sql: \${TABLE}.IS_RETURNED ;; }
+  measure: total_gross_revenue { type: sum sql: \${TABLE}.GROSS_REVENUE ;; }
+  measure: total_net_revenue { type: sum sql: \${TABLE}.NET_REVENUE ;; }
+  measure: order_line_count { type: count }
+  measure: avg_days_to_ship { type: average sql: \${TABLE}.DAYS_TO_SHIP ;; }
+}
+
+view: customer_dim {
+  sql_table_name: CSA.TJ.CUSTOMER_DIM ;;
+  dimension: customer_key { type: number sql: \${TABLE}.CUSTOMER_KEY ;; primary_key: yes hidden: yes }
+  dimension: customer_id { type: string sql: \${TABLE}.CUSTOMER_ID ;; }
+  dimension: first_name { type: string sql: \${TABLE}.FIRST_NAME ;; }
+  dimension: last_name { type: string sql: \${TABLE}.LAST_NAME ;; }
+  dimension: customer_segment { type: string sql: \${TABLE}.CUSTOMER_SEGMENT ;; }
+  dimension: loyalty_tier { type: string sql: \${TABLE}.LOYALTY_TIER ;; }
+  measure: customer_count { type: count_distinct sql: \${TABLE}.CUSTOMER_KEY ;; }
+}
+
+view: product_dim {
+  sql_table_name: CSA.TJ.PRODUCT_DIM ;;
+  dimension: product_key { type: number sql: \${TABLE}.PRODUCT_KEY ;; primary_key: yes hidden: yes }
+  dimension: product_name { type: string sql: \${TABLE}.PRODUCT_NAME ;; }
+  dimension: category { type: string sql: \${TABLE}.CATEGORY ;; }
+  dimension: brand { type: string sql: \${TABLE}.BRAND ;; }
+}
+
+view: store_dim {
+  sql_table_name: CSA.TJ.STORE_DIM ;;
+  dimension: store_key { type: number sql: \${TABLE}.STORE_KEY ;; primary_key: yes hidden: yes }
+  dimension: store_name { type: string sql: \${TABLE}.STORE_NAME ;; }
+  dimension: store_city { type: string sql: \${TABLE}.STORE_CITY ;; }
+  dimension: store_region { type: string sql: \${TABLE}.STORE_REGION ;; }
+}
+
+view: date_dim {
+  sql_table_name: CSA.TJ.DATE_DIM ;;
+  dimension: date_key { type: number sql: \${TABLE}.DATE_KEY ;; primary_key: yes hidden: yes }
+  dimension: full_date { type: date sql: \${TABLE}.FULL_DATE ;; }
+  dimension: month_name { type: string sql: \${TABLE}.MONTH_NAME ;; }
+  dimension: year { type: number sql: \${TABLE}.YEAR ;; }
+}`;
+
+            // Reset project state
+            lookProject = { views: {}, explores: {}, modelName: '' };
+            document.getElementById('lookFileList').innerHTML = '';
+            document.getElementById('lookInputStats').innerHTML = '';
+            document.getElementById('lookOutputStats').innerHTML = '';
+            document.getElementById('lookJsonOutput').value = '';
+            document.getElementById('lookWarningBox').style.display = 'none';
+            ['lookCopyBtn','lookLoadBtn','lookSaveBtn'].forEach(id => document.getElementById(id).disabled = true);
+
+            // Parse both blocks
+            const modelParsed = parseLookML(modelLkml);
+            const viewParsed = parseLookML(viewLkml);
+
+            modelParsed.explores.forEach(ex => { lookProject.explores[ex._name] = ex; });
+            viewParsed.views.forEach(v => { lookProject.views[v._name] = v; });
+
+            renderLookFileList([
+                { name: 'retail_analytics.model.lkml' },
+                { name: 'views.view.lkml' }
+            ]);
+            renderLookExplores();
+            renderLookInputStats();
+            showToast('Example LookML project loaded — click Convert', 'success');
+        }
+
     </script>
 
     <!-- Bulk Upload Options Modal -->
