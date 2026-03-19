@@ -2121,18 +2121,32 @@ PRODUCT_NAME
             document.getElementById('bulkUploadOptionsModal').classList.add('active');
         }
 
+        // Fetch all pages from a paginated Sigma API endpoint
+        async function fetchAllPages(url, headers) {
+            const entries = [];
+            let nextPage = null;
+            do {
+                const pageUrl = nextPage ? `${url}${url.includes('?') ? '&' : '?'}page=${encodeURIComponent(nextPage)}` : url;
+                const resp = await fetch(pageUrl, { headers });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+                entries.push(...(data.entries || []));
+                nextPage = data.nextPage || null;
+            } while (nextPage);
+            return entries;
+        }
+
         async function loadBulkUploadWorkspaces() {
             const sel = document.getElementById('buWorkspaceId');
             sel.innerHTML = '<option value="">Loading workspaces…</option>';
             document.getElementById('buFolderId').innerHTML = '<option value="">Select a workspace first…</option>';
             document.getElementById('buFolderId').disabled = true;
             try {
-                const resp = await fetch(`${state.baseUrl}/v2/workspaces`, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
-                const data = await resp.json();
+                const workspaces = await fetchAllPages(`${state.baseUrl}/v2/workspaces`,
+                    { 'Authorization': `Bearer ${state.accessToken}` });
+                workspaces.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                 sel.innerHTML = '<option value="">Select a workspace…</option>';
-                (data.entries || []).forEach(ws => {
+                workspaces.forEach(ws => {
                     const o = document.createElement('option');
                     o.value = ws.workspaceId;
                     o.textContent = ws.name || ws.workspaceId;
@@ -2792,24 +2806,19 @@ PRODUCT_NAME
             select.innerHTML = '<option value="">Loading workspaces...</option>';
             
             try {
-                const response = await fetch(`${state.baseUrl}/v2/workspaces`, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
-                
-                if (!response.ok) throw new Error('Failed to load workspaces');
-                
-                const data = await response.json();
-                wizardState.workspaces = data.entries || [];
+                const workspaces = await fetchAllPages(`${state.baseUrl}/v2/workspaces`,
+                    { 'Authorization': `Bearer ${state.accessToken}` });
+                workspaces.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                wizardState.workspaces = workspaces;
                 
                 select.innerHTML = '<option value="">Select a workspace...</option>';
-                wizardState.workspaces.forEach(ws => {
+                workspaces.forEach(ws => {
                     const option = document.createElement('option');
                     option.value = ws.workspaceId;
                     option.textContent = ws.name || ws.workspaceId;
                     select.appendChild(option);
                 });
                 
-                // Add change listener
                 select.onchange = function() {
                     if (this.value) {
                         loadFolders(this.value);
@@ -4661,11 +4670,9 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
             document.getElementById('slSaveBtn').disabled = true;
 
             try {
-                const resp = await fetch(`${state.baseUrl}/v2/workspaces`, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
-                const data = await resp.json();
-                const workspaces = data.entries || [];
+                const workspaces = await fetchAllPages(`${state.baseUrl}/v2/workspaces`,
+                    { 'Authorization': `Bearer ${state.accessToken}` });
+                workspaces.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                 sel.innerHTML = '<option value="">Select a workspace…</option>';
                 workspaces.forEach(ws => {
                     const o = document.createElement('option');
