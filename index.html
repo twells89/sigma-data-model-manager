@@ -5613,6 +5613,19 @@ metrics:
         function parseLookML(text) {
             // Strip line comments
             text = text.replace(/#[^\n]*/g, '');
+
+            // ── Pre-extract raw sql: ... ;; blocks before tokenizing ──────────
+            // The tokenizer drops commas (they're not in its character class), which
+            // corrupts SQL in derived_table blocks. We replace each sql: block with a
+            // quoted placeholder, then restore the original SQL after parsing.
+            const sqlPlaceholders = {};
+            let phIdx = 0;
+            text = text.replace(/\bsql\s*:([\s\S]*?);;/g, (match, sqlContent) => {
+                const key = `__SQLPH${phIdx++}__`;
+                sqlPlaceholders[key] = sqlContent.trim();
+                return `sql: "${key}" ;;`;
+            });
+
             const tokens = [];
             // Tokenize — critically: ${...} must be a single token so braces inside
             // don't get confused with block delimiters
@@ -5725,7 +5738,20 @@ metrics:
                     else { consume(); if (peek() === ';;' || peek() === ';;;') consume(); }
                 }
             }
+            // Restore raw SQL strings that were replaced with placeholders before tokenizing
+            restoreSqlPlaceholders(result, sqlPlaceholders);
             return result;
+        }
+        function restoreSqlPlaceholders(obj, map) {
+            if (!obj || typeof obj !== 'object') return;
+            for (const key of Object.keys(obj)) {
+                const v = obj[key];
+                if (typeof v === 'string' && map[v] !== undefined) {
+                    obj[key] = map[v];
+                } else if (typeof v === 'object') {
+                    restoreSqlPlaceholders(v, map);
+                }
+            }
         }
 
         // ── Extract sql_table_name path array from a view block ───────────────
@@ -6148,6 +6174,11 @@ metrics:
 
             const colIdMap = {};
 
+            // For Custom SQL elements Sigma matches against the literal SQL alias (e.g. ORDER_ID),
+            // not a display name. For warehouse-table elements it uses the display name.
+            const isCustomSql = (tableName === 'Custom SQL');
+            const colLabel = (physCol) => isCustomSql ? physCol : sigmaDisplayName(physCol);
+
             // ── Dimensions ──────────────────────────────────────────────────
             const dims = view.dimension
                 ? (Array.isArray(view.dimension) ? view.dimension : [view.dimension])
@@ -6163,7 +6194,7 @@ metrics:
                 colIdMap[physicalCol] = colId;
                 element.columns.push({
                     id: colId,
-                    formula: `[${tableName}/${sigmaDisplayName(physicalCol)}]`
+                    formula: `[${tableName}/${colLabel(physicalCol)}]`
                 });
                 element.order.push(colId);
             });
@@ -6183,7 +6214,7 @@ metrics:
                 colIdMap[physicalCol] = colId;
                 element.columns.push({
                     id: colId,
-                    formula: `[${tableName}/${sigmaDisplayName(physicalCol)}]`
+                    formula: `[${tableName}/${colLabel(physicalCol)}]`
                 });
                 element.order.push(colId);
             });
@@ -6210,15 +6241,15 @@ metrics:
                 } else if (msType === 'count_distinct') {
                     // Count distinct requires a column — use physicalCol if available, else fall back to Count()
                     const cdFormula = physicalCol && physicalCol !== msName
-                        ? `CountDistinct([${sigmaDisplayName(physicalCol)}])`
-                        : `CountDistinct([${sigmaDisplayName(msName)}])`;
+                        ? `CountDistinct([${colLabel(physicalCol)}])`
+                        : `CountDistinct([${colLabel(msName)}])`;
                     // Ensure the source column exists
                     if (physicalCol && !colIdMap[physicalCol]) {
                         const colId = sigmaShortId();
                         colIdMap[physicalCol] = colId;
                         element.columns.push({
                             id: colId,
-                            formula: `[${tableName}/${sigmaDisplayName(physicalCol)}]`
+                            formula: `[${tableName}/${colLabel(physicalCol)}]`
                         });
                         element.order.push(colId);
                     }
@@ -6234,13 +6265,13 @@ metrics:
                         colIdMap[physicalCol] = colId;
                         element.columns.push({
                             id: colId,
-                            formula: `[${tableName}/${sigmaDisplayName(physicalCol)}]`
+                            formula: `[${tableName}/${colLabel(physicalCol)}]`
                         });
                         element.order.push(colId);
                     }
                     element.metrics.push({
                         id: sigmaShortId(),
-                        formula: lookSigmaMetric(msType, physicalCol),
+                        formula: lookSigmaMetric(msType, colLabel(physicalCol)),
                         name: ms.label || sigmaDisplayName(msName)
                     });
                 }
