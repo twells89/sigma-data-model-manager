@@ -1257,11 +1257,11 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                         <div class="dbt-config-row">
                             <div class="form-group">
                                 <label>Database</label>
-                                <input type="text" id="dbtDatabase" placeholder="ANALYTICS" title="Snowflake/warehouse database name">
+                                <input type="text" id="dbtDatabase" placeholder="ANALYTICS" title="Snowflake/warehouse database name" oninput="this.style.cssText=''">
                             </div>
                             <div class="form-group">
                                 <label>Schema</label>
-                                <input type="text" id="dbtSchema" placeholder="DBT_PROD" title="Schema containing the dbt models">
+                                <input type="text" id="dbtSchema" placeholder="DBT_PROD" title="Schema containing the dbt models" oninput="this.style.cssText=''">
                             </div>
                             <div class="form-group">
                                 <label>Connection</label>
@@ -1542,7 +1542,7 @@ How it works:
 • Measures → Sigma metrics (Sum, Count, Avg, CountDistinct)
 • dimension_group → datetime column
 • type: yesno → boolean column
-• derived_table blocks → skipped with warning"></textarea>
+• derived_table blocks → converted to Custom SQL elements (kind: "sql")"></textarea>
 
                     <div class="dbt-badge-row" id="lookOutputStats"></div>
 
@@ -2017,25 +2017,97 @@ PRODUCT_NAME
             `).join('');
         }
 
-        // ── Bulk Download (all models) ───────────────────────────────────────
-        async function bulkDownload() {
+        // ── Bulk Export — Selection Modal ────────────────────────────────────
+        function bulkDownload() {
             const models = state.dataModels || [];
-            if (!models.length) { showToast('No data models to download', 'warning'); return; }
+            if (!models.length) { showToast('No data models to export', 'warning'); return; }
+            openExportSelectModal(models);
+        }
 
-            openBulkModal('Exporting All Data Models', models.length);
+        function openExportSelectModal(models) {
+            let modal = document.getElementById('exportSelectModal');
+            if (modal) modal.remove();
+
+            const rows = models.map(m => `
+                <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:7px;cursor:pointer;transition:background 0.1s;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">
+                    <input type="checkbox" class="export-model-cb" data-id="${escapeHtml(m.dataModelId)}" data-name="${escapeHtml(m.name || 'Untitled')}" checked style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;">
+                    <span style="font-size:13px;color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(m.name || 'Untitled')}">${escapeHtml(m.name || 'Untitled')}</span>
+                    <span style="font-size:11px;color:var(--text-muted);flex-shrink:0;">${formatDate(m.updatedAt)}</span>
+                </label>`).join('');
+
+            modal = document.createElement('div');
+            modal.id = 'exportSelectModal';
+            modal.style.cssText = 'position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);';
+            modal.innerHTML = `
+                <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;width:500px;max-width:92vw;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;">
+                    <!-- Header -->
+                    <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+                        <div>
+                            <div style="font-size:15px;font-weight:700;color:var(--text-primary);">⬇ Export Data Models</div>
+                            <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">Select the models to download as JSON files</div>
+                        </div>
+                        <button onclick="document.getElementById('exportSelectModal').remove()" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;line-height:1;padding:2px 6px;border-radius:4px;" onmouseover="this.style.color='var(--text-primary)'" onmouseout="this.style.color='var(--text-muted)'">&times;</button>
+                    </div>
+                    <!-- Select All row -->
+                    <div style="padding:10px 24px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg-tertiary);">
+                        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                            <input type="checkbox" id="exportSelectAll" checked style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer;" onchange="toggleExportSelectAll(this.checked)">
+                            <span style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.06em;">Select All</span>
+                            <span id="exportSelectCount" style="font-size:12px;color:var(--text-muted);margin-left:auto;">${models.length} of ${models.length} selected</span>
+                        </label>
+                    </div>
+                    <!-- Model list -->
+                    <div style="flex:1;overflow-y:auto;padding:8px 14px;" id="exportSelectList">
+                        ${rows}
+                    </div>
+                    <!-- Footer -->
+                    <div style="padding:16px 24px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;flex-shrink:0;">
+                        <button class="btn btn-secondary" onclick="document.getElementById('exportSelectModal').remove()">Cancel</button>
+                        <button class="btn btn-primary" id="exportSelectRunBtn" onclick="executeExportSelected()">⬇ Export Selected</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
+
+            // Wire up per-checkbox change to update count + indeterminate state
+            modal.querySelectorAll('.export-model-cb').forEach(cb => cb.addEventListener('change', updateExportSelectCount));
+        }
+
+        function toggleExportSelectAll(checked) {
+            document.querySelectorAll('.export-model-cb').forEach(cb => cb.checked = checked);
+            updateExportSelectCount();
+        }
+
+        function updateExportSelectCount() {
+            const all  = [...document.querySelectorAll('.export-model-cb')];
+            const sel  = all.filter(c => c.checked);
+            const selectAllCb = document.getElementById('exportSelectAll');
+            selectAllCb.checked = sel.length === all.length;
+            selectAllCb.indeterminate = sel.length > 0 && sel.length < all.length;
+            document.getElementById('exportSelectCount').textContent = `${sel.length} of ${all.length} selected`;
+            document.getElementById('exportSelectRunBtn').disabled = sel.length === 0;
+        }
+
+        async function executeExportSelected() {
+            const selected = [...document.querySelectorAll('.export-model-cb:checked')].map(cb => ({
+                id: cb.dataset.id,
+                name: cb.dataset.name
+            }));
+            if (!selected.length) { showToast('No models selected', 'warning'); return; }
+
+            document.getElementById('exportSelectModal').remove();
+            openBulkModal(`Exporting ${selected.length} Data Model${selected.length !== 1 ? 's' : ''}`, selected.length);
 
             let done = 0, failed = 0;
-            for (const model of models) {
-                const id = model.dataModelId;
-                const name = model.name || 'Untitled';
-                updateBulkModal(done + failed, models.length, `Downloading: ${name}`);
+            for (const model of selected) {
+                const { id, name } = model;
+                updateBulkModal(done + failed, selected.length, `Downloading: ${name}`);
                 try {
                     const r = await fetch(`${state.baseUrl}/v2/dataModels/${id}/spec`, {
                         headers: { 'Authorization': `Bearer ${state.accessToken}` }
                     });
                     if (!r.ok) throw new Error(`HTTP ${r.status}`);
                     const spec = await r.json();
-                    spec.dataModelId = id; // embed so re-upload targets existing model
+                    spec.dataModelId = id;
                     const blob = new Blob([JSON.stringify(spec, null, 2)], { type: 'application/json' });
                     const a = document.createElement('a');
                     a.href = URL.createObjectURL(blob);
@@ -5094,6 +5166,14 @@ relationships:
             const allWarnings = [...warnings];
             if (!connectionId) allWarnings.unshift('⚠ Connection ID not set — add it in the JSON before saving to Sigma');
             if (!database || !schema) allWarnings.unshift('⚠ Database/Schema not filled in — path will only contain table name');
+
+            // Highlight empty Database/Schema fields in warning orange
+            const dbEl  = document.getElementById('dbtDatabase');
+            const schEl = document.getElementById('dbtSchema');
+            const warnStyle = 'border-color: var(--warning); box-shadow: 0 0 0 3px rgba(250,166,26,0.2);';
+            const clearStyle = '';
+            dbEl.style.cssText  = !database ? warnStyle : clearStyle;
+            schEl.style.cssText = !schema   ? warnStyle : clearStyle;
             const warnBox = document.getElementById('dbtWarningBox');
             if (allWarnings.length) { warnBox.style.display = ''; warnBox.innerHTML = allWarnings.map(w => `• ${w}`).join('<br>'); }
             else warnBox.style.display = 'none';
@@ -5494,6 +5574,14 @@ metrics:
             }
             if (autoDb    && !document.getElementById('dbtDatabase').value) document.getElementById('dbtDatabase').value = autoDb;
             if (autoSchema && !document.getElementById('dbtSchema').value)   document.getElementById('dbtSchema').value = autoSchema;
+
+            // Warn if database or schema still missing after auto-extraction
+            const finalDb     = document.getElementById('dbtDatabase').value.trim();
+            const finalSchema = document.getElementById('dbtSchema').value.trim();
+            if (!finalDb || !finalSchema) {
+                const missing = [!finalDb && 'Database', !finalSchema && 'Schema'].filter(Boolean).join(' and ');
+                showToast(`⚠ ${missing} not found in dbt files — enter ${missing.includes('and') ? 'them' : 'it'} manually before saving`, 'warning');
+            }
 
             // Populate YAML textarea with a clean YAML dump so users can inspect/edit
             try {
@@ -6014,25 +6102,49 @@ metrics:
                 return { element: { id, kind: 'table', source: { connectionId: connectionId || '<CONNECTION_ID>', kind: 'warehouse-table', path: [viewName.toUpperCase()] }, columns: [], order: [] }, elementId: id, colIdMap: {} };
             }
 
-            if (view.derived_table !== undefined) {
-                warnings.push(`⚠ View "${viewName}" uses derived_table (inline SQL) — converted as passthrough with no source path. You must set the path manually.`);
-            }
-
-            const path = lookExtractPath(view);
-            const tableName = (path[path.length - 1] || viewName).toUpperCase();
+            // ── Derived table → Custom SQL element ──────────────────────────
             const elementId = sigmaShortId();
-            const element = {
-                id: elementId,
-                kind: 'table',
-                source: {
-                    connectionId: connectionId || '<CONNECTION_ID>',
-                    kind: 'warehouse-table',
-                    path: path.length > 0 ? path : [viewName.toUpperCase()]
-                },
-                columns: [],
-                metrics: [],
-                order: []
-            };
+            let tableName, element;
+
+            if (view.derived_table !== undefined) {
+                // Strip LookML ;; terminator and any surrounding whitespace
+                const rawSql = (view.derived_table.sql || '')
+                    .replace(/;;\s*$/, '')
+                    .trim();
+                tableName = 'Custom SQL'; // makes column formulas → [Custom SQL/COL]
+                element = {
+                    id: elementId,
+                    kind: 'table',
+                    source: {
+                        connectionId: connectionId || '<CONNECTION_ID>',
+                        statement: rawSql || '-- TODO: derived_table had no sql block',
+                        kind: 'sql'
+                    },
+                    columns: [],
+                    metrics: [],
+                    order: []
+                };
+                if (rawSql) {
+                    warnings.push(`ℹ️ View "${viewName}" converted from derived_table → Custom SQL element. Review the SQL statement before use.`);
+                } else {
+                    warnings.push(`⚠ View "${viewName}" has a derived_table block but no sql was found — statement left blank.`);
+                }
+            } else {
+                const path = lookExtractPath(view);
+                tableName = (path[path.length - 1] || viewName).toUpperCase();
+                element = {
+                    id: elementId,
+                    kind: 'table',
+                    source: {
+                        connectionId: connectionId || '<CONNECTION_ID>',
+                        kind: 'warehouse-table',
+                        path: path.length > 0 ? path : [viewName.toUpperCase()]
+                    },
+                    columns: [],
+                    metrics: [],
+                    order: []
+                };
+            }
 
             const colIdMap = {};
 
