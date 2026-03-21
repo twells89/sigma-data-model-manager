@@ -96,6 +96,59 @@
             margin-left: 48px;
         }
         
+        /* Editor mode toggle buttons */
+        .editor-mode-btn {
+            padding: 8px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .editor-mode-btn.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        /* Converter connection select */
+        .converter-select {
+            font-size: 12px;
+            padding: 7px 10px;
+            width: 100%;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: inherit;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239090a0' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            padding-right: 28px;
+        }
+
+        /* dbt/Snow/Look example load buttons — normalised to btn-small */
+        .btn-example {
+            padding: 6px 12px;
+            font-size: 12px;
+            font-weight: 500;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s;
+            font-family: inherit;
+        }
+        .btn-example:hover {
+            border-color: var(--border-focus);
+            color: var(--text-primary);
+        }
+
         /* Credentials Section */
         .credentials-section {
             padding: 20px 24px;
@@ -1060,15 +1113,261 @@
             flex-shrink: 0;
         }
 
-        .dbt-example-btn {
+        /* AI file attach drop-zone (inline zones) */
+        .ai-drop-zone-inline {
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            padding: 12px 14px;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .ai-drop-zone-inline:hover,
+        .ai-drop-zone-inline.drag-over {
+            border-color: var(--accent);
+            background: rgba(88,101,242,0.05);
+        }
+
+        /* Bulk modal container */
+        .bulk-modal-box {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 28px;
+            width: 460px;
+            max-width: 90vw;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        /* Bulk progress log */
+        .bulk-log {
+            flex: 1;
+            overflow-y: auto;
+            max-height: 220px;
+            font-size: 12px;
+            font-family: monospace;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        /* Attachment pill */
+        .attach-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+
+        /* Sidebar search input */
+        .sidebar-search {
+            width: 100%;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+        }
+        .sidebar-search:focus {
+            outline: none;
+            border-color: var(--border-focus);
+        }
+
+        /* Editor mode toggle container */
+        .editor-mode-toggle {
+            display: flex;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .editor-mode-toggle.disabled {
+            opacity: 0.4;
+            pointer-events: none;
+        }
+
+        /* LookML file drop zone */
+        .lookml-drop-zone {
+            border: 2px dashed var(--border);
+            border-radius: 10px;
+            padding: 20px 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        .lookml-drop-zone:hover,
+        .lookml-drop-zone.drag-over {
+            border-color: var(--accent);
+            background: rgba(88,101,242,0.05);
+        }
+
+        /* dbt upload card drop zone */
+        .dbt-upload-zone {
+            background: var(--bg-tertiary);
+            border: 2px dashed var(--border);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.15s;
+        }
+        .dbt-upload-zone:hover {
+            border-color: var(--accent);
+        }
+
+        /* Generic hint box inside a panel */
+        .panel-hint-box {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 12px;
+        }
+
+        /* Export select modal structures */
+        .export-modal-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0,0,0,0.6);
+        }
+        .export-modal-box {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            width: 500px;
+            max-width: 92vw;
+            max-height: 82vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .export-modal-header {
+            padding: 20px 24px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+        .export-modal-select-all {
+            padding: 10px 24px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            background: var(--bg-tertiary);
+        }
+        .export-modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            flex-shrink: 0;
+        }
+        .export-modal-close-btn {
             background: none;
             border: none;
-            color: var(--accent);
-            font-size: 12px;
+            color: var(--text-muted);
+            font-size: 20px;
             cursor: pointer;
-            padding: 0;
-            text-decoration: underline;
+            line-height: 1;
+            padding: 2px 6px;
+            border-radius: 4px;
         }
+        .export-modal-close-btn:hover { color: var(--text-primary); }
+
+        /* Export select row label */
+        .export-select-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            border-radius: 7px;
+            cursor: pointer;
+            transition: background 0.1s;
+        }
+        .export-select-row:hover { background: var(--bg-hover); }
+
+        /* Export row filename text */
+        .export-row-name {
+            font-size: 13px;
+            color: var(--text-primary);
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Export select count label */
+        .export-count-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        /* Attach pill in AI assistant */
+        .attach-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+        .attach-pill-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: monospace;
+        }
+        .attach-pill-remove {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 15px;
+            line-height: 1;
+            padding: 0 2px;
+        }
+        .attach-pill-remove:hover { color: var(--text-primary); }
+
+        /* Muted link-style button */
+        .btn-link-muted {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 11px;
+            cursor: pointer;
+            text-decoration: underline;
+            padding: 0;
+            font-family: inherit;
+        }
+        .btn-link-muted:hover { color: var(--text-secondary); }
     </style>
 </head>
 <body>
@@ -1141,7 +1440,7 @@
                 </button>
                 
                 <div style="margin-top: 12px; text-align: center;">
-                    <button onclick="clearCredentials()" style="background: none; border: none; color: var(--text-muted); font-size: 11px; cursor: pointer; text-decoration: underline;">
+                    <button onclick="clearCredentials()" class="btn-link-muted">
                         Clear saved credentials
                     </button>
                 </div>
@@ -1170,11 +1469,7 @@
                     </div>
                 </div>
                 <div style="padding: 8px 12px; border-bottom: 1px solid var(--border);">
-                    <input type="text" 
-                           id="modelsSearch" 
-                           placeholder="Search models..." 
-                           oninput="filterModels(this.value)"
-                           style="width: 100%; padding: 8px 12px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 12px;">
+                    <input type="text" class="sidebar-search" id="modelsSearch" placeholder="Search models..." oninput="filterModels(this.value)">
                 </div>
                 <div class="models-list" id="modelsList">
                     <div class="empty-state" style="padding: 40px 20px;">
@@ -1201,13 +1496,11 @@
                         ↻ Refresh
                     </button>
                     <!-- JSON / YAML toggle -->
-                    <div style="display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; opacity: 0.4; pointer-events: none;" id="editorModeToggle">
-                        <button id="modeJsonBtn" onclick="setEditorMode('json')"
-                            style="padding: 8px 14px; font-size: 12px; font-weight: 600; font-family: 'JetBrains Mono', monospace; background: var(--accent); color: white; border: none; cursor: pointer; transition: all 0.15s;">
+                    <div class="editor-mode-toggle disabled" id="editorModeToggle">
+                        <button id="modeJsonBtn" onclick="setEditorMode('json')" class="editor-mode-btn active" title="View as JSON">
                             JSON
                         </button>
-                        <button id="modeYamlBtn" onclick="setEditorMode('yaml')"
-                            style="padding: 8px 14px; font-size: 12px; font-weight: 600; font-family: 'JetBrains Mono', monospace; background: var(--bg-tertiary); color: var(--text-secondary); border: none; cursor: pointer; transition: all 0.15s;">
+                        <button id="modeYamlBtn" onclick="setEditorMode('yaml')" class="editor-mode-btn" title="View as YAML">
                             YAML
                         </button>
                     </div>
@@ -1250,7 +1543,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                             <span class="dbt-pane-title">dbt Semantic Model YAML</span>
                             <div style="display: flex; gap: 8px; align-items: center;">
                                 <button class="btn btn-secondary btn-small" onclick="openDbtImportModal()" style="gap: 5px;">📥 Import from dbt</button>
-                                <button class="dbt-example-btn" onclick="loadDbtExample()">Load example</button>
+                                <button class="btn-example" onclick="loadDbtExample()">Load example</button>
                             </div>
                         </div>
 
@@ -1265,7 +1558,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                             </div>
                             <div class="form-group">
                                 <label>Connection</label>
-                                <select id="dbtConnectionId" style="font-size: 12px; padding: 7px 10px; width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); font-family: inherit; cursor: pointer; appearance: none; background-image: url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239090a0' d='M6 8L1 3h10z'/%3E%3C/svg%3E&quot;); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px;">
+                                <select id="dbtConnectionId" class="converter-select">
                                     <option value="">— Connect to Sigma to load —</option>
                                 </select>
                             </div>
@@ -1360,7 +1653,7 @@ Tips:
                             <div style="display: flex; gap: 8px; align-items: center;">
                                 <button class="btn btn-secondary btn-small" onclick="document.getElementById('snowYamlUpload').click()">📂 Upload YAML</button>
                                 <input type="file" id="snowYamlUpload" accept=".yml,.yaml,.json" style="display:none;" onchange="handleSnowYamlUpload(event)">
-                                <button class="dbt-example-btn" onclick="loadSnowExample()">Load example</button>
+                                <button class="btn-example" onclick="loadSnowExample()">Load example</button>
                             </div>
                         </div>
 
@@ -1464,16 +1757,15 @@ Conversion notes:
                 <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
                     <div class="dbt-pane-header">
                         <span class="dbt-pane-title">LookML Project Files</span>
-                        <button class="dbt-example-btn" onclick="loadLookExample()">Load example</button>
+                        <button class="btn-example" onclick="loadLookExample()">Load example</button>
                     </div>
 
                     <!-- Drop zone -->
-                    <div id="lookDropZone"
+                    <div id="lookDropZone" class="lookml-drop-zone"
                          onclick="document.getElementById('lookFileInput').click()"
-                         ondragover="event.preventDefault(); this.style.borderColor='var(--accent)'"
-                         ondragleave="this.style.borderColor='var(--border)'"
-                         ondrop="handleLookDrop(event)"
-                         style="border: 2px dashed var(--border); border-radius: 10px; padding: 20px 16px; text-align: center; cursor: pointer; transition: border-color 0.15s; flex-shrink: 0;">
+                         ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                         ondragleave="this.classList.remove('drag-over')"
+                         ondrop="handleLookDrop(event)">
                         <div style="font-size: 28px; margin-bottom: 8px;">🔍</div>
                         <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop .lkml files here</div>
                         <div style="font-size: 11px; color: var(--text-muted);">Upload one .model.lkml + one or more .view.lkml files</div>
@@ -1646,7 +1938,7 @@ How it works:
                         <label class="form-label">API Key</label>
                         <div style="display: flex; gap: 8px;">
                             <input type="password" class="form-input" id="aiApiKey" placeholder="Enter your API key">
-                            <button class="btn btn-secondary" onclick="saveAIKey()">Save</button>
+                            <button class="btn btn-secondary" onclick="saveAIKey()" title="Save API key to browser storage">Save</button>
                         </div>
                         <div class="form-hint">Your API key is stored locally in your browser</div>
                     </div>
@@ -1671,12 +1963,32 @@ How it works:
                 <div id="aiModeEnhance" class="ai-mode-content">
                     <div class="form-group">
                         <label class="form-label">What would you like to add or change?</label>
-                        <textarea class="form-input ai-prompt" id="aiPromptEnhance" rows="3" placeholder="Examples:
+                        <textarea class="form-input ai-prompt" id="aiPromptEnhance" rows="7" placeholder="Examples:
 • Add a metric for Total Revenue that sums the Amount column
 • Create a calculated column for profit margin
 • Add a relationship between Orders and Customers on customer_id
 • Rename the Price column to Unit Price"></textarea>
                     </div>
+
+                    <!-- File attachments -->
+                    <div class="form-group">
+                        <label class="form-label" style="display:flex;align-items:center;justify-content:space-between;">
+                            <span>Attach Files <span style="font-weight:400;color:var(--text-muted);font-size:11px;">(optional — JSON, CSV, TXT, YAML)</span></span>
+                            <span id="aiAttachCount" style="font-size:11px;color:var(--text-secondary);display:none;"></span>
+                        </label>
+                        <div id="aiAttachZone"
+                             class="ai-drop-zone-inline"
+                             onclick="document.getElementById('aiFileInput').click()"
+                             ondragover="event.preventDefault();this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleAiFileDrop(event)">
+                            <span style="font-size:18px;">📎</span>
+                            <span style="font-size:12px;color:var(--text-secondary);">Drop files here or click to browse</span>
+                            <input type="file" id="aiFileInput" multiple accept=".json,.csv,.txt,.yaml,.yml,.md" style="display:none" onchange="handleAiFileSelect(event)">
+                        </div>
+                        <div id="aiAttachList" style="display:none;margin-top:8px;display:flex;flex-direction:column;gap:5px;"></div>
+                    </div>
+
                     <div class="ai-hint-box">
                         💡 The AI will use the columns and tables already in your data model.
                     </div>
@@ -1723,7 +2035,26 @@ PRODUCT_NAME
                     
                     <div class="form-group">
                         <label class="form-label">Additional Instructions (optional)</label>
-                        <textarea class="form-input" id="aiPromptAddTable" rows="2" placeholder="e.g., Add a calculated column for full name, create a metric for total count..."></textarea>
+                        <textarea class="form-input" id="aiPromptAddTable" rows="4" placeholder="e.g., Add a calculated column for full name, create a metric for total count..."></textarea>
+                    </div>
+
+                    <!-- File attachments (shared state with Enhance mode) -->
+                    <div class="form-group">
+                        <label class="form-label" style="display:flex;align-items:center;justify-content:space-between;">
+                            <span>Attach Files <span style="font-weight:400;color:var(--text-muted);font-size:11px;">(optional — JSON, CSV, TXT, YAML)</span></span>
+                            <span id="aiAttachCount2" style="font-size:11px;color:var(--text-secondary);display:none;"></span>
+                        </label>
+                        <div id="aiAttachZone2"
+                             class="ai-drop-zone-inline"
+                             onclick="document.getElementById('aiFileInput2').click()"
+                             ondragover="event.preventDefault();this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleAiFileDrop2(event)">
+                            <span style="font-size:18px;">📎</span>
+                            <span style="font-size:12px;color:var(--text-secondary);">Drop files here or click to browse</span>
+                            <input type="file" id="aiFileInput2" multiple accept=".json,.csv,.txt,.yaml,.yml,.md" style="display:none" onchange="handleAiFileSelect(event)">
+                        </div>
+                        <div id="aiAttachList2" style="margin-top:8px;flex-direction:column;gap:5px;display:none;"></div>
                     </div>
                 </div>
                 
@@ -1745,7 +2076,7 @@ PRODUCT_NAME
                     <!-- Smart Insert Preview -->
                     <div id="aiPreview" class="form-group" style="display: none;">
                         <label class="form-label">📍 Insertion Preview</label>
-                        <div style="background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 12px;">
+                        <div class="panel-hint-box">
                             <div style="display: flex; align-items: start; gap: 8px; margin-bottom: 8px;">
                                 <span style="color: var(--success);">✓</span>
                                 <div style="flex: 1;">
@@ -1786,6 +2117,22 @@ PRODUCT_NAME
     </div>
     
     <script>
+        // ── API helper ─────────────────────────────────────────────────────────
+        async function sigmaFetch(path, options = {}) {
+            const pathStr = (path instanceof URL) ? path.toString() : String(path);
+            const url = pathStr.startsWith('http') ? pathStr : state.baseUrl + pathStr;
+            const isJson = options.body && typeof options.body === 'string';
+            const res = await fetch(url, {
+                ...options,
+                headers: {
+                    'Authorization': `Bearer ${state.accessToken}`,
+                    ...(isJson ? { 'Content-Type': 'application/json' } : {}),
+                    ...(options.headers || {})
+                }
+            });
+            return res;
+        }
+
         // State
         let state = {
             baseUrl: 'https://api.sigmacomputing.com',
@@ -1918,11 +2265,7 @@ PRODUCT_NAME
                         url.searchParams.set('page', page);
                     }
                     
-                    const response = await fetch(url, {
-                        headers: {
-                            'Authorization': `Bearer ${state.accessToken}`
-                        }
-                    });
+                    const response = await sigmaFetch(url);
                     
                     if (!response.ok) {
                         throw new Error('Failed to load data models');
@@ -2029,30 +2372,30 @@ PRODUCT_NAME
             if (modal) modal.remove();
 
             const rows = models.map(m => `
-                <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:7px;cursor:pointer;transition:background 0.1s;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">
+                <label class="export-select-row">
                     <input type="checkbox" class="export-model-cb" data-id="${escapeHtml(m.dataModelId)}" data-name="${escapeHtml(m.name || 'Untitled')}" checked style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;">
-                    <span style="font-size:13px;color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(m.name || 'Untitled')}">${escapeHtml(m.name || 'Untitled')}</span>
+                    <span class="export-row-name" title="${escapeHtml(m.name || 'Untitled')}">${escapeHtml(m.name || 'Untitled')}</span>
                     <span style="font-size:11px;color:var(--text-muted);flex-shrink:0;">${formatDate(m.updatedAt)}</span>
                 </label>`).join('');
 
             modal = document.createElement('div');
             modal.id = 'exportSelectModal';
-            modal.style.cssText = 'position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);';
+            modal.className = 'export-modal-overlay';
             modal.innerHTML = `
-                <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;width:500px;max-width:92vw;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;">
+                <div class="export-modal-box">
                     <!-- Header -->
-                    <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+                    <div class="export-modal-header">
                         <div>
                             <div style="font-size:15px;font-weight:700;color:var(--text-primary);">⬇ Export Data Models</div>
                             <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">Select the models to download as JSON files</div>
                         </div>
-                        <button onclick="document.getElementById('exportSelectModal').remove()" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;line-height:1;padding:2px 6px;border-radius:4px;" onmouseover="this.style.color='var(--text-primary)'" onmouseout="this.style.color='var(--text-muted)'">&times;</button>
+                        <button onclick="document.getElementById('exportSelectModal').remove()" class="export-modal-close-btn">&times;</button>
                     </div>
                     <!-- Select All row -->
-                    <div style="padding:10px 24px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg-tertiary);">
+                    <div class="export-modal-select-all">
                         <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
                             <input type="checkbox" id="exportSelectAll" checked style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer;" onchange="toggleExportSelectAll(this.checked)">
-                            <span style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.06em;">Select All</span>
+                            <span class="export-count-label">Select All</span>
                             <span id="exportSelectCount" style="font-size:12px;color:var(--text-muted);margin-left:auto;">${models.length} of ${models.length} selected</span>
                         </label>
                     </div>
@@ -2061,7 +2404,7 @@ PRODUCT_NAME
                         ${rows}
                     </div>
                     <!-- Footer -->
-                    <div style="padding:16px 24px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;flex-shrink:0;">
+                    <div class="export-modal-footer">
                         <button class="btn btn-secondary" onclick="document.getElementById('exportSelectModal').remove()">Cancel</button>
                         <button class="btn btn-primary" id="exportSelectRunBtn" onclick="executeExportSelected()">⬇ Export Selected</button>
                     </div>
@@ -2102,9 +2445,7 @@ PRODUCT_NAME
                 const { id, name } = model;
                 updateBulkModal(done + failed, selected.length, `Downloading: ${name}`);
                 try {
-                    const r = await fetch(`${state.baseUrl}/v2/dataModels/${id}/spec`, {
-                        headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                    });
+                    const r = await sigmaFetch(`/v2/dataModels/${id}/spec`);
                     if (!r.ok) throw new Error(`HTTP ${r.status}`);
                     const spec = await r.json();
                     spec.dataModelId = id;
@@ -2194,12 +2535,12 @@ PRODUCT_NAME
         }
 
         // Fetch all pages from a paginated Sigma API endpoint
-        async function fetchAllPages(url, headers) {
+        async function fetchAllPages(url) {
             const entries = [];
             let nextPage = null;
             do {
                 const pageUrl = nextPage ? `${url}${url.includes('?') ? '&' : '?'}page=${encodeURIComponent(nextPage)}` : url;
-                const resp = await fetch(pageUrl, { headers });
+                const resp = await sigmaFetch(pageUrl);
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = await resp.json();
                 entries.push(...(data.entries || []));
@@ -2214,8 +2555,7 @@ PRODUCT_NAME
             document.getElementById('buFolderId').innerHTML = '<option value="">Select a workspace first…</option>';
             document.getElementById('buFolderId').disabled = true;
             try {
-                const workspaces = await fetchAllPages(`${state.baseUrl}/v2/workspaces`,
-                    { 'Authorization': `Bearer ${state.accessToken}` });
+                const workspaces = await fetchAllPages(`${state.baseUrl}/v2/workspaces`);
                 workspaces.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                 sel.innerHTML = '<option value="">Select a workspace…</option>';
                 workspaces.forEach(ws => {
@@ -2241,9 +2581,7 @@ PRODUCT_NAME
             folderSel.innerHTML = '<option value="">Loading folders…</option>';
             folderSel.disabled = true;
             try {
-                const resp = await fetch(`${state.baseUrl}/v2/files?typeFilters=folder&parentId=${wsId}`, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
+                const resp = await sigmaFetch(`/v2/files?typeFilters=folder&parentId=${wsId}`);
                 const data = await resp.json();
                 folderSel.innerHTML = '';
                 const root = document.createElement('option');
@@ -2334,9 +2672,8 @@ PRODUCT_NAME
                     let r, action;
                     if (existingId) {
                         // Try to update existing model
-                        r = await fetch(`${state.baseUrl}/v2/dataModels/${existingId}/spec`, {
+                        r = await sigmaFetch(`/v2/dataModels/${existingId}/spec`, {
                             method: 'PUT',
-                            headers: { 'Authorization': `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
                             body: JSON.stringify(spec)
                         });
 
@@ -2344,9 +2681,8 @@ PRODUCT_NAME
                             // Model no longer exists — fall back to creating new
                             if (!folderId) throw new Error('Model not found (404) and no destination folder selected for fallback creation');
                             spec.folderId = folderId;
-                            r = await fetch(`${state.baseUrl}/v2/dataModels/spec`, {
+                            r = await sigmaFetch(`/v2/dataModels/spec`, {
                                 method: 'POST',
-                                headers: { 'Authorization': `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
                                 body: JSON.stringify(spec)
                             });
                             action = 'Created (model not found, created new)';
@@ -2357,9 +2693,8 @@ PRODUCT_NAME
                         // New model — must have folderId
                         if (!folderId) throw new Error('No destination folder selected for new model');
                         spec.folderId = folderId;
-                        r = await fetch(`${state.baseUrl}/v2/dataModels/spec`, {
+                        r = await sigmaFetch(`/v2/dataModels/spec`, {
                             method: 'POST',
-                            headers: { 'Authorization': `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
                             body: JSON.stringify(spec)
                         });
                         action = 'Created';
@@ -2391,15 +2726,15 @@ PRODUCT_NAME
             if (!modal) {
                 modal = document.createElement('div');
                 modal.id = 'bulkProgressModal';
-                modal.style.cssText = 'position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);';
+                modal.className = 'export-modal-overlay';
                 modal.innerHTML = `
-                    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;padding:28px;width:460px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column;gap:16px;">
+                    <div class="bulk-modal-box">
                         <div style="font-size:16px;font-weight:600;color:var(--text-primary);" id="bulkModalTitle"></div>
                         <div style="background:var(--bg-tertiary);border-radius:6px;height:8px;overflow:hidden;">
                             <div id="bulkProgressBar" style="height:100%;background:var(--accent);transition:width 0.3s;width:0%;"></div>
                         </div>
                         <div style="font-size:12px;color:var(--text-secondary);" id="bulkProgressLabel"></div>
-                        <div id="bulkProgressLog" style="flex:1;overflow-y:auto;max-height:220px;font-size:12px;font-family:monospace;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:4px;"></div>
+                        <div id="bulkProgressLog" class="bulk-log"></div>
                         <button id="bulkModalCloseBtn" class="btn btn-secondary" onclick="closeBulkModal()" style="display:none;">Close</button>
                     </div>`;
                 document.body.appendChild(modal);
@@ -2481,11 +2816,7 @@ PRODUCT_NAME
             
             try {
                 // Fetch the JSON representation using v3alpha/spec endpoint
-                const response = await fetch(`${state.baseUrl}/v2/dataModels/${dataModelId}/spec`, {
-                    headers: {
-                        'Authorization': `Bearer ${state.accessToken}`
-                    }
-                });
+                const response = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`);
                 
                 if (!response.ok) {
                     const error = await response.json();
@@ -2636,9 +2967,7 @@ PRODUCT_NAME
             btn.innerHTML = '<div class="spinner" style="width: 14px; height: 14px;"></div>';
             
             try {
-                const response = await fetch(`${state.baseUrl}/v2/dataModels/${dataModelId}/spec`, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
+                const response = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`);
                 
                 if (!response.ok) throw new Error('Failed to fetch from Sigma');
                 
@@ -2721,21 +3050,18 @@ PRODUCT_NAME
                 if (specBase.description) spec.description = specBase.description;
                 if (specBase.folderId) spec.folderId = specBase.folderId;
 
-                console.log('[Sigma Save] Sending spec:', JSON.stringify(spec, null, 2));
                 updateStatus('loading', isNew ? 'Creating data model...' : 'Saving changes...');
 
                 let response;
                 if (isNew) {
-                    response = await fetch(`${state.baseUrl}/v2/dataModels/spec`, {
+                    response = await sigmaFetch(`/v2/dataModels/spec`, {
                         method: 'POST',
-                        headers: { 'Authorization': `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
                         body: JSON.stringify(spec)
                     });
                 } else {
                     const dataModelId = jsonData.dataModelId || state.selectedModel.dataModelId;
-                    response = await fetch(`${state.baseUrl}/v2/dataModels/${dataModelId}/spec`, {
+                    response = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`, {
                         method: 'PUT',
-                        headers: { 'Authorization': `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
                         body: JSON.stringify(spec)
                     });
                 }
@@ -2744,8 +3070,7 @@ PRODUCT_NAME
                     let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
                     try {
                         const errorData = await response.text();
-                        console.log('[Sigma Save] Error response:', errorData);
-                        try { errorMessage = JSON.parse(errorData).message || errorMessage; } catch(e) { errorMessage = errorData.slice(0, 500); }
+                                try { errorMessage = JSON.parse(errorData).message || errorMessage; } catch(e) { errorMessage = errorData.slice(0, 500); }
                     } catch(e) {}
                     throw new Error(errorMessage);
                 }
@@ -2758,9 +3083,7 @@ PRODUCT_NAME
                 }
 
                 const dataModelId = result.dataModelId || jsonData.dataModelId || state.selectedModel?.dataModelId;
-                const refreshResponse = await fetch(`${state.baseUrl}/v2/dataModels/${dataModelId}/spec`, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
+                const refreshResponse = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`);
                 if (!refreshResponse.ok) throw new Error('Saved but failed to refresh data');
 
                 const fullSpec = await refreshResponse.json();
@@ -2839,9 +3162,7 @@ PRODUCT_NAME
             
             try {
                 // Get personal files/folders (no parentId = root/My Documents level)
-                const response = await fetch(`${state.baseUrl}/v2/files?typeFilters=folder`, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
+                const response = await sigmaFetch(`/v2/files?typeFilters=folder`);
                 
                 if (!response.ok) throw new Error('Failed to load folders');
                 
@@ -2878,8 +3199,7 @@ PRODUCT_NAME
             select.innerHTML = '<option value="">Loading workspaces...</option>';
             
             try {
-                const workspaces = await fetchAllPages(`${state.baseUrl}/v2/workspaces`,
-                    { 'Authorization': `Bearer ${state.accessToken}` });
+                const workspaces = await fetchAllPages(`${state.baseUrl}/v2/workspaces`);
                 workspaces.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                 wizardState.workspaces = workspaces;
                 
@@ -2914,9 +3234,7 @@ PRODUCT_NAME
             
             try {
                 // Get files in the workspace, filter for folders
-                const response = await fetch(`${state.baseUrl}/v2/files?typeFilters=folder&parentId=${workspaceId}`, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
+                const response = await sigmaFetch(`/v2/files?typeFilters=folder&parentId=${workspaceId}`);
                 
                 if (!response.ok) throw new Error('Failed to load folders');
                 
@@ -2953,9 +3271,7 @@ PRODUCT_NAME
             select.innerHTML = '<option value="">Loading connections...</option>';
             
             try {
-                const response = await fetch(`${state.baseUrl}/v2/connections`, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
+                const response = await sigmaFetch(`/v2/connections`);
                 
                 if (!response.ok) throw new Error('Failed to load connections');
                 
@@ -2982,9 +3298,7 @@ PRODUCT_NAME
                 return wizardState.connections;
             }
             try {
-                const response = await fetch(`${state.baseUrl}/v2/connections`, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
+                const response = await sigmaFetch(`/v2/connections`);
                 if (!response.ok) throw new Error('Failed to load connections');
                 const data = await response.json();
                 wizardState.connections = data.entries || [];
@@ -3381,13 +3695,15 @@ A data model has this structure:
             document.getElementById('aiResults').style.display = 'none';
             document.getElementById('aiLoading').style.display = 'none';
             
-            // Reset input fields
+            // Reset input fields and attachments
             document.getElementById('aiPromptEnhance').value = '';
             document.getElementById('aiPromptAddTable').value = '';
             document.getElementById('aiDatabase').value = '';
             document.getElementById('aiSchema').value = '';
             document.getElementById('aiTable').value = '';
             document.getElementById('aiColumns').value = '';
+            aiAttachedFiles = [];
+            renderAiAttachments();
             
             // Set to enhance mode by default
             setAIMode('enhance');
@@ -3416,9 +3732,7 @@ A data model has this structure:
             select.innerHTML = '<option value="">Loading connections...</option>';
             
             try {
-                const response = await fetch(`${state.baseUrl}/v2/connections`, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
+                const response = await sigmaFetch(`/v2/connections`);
                 
                 if (!response.ok) throw new Error('Failed to load connections');
                 
@@ -3477,6 +3791,87 @@ A data model has this structure:
             showToast('API key saved', 'success');
         }
         
+        // ── AI File Attachments ───────────────────────────────────────────────────
+        let aiAttachedFiles = []; // [{ name, content }]
+
+        function handleAiFileDrop(event) {
+            event.preventDefault();
+            const zone = document.getElementById('aiAttachZone');
+            zone.style.borderColor = '';
+            zone.style.background = '';
+            handleAiFileList(Array.from(event.dataTransfer.files));
+        }
+
+        function handleAiFileDrop2(event) {
+            event.preventDefault();
+            const zone = document.getElementById('aiAttachZone2');
+            zone.style.borderColor = '';
+            zone.style.background = '';
+            handleAiFileList(Array.from(event.dataTransfer.files));
+        }
+
+        function handleAiFileSelect(event) {
+            handleAiFileList(Array.from(event.target.files));
+            event.target.value = ''; // allow re-selecting same file
+        }
+
+        async function handleAiFileList(files) {
+            for (const file of files) {
+                if (aiAttachedFiles.find(f => f.name === file.name)) continue; // dedupe
+                const text = await file.text();
+                aiAttachedFiles.push({ name: file.name, content: text });
+            }
+            renderAiAttachments();
+        }
+
+        function removeAiAttachment(name) {
+            aiAttachedFiles = aiAttachedFiles.filter(f => f.name !== name);
+            renderAiAttachments();
+        }
+
+        function renderAiAttachments() {
+            const pillHtml = aiAttachedFiles.map(f => {
+                const icon = f.name.endsWith('.json') ? '📄' : f.name.match(/\.(csv|tsv)$/) ? '📊' : '📝';
+                const kb = (new TextEncoder().encode(f.content).length / 1024).toFixed(1);
+                const safeName = f.name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                return '<div class="attach-pill">'
+                    + '<span style="font-size:14px;">' + icon + '</span>'
+                    + '<span class="attach-pill-name" title="' + f.name + '">' + f.name + '</span>'
+                    + '<span style="color:var(--text-muted);flex-shrink:0;">' + kb + 'kb</span>'
+                    + '<button class="attach-pill-remove" onclick="removeAiAttachment(\'' + safeName + '\')" title="Remove">×</button>'
+                    + '</div>';
+            }).join('');
+            const countText = aiAttachedFiles.length + ' file' + (aiAttachedFiles.length !== 1 ? 's' : '') + ' attached';
+            const show = aiAttachedFiles.length > 0;
+
+            ['', '2'].forEach(suffix => {
+                const list = document.getElementById('aiAttachList' + suffix);
+                const countEl = document.getElementById('aiAttachCount' + suffix);
+                if (!list || !countEl) return;
+                if (!show) {
+                    list.style.display = 'none';
+                    countEl.style.display = 'none';
+                } else {
+                    countEl.textContent = countText;
+                    countEl.style.display = '';
+                    list.style.display = 'flex';
+                    list.innerHTML = pillHtml;
+                }
+            });
+        }
+
+        function buildAiFileContext() {
+            if (!aiAttachedFiles.length) return '';
+            const parts = aiAttachedFiles.map(f => {
+                const maxChars = 12000;
+                const trimmed = f.content.length > maxChars
+                    ? f.content.slice(0, maxChars) + '\n... [truncated — ' + f.content.length + ' chars total]'
+                    : f.content;
+                return '### Attached file: ' + f.name + '\n```\n' + trimmed + '\n```';
+            });
+            return '\n\n## Attached Files\n' + parts.join('\n\n');
+        }
+
         async function generateAISuggestion() {
             const config = loadAIConfig();
             const provider = document.getElementById('aiProvider').value;
@@ -3487,13 +3882,15 @@ A data model has this structure:
                 return;
             }
             
-            // Get current model JSON
+            // Get current model — editor may be in JSON or YAML mode
             const currentJson = document.getElementById('jsonEditor').value;
             let currentModel = null;
             try {
                 currentModel = JSON.parse(currentJson);
             } catch (e) {
-                // Editor might be empty or invalid
+                try {
+                    currentModel = jsyaml.load(currentJson) || null;
+                } catch (e2) { /* empty or unparseable */ }
             }
             
             let userPrompt = '';
@@ -3512,20 +3909,36 @@ A data model has this structure:
                     return;
                 }
                 
-                // Extract table and column info
+                // Extract full table and column info for AI context
                 const elements = currentModel.pages?.[0]?.elements || [];
-                const existingTables = elements.filter(e => e.type === 'table').map(t => ({
+                const existingTables = elements.filter(e => e.kind === 'table' || e.type === 'table').map(t => ({
                     name: t.name,
                     id: t.id,
-                    columns: (t.columns || []).map(c => ({ name: c.name, sourceName: c.sourceName, type: c.type, id: c.id }))
+                    source: t.source,
+                    columns: (t.columns || []).map(c => ({
+                        id: c.id,
+                        name: c.name,
+                        formula: c.formula || null,
+                        description: c.description || null,
+                        hidden: c.hidden || false
+                    })),
+                    metrics: (t.metrics || []).map(m => ({
+                        id: m.id,
+                        name: m.name,
+                        formula: m.formula || null,
+                        description: m.description || null
+                    }))
                 }));
-                
+
                 contextInfo = `
-## Existing Tables and Columns in This Model
+## Existing Tables, Columns and Metrics in This Model
 ${JSON.stringify(existingTables, null, 2)}
 
-IMPORTANT: When referencing columns in formulas, use just [Column Name] - do NOT include the table name. Use the "name" field (friendly name), not sourceName.
-When adding calculated columns, add them to the columns array of the appropriate table using its ID from above.`;
+RULES FOR MODIFYING EXISTING COLUMNS:
+- To add or update a field on an existing column, output an object with the column's exact "id" plus only the fields being changed.
+- Example to add descriptions: { "columns": [ { "id": "abc123", "description": "What this column means" }, ... ] }
+- Do NOT invent new column IDs. Use only the IDs listed above.
+- When referencing columns in formulas use just [Column Name], never include the table name.`;
                 
             } else if (aiCurrentMode === 'addtable') {
                 const connectionId = document.getElementById('aiConnection').value;
@@ -3583,6 +3996,10 @@ ${parsedColumns.length > 0 ? parsedColumns.map(c => `- ${c.sourceName} (${c.type
 ${parsedColumns.length > 0 ? 'CRITICAL: Only use the columns listed above. Do NOT invent additional columns.' : ''}`;
             }
             
+            // Append any attached file content to the prompt
+            const fileContext = buildAiFileContext();
+            if (fileContext) userPrompt = userPrompt + fileContext;
+
             // Show loading
             document.getElementById('aiResults').style.display = 'none';
             document.getElementById('aiLoading').style.display = 'block';
@@ -3598,10 +4015,11 @@ ${currentModel ? JSON.stringify(currentModel, null, 2) : 'No model loaded yet - 
 ${contextInfo}
 
 ## Instructions
-1. Based on the user's request, generate the JSON snippet that should be added or modified
-2. Use proper Sigma formula syntax: reference columns as [Column Name] - do NOT include table name in formulas
-3. Generate unique IDs using pattern: type_name_${Date.now()}
-4. Return your response in this exact format:
+1. Be self-sufficient. If the user asks to add descriptions, generate them yourself based on the column names, formulas, and table context — do NOT ask the user to supply them.
+2. If a request is about modifying existing columns (e.g. adding descriptions, renaming), output an array of objects each containing the column's exact "id" plus only the changed fields.
+3. If a request is about adding new elements (columns, metrics, relationships), generate them with unique IDs using pattern: sigmaId_${Date.now()}_N where N increments.
+4. Use proper Sigma formula syntax: reference columns as [Column Name] — never include the table name.
+5. Return your response in this exact format:
 
 JSON:
 \`\`\`json
@@ -3611,9 +4029,13 @@ JSON:
 \`\`\`
 
 EXPLANATION:
-Explain what the JSON does and how to use it.
+Brief explanation of what was generated and how it will be applied.
 
-IMPORTANT: The JSON should be a snippet that can be merged into the model, not the entire model.`;
+CRITICAL RULES:
+- Never ask the user for information you can derive from the model context above.
+- For descriptions: infer meaning from column names and formulas — write clear, concise business descriptions (1 sentence each).
+- The JSON must be a targeted patch snippet, not the entire model.
+- Only use column IDs that exist in the model context above.`;
 
                 let response;
                 
@@ -3638,7 +4060,21 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
                 
                 // Generate insertion preview
                 try {
-                    generateInsertionPreview(jsonSuggestion);
+                    let patchObj = null;
+                    try { patchObj = JSON.parse(jsonSuggestion); } catch(e) {}
+                    if (patchObj && isPatchSuggestion(patchObj)) {
+                        // Count total columns across all patch elements
+                        let patchColCount = 0;
+                        for (const p of (patchObj.pages || []))
+                            for (const el of (p.elements || []))
+                                patchColCount += (el.columns || []).length + (el.metrics || []).length;
+                        document.getElementById('aiPreviewType').textContent = '🔀 Patch — merge fields into existing columns';
+                        document.getElementById('aiPreviewLocation').textContent = `${patchColCount} column${patchColCount !== 1 ? 's' : ''} will be updated by ID`;
+                        document.getElementById('aiPreviewDetails').textContent = 'Smart Insert will match column IDs and merge the new fields directly.';
+                        document.getElementById('aiPreview').style.display = '';
+                    } else {
+                        generateInsertionPreview(jsonSuggestion);
+                    }
                 } catch (e) {
                     console.warn('Could not generate preview:', e);
                     document.getElementById('aiPreview').style.display = 'none';
@@ -3654,57 +4090,69 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
         }
         
         async function callOpenAI(apiKey, systemPrompt, userMessage) {
-            const response = await fetch('https://api.openai.com/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
-                },
-                body: JSON.stringify({
-                    model: 'gpt-4o',
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userMessage }
-                    ],
-                    max_tokens: 2000,
-                    temperature: 0.7
-                })
-            });
-            
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error?.message || 'OpenAI API error');
+            const messages = [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userMessage }
+            ];
+            let fullText = '';
+            let attempts = 0;
+            const maxAttempts = 3;
+
+            while (attempts < maxAttempts) {
+                const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                    body: JSON.stringify({ model: 'gpt-4o', messages, max_tokens: 8000, temperature: 0.7 })
+                });
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error?.message || 'OpenAI API error');
+                }
+                const data = await response.json();
+                const choice = data.choices[0];
+                fullText += choice.message.content;
+                if (choice.finish_reason !== 'length') break; // complete
+                // Truncated — continue from where it left off
+                messages.push({ role: 'assistant', content: choice.message.content });
+                messages.push({ role: 'user', content: 'Continue exactly from where you left off. Do not repeat anything.' });
+                attempts++;
             }
-            
-            const data = await response.json();
-            return data.choices[0].message.content;
+            return fullText;
         }
         
         async function callAnthropic(apiKey, systemPrompt, userMessage) {
-            const response = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-api-key': apiKey,
-                    'anthropic-version': '2023-06-01',
-                    'anthropic-dangerous-direct-browser-access': 'true'
-                },
-                body: JSON.stringify({
-                    model: 'claude-sonnet-4-20250514',
-                    max_tokens: 2000,
-                    messages: [
-                        { role: 'user', content: systemPrompt + '\n\nUser Request: ' + userMessage }
-                    ]
-                })
-            });
-            
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error?.message || 'Anthropic API error');
+            const messages = [
+                { role: 'user', content: systemPrompt + '\n\nUser Request: ' + userMessage }
+            ];
+            let fullText = '';
+            let attempts = 0;
+            const maxAttempts = 3;
+            const headers = {
+                'Content-Type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01',
+                'anthropic-dangerous-direct-browser-access': 'true'
+            };
+
+            while (attempts < maxAttempts) {
+                const response = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST', headers,
+                    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 8000, messages })
+                });
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error?.message || 'Anthropic API error');
+                }
+                const data = await response.json();
+                const text = data.content[0].text;
+                fullText += text;
+                if (data.stop_reason !== 'max_tokens') break; // complete
+                // Truncated — continue
+                messages.push({ role: 'assistant', content: text });
+                messages.push({ role: 'user', content: 'Continue exactly from where you left off. Do not repeat anything.' });
+                attempts++;
             }
-            
-            const data = await response.json();
-            return data.content[0].text;
+            return fullText;
         }
         
         async function callGemini(apiKey, systemPrompt, userMessage) {
@@ -3722,7 +4170,8 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
                     ],
                     generationConfig: {
                         temperature: 0.7,
-                        maxOutputTokens: 2000
+                        maxOutputTokens: 8000,
+                        stopSequences: []
                     }
                 })
             });
@@ -3742,6 +4191,78 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
             showToast('Copied! Paste into the appropriate location in your JSON editor.', 'success');
         }
         
+        // ── Patch detection & application ─────────────────────────────────────
+        // A patch is a pages[] structure where elements contain only id + field updates
+        // (no kind/source) — used for bulk field merges like adding descriptions.
+        function isPatchSuggestion(obj) {
+            if (!obj || !Array.isArray(obj.pages)) return false;
+            for (const page of obj.pages) {
+                if (!Array.isArray(page.elements)) return false;
+                for (const el of page.elements) {
+                    // A patch element has an id but NO kind or source
+                    if (!el.id) return false;
+                    if (el.kind || el.source) return false;
+                    // Must only contain id + array fields (columns / metrics)
+                    const keys = Object.keys(el);
+                    if (!keys.every(k => ['id', 'columns', 'metrics', 'relationships'].includes(k))) return false;
+                    // Each column entry should be id + patch fields (no formula required)
+                    for (const col of (el.columns || [])) {
+                        if (!col.id) return false;
+                        if (col.kind || col.source) return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        function applyPatchSuggestion(currentModel, patch) {
+            // Build a flat lookup: colId → col object across all elements in all pages
+            const colIndex = {};
+            const metricIndex = {};
+            for (const page of (currentModel.pages || [])) {
+                for (const el of (page.elements || [])) {
+                    for (const col of (el.columns || [])) {
+                        if (col.id) colIndex[col.id] = col;
+                    }
+                    for (const met of (el.metrics || [])) {
+                        if (met.id) metricIndex[met.id] = met;
+                    }
+                }
+            }
+
+            let colsPatched = 0, metricsPatched = 0, notFound = [];
+
+            for (const patchPage of (patch.pages || [])) {
+                for (const patchEl of (patchPage.elements || [])) {
+                    for (const patchCol of (patchEl.columns || [])) {
+                        const target = colIndex[patchCol.id];
+                        if (target) {
+                            // Merge all fields except id
+                            Object.entries(patchCol).forEach(([k, v]) => {
+                                if (k !== 'id') target[k] = v;
+                            });
+                            colsPatched++;
+                        } else {
+                            notFound.push(patchCol.id);
+                        }
+                    }
+                    for (const patchMet of (patchEl.metrics || [])) {
+                        const target = metricIndex[patchMet.id];
+                        if (target) {
+                            Object.entries(patchMet).forEach(([k, v]) => {
+                                if (k !== 'id') target[k] = v;
+                            });
+                            metricsPatched++;
+                        } else {
+                            notFound.push(patchMet.id);
+                        }
+                    }
+                }
+            }
+
+            return { colsPatched, metricsPatched, notFound };
+        }
+
         // Smart Insert AI Suggestion
         async function smartInsertAISuggestion() {
             const editor = document.getElementById('jsonEditor');
@@ -3772,6 +4293,19 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
                     return;
                 }
                 
+                // ── Patch mode: bulk field merge by column ID ───────────────────────
+                if (isPatchSuggestion(suggestionObj)) {
+                    const { colsPatched, metricsPatched, notFound } = applyPatchSuggestion(currentJson, suggestionObj);
+                    editor.value = JSON.stringify(currentJson, null, 2);
+                    closeAIModal();
+                    const total = colsPatched + metricsPatched;
+                    const warn = notFound.length ? ` (${notFound.length} IDs not found)` : '';
+                    showToast(`✅ Patched ${total} column${total !== 1 ? 's' : ''}${warn}`, total > 0 ? 'success' : 'warning');
+                    setTimeout(() => formatJson(), 100);
+                    return;
+                }
+
+                // ── Insert mode: new elements, columns, metrics etc ──────────────────
                 // Detect what type of suggestion this is
                 const suggestionType = detectSuggestionType(suggestionObj);
                 
@@ -3994,8 +4528,7 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
                     newId = `${suggestion.id}_${counter}`;
                 }
                 suggestion.id = newId;
-                console.log(`Duplicate ID detected, changed to: ${newId}`);
-            }
+                }
             
             // Add the suggestion to the array
             target[lastKey].push(suggestion);
@@ -4742,8 +5275,7 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
             document.getElementById('slSaveBtn').disabled = true;
 
             try {
-                const workspaces = await fetchAllPages(`${state.baseUrl}/v2/workspaces`,
-                    { 'Authorization': `Bearer ${state.accessToken}` });
+                const workspaces = await fetchAllPages(`${state.baseUrl}/v2/workspaces`);
                 workspaces.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                 sel.innerHTML = '<option value="">Select a workspace…</option>';
                 workspaces.forEach(ws => {
@@ -4772,9 +5304,7 @@ IMPORTANT: The JSON should be a snippet that can be merged into the model, not t
             folderSel.disabled = true;
 
             try {
-                const resp = await fetch(
-                    `${state.baseUrl}/v2/files?typeFilters=folder&parentId=${workspaceId}`,
-                    { headers: { 'Authorization': `Bearer ${state.accessToken}` } }
+                const resp = await sigmaFetch(`/v2/files?typeFilters=folder&parentId=${workspaceId}`
                 );
                 const data = await resp.json();
                 const folders = data.entries || [];
@@ -6349,9 +6879,8 @@ metrics:
             try {
                 // Single POST with full spec
                 updateStatus('loading', 'Saving model…');
-                const postResp = await fetch(`${state.baseUrl}/v2/dataModels/spec`, {
+                const postResp = await sigmaFetch(`/v2/dataModels/spec`, {
                     method: 'POST',
-                    headers: { 'Authorization': `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ schemaVersion: 1, name, folderId, pages: JSON.parse(JSON.stringify(fullSpec.pages)) })
                 });
                 if (!postResp.ok) {
@@ -6365,9 +6894,7 @@ metrics:
                 if (!dataModelId) throw new Error('No dataModelId returned');
 
                 // Refresh editor with saved spec
-                const getResp = await fetch(`${state.baseUrl}/v2/dataModels/${dataModelId}/spec`, {
-                    headers: { 'Authorization': `Bearer ${state.accessToken}` }
-                });
+                const getResp = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`);
                 if (getResp.ok) {
                     const saved = await getResp.json();
                     saved.dataModelId = dataModelId;
@@ -6539,7 +7066,7 @@ view: date_dim {
 
                 <!-- Destination (required when any new models) -->
                 <div id="bulkUploadDestSection">
-                    <div style="font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); margin-bottom:12px;">
+                    <div class="section-title">
                         Destination
                     </div>
                     <div id="bulkUploadDestNote" style="font-size:12px; color:var(--text-secondary); margin-bottom:14px; line-height:1.5;"></div>
@@ -6648,8 +7175,8 @@ view: date_dim {
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
                         <!-- Manifest upload -->
                         <div onclick="document.getElementById('dbtManifestUpload').click()"
-                             style="background: var(--bg-tertiary); border: 2px dashed var(--border); border-radius: 10px; padding: 20px; text-align: center; cursor: pointer; transition: border-color 0.15s;"
-                             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+                             class="dbt-upload-zone"
+                             >
                             <div style="font-size: 26px; margin-bottom: 8px;">📄</div>
                             <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px; font-family: 'JetBrains Mono', monospace;">semantic_manifest.json</div>
                             <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">target/ after dbt parse / compile</div>
@@ -6660,8 +7187,8 @@ view: date_dim {
 
                         <!-- YAML upload -->
                         <div onclick="document.getElementById('dbtYamlUpload').click()"
-                             style="background: var(--bg-tertiary); border: 2px dashed var(--border); border-radius: 10px; padding: 20px; text-align: center; cursor: pointer; transition: border-color 0.15s;"
-                             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+                             class="dbt-upload-zone"
+                             >
                             <div style="font-size: 26px; margin-bottom: 8px;">📁</div>
                             <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">Semantic Model YAMLs</div>
                             <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">Select one or more .yml files</div>
