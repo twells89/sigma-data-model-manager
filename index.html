@@ -1923,7 +1923,7 @@ How it works:
                 
                 <div class="form-group">
                     <label class="form-label">Connection *</label>
-                    <select class="form-input" id="newModelConnectionId" onchange="onWizardConnectionChange()">
+                    <select class="form-input" id="newModelConnectionId">
                         <option value="">Loading connections...</option>
                     </select>
                     <div class="form-hint">Select the data warehouse connection for your tables</div>
@@ -2026,50 +2026,19 @@ How it works:
                 <div id="aiModeAddTable" class="ai-mode-content" style="display: none;">
                     <div class="form-group">
                         <label class="form-label">Connection</label>
-                        <select class="form-input" id="aiConnection" onchange="onAiConnectionChange()">
+                        <select class="form-input" id="aiConnection">
                             <option value="">Select a connection...</option>
                         </select>
                     </div>
                     
-                    <!-- Cascading schema browser -->
-                    <div class="form-group" id="schemaBrowserGroup">
-                        <label class="form-label">
-                            Table Path
-                            <span id="schemaBrowserStatus" style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:8px;"></span>
-                        </label>
-
-                        <!-- Database -->
-                        <div style="display:flex;flex-direction:column;gap:6px;">
-                            <select class="form-input" id="aiDatabase" onchange="onSchemaBrowserChange('database')" disabled>
-                                <option value="">— Select a connection first —</option>
-                            </select>
-
-                            <!-- Schema (shown after database picked) -->
-                            <select class="form-input" id="aiSchema" onchange="onSchemaBrowserChange('schema')" disabled style="display:none;">
-                                <option value="">— Select a database first —</option>
-                            </select>
-
-                            <!-- Table (shown after schema picked) -->
-                            <select class="form-input" id="aiTable" disabled style="display:none;">
-                                <option value="">— Select a schema first —</option>
-                            </select>
+                    <div class="form-group">
+                        <label class="form-label">Table Path</label>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+                            <input type="text" class="form-input" id="aiDatabase" placeholder="DATABASE">
+                            <input type="text" class="form-input" id="aiSchema" placeholder="SCHEMA">
+                            <input type="text" class="form-input" id="aiTable" placeholder="TABLE_NAME">
                         </div>
-
-                        <!-- Sync hint shown when a path hasn't been indexed yet -->
-                        <div id="schemaSyncHint" style="display:none;margin-top:8px;">
-                            <div class="ai-hint-box" style="display:flex;align-items:center;gap:10px;">
-                                <span>⚠️</span>
-                                <div style="flex:1;font-size:12px;">
-                                    This path hasn't been synced yet.
-                                    <button class="btn-link-muted" onclick="syncAndRetry()" style="margin-left:4px;" id="syncRetryBtn">Sync now</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Hidden inputs kept for backward compat with generate logic -->
-                        <input type="hidden" id="aiDatabaseVal">
-                        <input type="hidden" id="aiSchemaVal">
-                        <input type="hidden" id="aiTableVal">
+                        <div class="form-hint">e.g., PLUGS_ELECTRONICS / PLUGS / D_PRODUCT</div>
                     </div>
                     
                     <div class="form-group">
@@ -3470,38 +3439,13 @@ PRODUCT_NAME
                         <input type="text" class="form-input table-name" placeholder="e.g., Orders">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">
-                            Source Path * (Database / Schema / Table)
-                            <span id="${tableId}_status" style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:8px;"></span>
-                        </label>
-                        <div style="display:flex;flex-direction:column;gap:6px;">
-                            <select class="form-input table-database" id="${tableId}_db"
-                                    onchange="onWizardDbChange('${tableId}')" disabled>
-                                <option value="">— Select a connection above first —</option>
-                            </select>
-                            <select class="form-input table-schema" id="${tableId}_schema"
-                                    onchange="onWizardSchemaChange('${tableId}')" disabled style="display:none;">
-                                <option value="">— Select a database first —</option>
-                            </select>
-                            <select class="form-input table-source" id="${tableId}_table"
-                                    onchange="onWizardTableChange('${tableId}')" disabled style="display:none;">
-                                <option value="">— Select a schema first —</option>
-                            </select>
+                        <label class="form-label">Source Path * (Database / Schema / Table)</label>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+                            <input type="text" class="form-input table-database" placeholder="DATABASE">
+                            <input type="text" class="form-input table-schema" placeholder="SCHEMA">
+                            <input type="text" class="form-input table-source" placeholder="TABLE_NAME">
                         </div>
-                        <div id="${tableId}_syncHint" style="display:none;margin-top:8px;">
-                            <div class="ai-hint-box" style="display:flex;align-items:center;gap:10px;">
-                                <span>⚠️</span>
-                                <div style="flex:1;font-size:12px;">
-                                    Path not synced yet.
-                                    <button class="btn-link-muted" onclick="wizardSyncAndRetry('${tableId}')" id="${tableId}_syncBtn" style="margin-left:4px;">Sync now</button>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="form-hint">Browse your warehouse hierarchy or type a path manually</div>
-                        <!-- Hidden text fallbacks for manual entry -->
-                        <input type="hidden" class="table-database-val" id="${tableId}_dbVal">
-                        <input type="hidden" class="table-schema-val"   id="${tableId}_schemaVal">
-                        <input type="hidden" class="table-source-val"   id="${tableId}_tableVal">
+                        <div class="form-hint">The warehouse path to your source table</div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Columns</label>
@@ -3516,10 +3460,6 @@ PRODUCT_NAME
             `;
 
             container.insertAdjacentHTML('beforeend', tableHtml);
-
-            // Seed the database dropdown if a connection is already selected
-            const connId = document.getElementById('newModelConnectionId').value;
-            if (connId) wizardLoadDatabases(tableId, connId);
         }
         
         function removeTableConfig(tableId) {
@@ -3592,9 +3532,9 @@ PRODUCT_NAME
             tableConfigs.forEach((tableEl, index) => {
                 const tableName = tableEl.querySelector('.table-name').value.trim();
                 // Try hidden val fields first (set by cascading browser), fall back to text input
-                const database    = (tableEl.querySelector('.table-database-val')?.value || tableEl.querySelector('.table-database')?.value || '').trim();
-                const schema      = (tableEl.querySelector('.table-schema-val')?.value   || tableEl.querySelector('.table-schema')?.value   || '').trim();
-                const sourceTable = (tableEl.querySelector('.table-source-val')?.value   || tableEl.querySelector('.table-source')?.value   || '').trim();
+                const database    = (tableEl.querySelector('.table-database')?.value || '').trim();
+                const schema      = (tableEl.querySelector('.table-schema')?.value   || '').trim();
+                const sourceTable = (tableEl.querySelector('.table-source')?.value   || '').trim();
                 
                 if (!tableName || !database || !schema || !sourceTable) {
                     return; // Skip incomplete tables
@@ -3908,10 +3848,9 @@ LIMITATIONS — what you CANNOT do via JSON
             // Reset input fields and attachments
             document.getElementById('aiPromptEnhance').value = '';
             document.getElementById('aiPromptAddTable').value = '';
-            ['aiDatabase','aiSchema','aiTable','aiDatabaseVal','aiSchemaVal','aiTableVal'].forEach(id => {
+            ['aiDatabase','aiSchema','aiTable'].forEach(id => {
                 const el = document.getElementById(id); if (el) el.value = '';
             });
-            resetSchemaBrowser();
             document.getElementById('aiColumns').value = '';
             aiAttachedFiles = [];
             renderAiAttachments();
@@ -3953,470 +3892,7 @@ LIMITATIONS — what you CANNOT do via JSON
         // Track current pending sync so we can retry after it completes
         let _pendingSyncPath = null;
 
-        // Schema index cache: connectionId → { databases: Set, schemas: Map<db,Set>, tables: Map<db/schema,Set> }
-        const _schemaCache = {};
-
-        // Track connections that are CORS-blocked so we don't retry
-        const _corsBlockedConnections = new Set();
-
-        async function fetchConnectionSchemaIndex(connectionId) {
-            if (_corsBlockedConnections.has(connectionId)) throw new Error('CORS_BLOCKED');
-            if (_schemaCache[connectionId]) return _schemaCache[connectionId];
-
-            const index = { databases: new Set(), schemas: new Map(), tables: new Map() };
-            let nextPage = null;
-
-            do {
-                // Only connectionId param — API returns all depths in one stream
-                let qs = `connectionId=${encodeURIComponent(connectionId)}`;
-                if (nextPage) qs += `&page=${nextPage}`; // nextPage is already URL-encoded by the API
-
-                let r;
-                try {
-                    r = await sigmaFetch(`/v2/connections/paths?${qs}`);
-                } catch(fetchErr) {
-                    _corsBlockedConnections.add(connectionId);
-                    throw new Error('CORS_BLOCKED');
-                }
-                if (!r.ok) {
-                    const err = await r.json().catch(() => ({}));
-                    throw new Error(err.message || `HTTP ${r.status}`);
-                }
-                const data = await r.json();
-
-                for (const e of (data.entries || [])) {
-                    if (e.connectionId !== connectionId || !Array.isArray(e.path)) continue;
-                    const [db, schema, table] = e.path;
-                    if (db)     index.databases.add(db);
-                    if (schema) {
-                        if (!index.schemas.has(db)) index.schemas.set(db, new Set());
-                        index.schemas.get(db).add(schema);
-                    }
-                    if (table) {
-                        const key = db + '/' + schema;
-                        if (!index.tables.has(key)) index.tables.set(key, new Set());
-                        index.tables.get(key).add(table);
-                    }
-                }
-
-                nextPage = data.hasMore ? data.nextPage : null;
-            } while (nextPage);
-
-            _schemaCache[connectionId] = index;
-            return index;
-        }
-
-        // Convenience wrappers that mirror the old per-level API
-        async function listDatabases(connectionId) {
-            const idx = await fetchConnectionSchemaIndex(connectionId);
-            return [...idx.databases].sort().map(name => ({ connectionId, path: [name] }));
-        }
-
-        async function listSchemas(connectionId, database) {
-            const idx = await fetchConnectionSchemaIndex(connectionId);
-            const schemas = idx.schemas.get(database) || new Set();
-            return [...schemas].sort().map(name => ({ connectionId, path: [database, name] }));
-        }
-
-        async function listTables(connectionId, database, schema) {
-            const idx = await fetchConnectionSchemaIndex(connectionId);
-            const tables = idx.tables.get(database + '/' + schema) || new Set();
-            return [...tables].sort().map(name => ({ connectionId, path: [database, schema, name] }));
-        }
-
-        async function syncConnectionPath(connectionId, pathArray) {
-            const now = Date.now();
-            if (now - _lastSyncAt < SYNC_COOLDOWN_MS) {
-                throw new Error('Please wait a moment before syncing again.');
-            }
-            _lastSyncAt = now;
-            // POST /v2/connections/{connectionId}/paths/sync
-            const r = await sigmaFetch(`/v2/connections/${connectionId}/paths/sync`, {
-                method: 'POST',
-                body: JSON.stringify({ path: pathArray })
-            });
-            if (!r.ok) {
-                const err = await r.json().catch(() => ({}));
-                throw new Error(err.message || `Sync failed: HTTP ${r.status}`);
-            }
-            return await r.json().catch(() => ({}));
-        }
-
-        function showCorsPathFallback(statusElId, dbSelId, schSelId, tblSelId) {
-            // /v2/connections/paths is blocked from file:// origin — switch to text inputs
-            const status = document.getElementById(statusElId);
-            if (status) {
-                status.innerHTML = '⚠ Path browser requires a hosted URL — enter DATABASE / SCHEMA / TABLE manually below';
-                status.style.color = 'var(--warning)';
-            }
-            // Replace each select with a text input
-            [dbSelId, schSelId, tblSelId].forEach((selId, i) => {
-                const sel = document.getElementById(selId);
-                if (!sel) return;
-                const placeholder = ['DATABASE', 'SCHEMA', 'TABLE'][i];
-                const input = document.createElement('input');
-                input.type = 'text';
-                input.className = 'form-input';
-                input.placeholder = placeholder;
-                input.id = selId;
-                input.style.display = '';
-                sel.parentNode.replaceChild(input, sel);
-            });
-        }
-
-        function resetSchemaBrowser() {
-            const dbSel  = document.getElementById('aiDatabase');
-            const schSel = document.getElementById('aiSchema');
-            const tblSel = document.getElementById('aiTable');
-            if (!dbSel) return;
-
-            dbSel.innerHTML  = '<option value="">— Select a connection first —</option>';
-            schSel.innerHTML = '<option value="">— Select a database first —</option>';
-            tblSel.innerHTML = '<option value="">— Select a schema first —</option>';
-
-            dbSel.disabled  = true;
-            schSel.disabled = true;
-            tblSel.disabled = true;
-            schSel.style.display = 'none';
-            tblSel.style.display = 'none';
-
-            ['aiDatabaseVal','aiSchemaVal','aiTableVal'].forEach(id => {
-                const el = document.getElementById(id); if (el) el.value = '';
-            });
-
-            const hint = document.getElementById('schemaSyncHint');
-            if (hint) hint.style.display = 'none';
-            setSchemaBrowserStatus('');
-        }
-
-        function setSchemaBrowserStatus(msg, isError = false) {
-            const el = document.getElementById('schemaBrowserStatus');
-            if (!el) return;
-            el.textContent = msg;
-            el.style.color = isError ? 'var(--error)' : 'var(--text-muted)';
-        }
-
-        function populateSelect(selectId, items, placeholder) {
-            const sel = document.getElementById(selectId);
-            sel.innerHTML = `<option value="">${placeholder}</option>`;
-            items.forEach(item => {
-                const opt = document.createElement('option');
-                opt.value = item;
-                opt.textContent = item;
-                sel.appendChild(opt);
-            });
-            sel.disabled = items.length === 0;
-            sel.style.display = '';
-        }
-
-        // Called when connection select changes
-        async function onAiConnectionChange() {
-            resetSchemaBrowser();
-            const connId = document.getElementById('aiConnection').value;
-            if (!connId) return;
-
-            setSchemaBrowserStatus('Loading databases…');
-            try {
-                const entries = await listDatabases(connId);
-                const databases = entries.map(e => e.path[0]).filter(Boolean);
-                if (databases.length === 0) {
-                    setSchemaBrowserStatus('No databases found — try syncing the connection.', true);
-                    return;
-                }
-                populateSelect('aiDatabase', databases.sort(), '— Select a database —');
-                document.getElementById('aiDatabase').disabled = false;
-                setSchemaBrowserStatus(`${databases.length} database${databases.length !== 1 ? 's' : ''}`);
-            } catch(e) {
-                if (e.message === 'CORS_BLOCKED') {
-                    showCorsPathFallback('schemaBrowserStatus', 'aiDatabase', 'aiSchema', 'aiTable');
-                    // Wire text inputs to hidden val fields
-                    [['aiDatabase','aiDatabaseVal'],['aiSchema','aiSchemaVal'],['aiTable','aiTableVal']].forEach(([id, valId]) => {
-                        const el = document.getElementById(id);
-                        if (el && el.tagName === 'INPUT') {
-                            el.addEventListener('input', () => {
-                                const v = document.getElementById(valId); if(v) v.value = el.value.trim();
-                            });
-                        }
-                    });
-                } else {
-                    setSchemaBrowserStatus(`Error: ${e.message}`, true);
-                }
-            }
-        }
-
-        // Called when database or schema select changes
-        async function onSchemaBrowserChange(level) {
-            const connId  = document.getElementById('aiConnection').value;
-            const dbVal   = document.getElementById('aiDatabase').value;
-            const schVal  = level === 'schema' ? document.getElementById('aiSchema').value : '';
-
-            // Reset downstream
-            if (level === 'database') {
-                document.getElementById('aiSchema').innerHTML = '<option value="">— Select a database first —</option>';
-                document.getElementById('aiSchema').disabled = true;
-                document.getElementById('aiSchema').style.display = 'none';
-                document.getElementById('aiTable').innerHTML  = '<option value="">— Select a schema first —</option>';
-                document.getElementById('aiTable').disabled   = true;
-                document.getElementById('aiTable').style.display = 'none';
-                document.getElementById('aiDatabaseVal').value = dbVal;
-                document.getElementById('aiSchemaVal').value  = '';
-                document.getElementById('aiTableVal').value   = '';
-                const hint = document.getElementById('schemaSyncHint');
-                if (hint) hint.style.display = 'none';
-            } else if (level === 'schema') {
-                document.getElementById('aiTable').innerHTML  = '<option value="">— Select a schema first —</option>';
-                document.getElementById('aiTable').disabled   = true;
-                document.getElementById('aiTable').style.display = 'none';
-                document.getElementById('aiSchemaVal').value  = schVal;
-                document.getElementById('aiTableVal').value   = '';
-                const hint = document.getElementById('schemaSyncHint');
-                if (hint) hint.style.display = 'none';
-            }
-
-            if (!dbVal) return;
-
-            const path = level === 'database' ? [dbVal] : [dbVal, schVal];
-            if (level === 'schema' && !schVal) return;
-
-            const label = level === 'database' ? 'schemas' : 'tables';
-            setSchemaBrowserStatus(`Loading ${label}…`);
-
-            try {
-                const entries = level === 'database'
-                    ? await listSchemas(connId, path[0])
-                    : await listTables(connId, path[0], path[1]);
-
-                if (entries.length === 0) {
-                    // Nothing returned — path may not be synced
-                    _pendingSyncPath = { connId, path, level };
-                    setSchemaBrowserStatus(`No ${label} found.`, true);
-                    const hint = document.getElementById('schemaSyncHint');
-                    if (hint) hint.style.display = '';
-                    return;
-                }
-
-                const names = [...new Set(entries.map(e => e.path[e.path.length - 1]).filter(Boolean))].sort();
-
-                if (level === 'database') {
-                    populateSelect('aiSchema', names, '— Select a schema —');
-                    document.getElementById('aiSchema').style.display = '';
-                    setSchemaBrowserStatus(`${names.length} schema${names.length !== 1 ? 's' : ''}`);
-                } else {
-                    populateSelect('aiTable', names, '— Select a table —');
-                    document.getElementById('aiTable').style.display = '';
-                    // Wire table select change to update hidden val
-                    document.getElementById('aiTable').onchange = () => {
-                        document.getElementById('aiTableVal').value = document.getElementById('aiTable').value;
-                        setSchemaBrowserStatus(
-                            document.getElementById('aiTable').value
-                                ? `✓ ${dbVal} / ${schVal} / ${document.getElementById('aiTable').value}`
-                                : `${names.length} table${names.length !== 1 ? 's' : ''}`
-                        );
-                    };
-                    setSchemaBrowserStatus(`${names.length} table${names.length !== 1 ? 's' : ''}`);
-                }
-
-            } catch(e) {
-                setSchemaBrowserStatus(`Error: ${e.message}`, true);
-            }
-        }
-
-        async function syncAndRetry() {
-            if (!_pendingSyncPath) return;
-            const { connId, path, level } = _pendingSyncPath;
-            const btn = document.getElementById('syncRetryBtn');
-            if (btn) { btn.textContent = 'Syncing…'; btn.disabled = true; }
-
-            try {
-                setSchemaBrowserStatus('Syncing path with warehouse…');
-                await syncConnectionPath(connId, path);
-                const hint = document.getElementById('schemaSyncHint');
-                if (hint) hint.style.display = 'none';
-                _pendingSyncPath = null;
-                // Retry the browse
-                await onSchemaBrowserChange(level);
-            } catch(e) {
-                setSchemaBrowserStatus(`Sync failed: ${e.message}`, true);
-            } finally {
-                if (btn) { btn.textContent = 'Sync now'; btn.disabled = false; }
-            }
-        }
-
-        // ── Wizard schema browser (per-table-row) ─────────────────────────────
-
-        // When the top-level connection changes, refresh all existing table rows
-        async function onWizardConnectionChange() {
-            const connId = document.getElementById('newModelConnectionId').value;
-            if (connId) delete _schemaCache[connId]; // force refresh on connection change
-            const tableConfigs = document.querySelectorAll('.table-config');
-            tableConfigs.forEach(el => {
-                const tableId = el.id;
-                // Reset each row's selects
-                wizardResetTableRow(tableId);
-                if (connId) wizardLoadDatabases(tableId, connId);
-            });
-        }
-
-        function wizardResetTableRow(tableId) {
-            const dbSel  = document.getElementById(`${tableId}_db`);
-            const schSel = document.getElementById(`${tableId}_schema`);
-            const tblSel = document.getElementById(`${tableId}_table`);
-            if (dbSel)  { dbSel.innerHTML  = '<option value="">— Select a connection above first —</option>'; dbSel.disabled = true; }
-            if (schSel) { schSel.innerHTML = '<option value="">— Select a database first —</option>';         schSel.disabled = true; schSel.style.display = 'none'; }
-            if (tblSel) { tblSel.innerHTML = '<option value="">— Select a schema first —</option>';           tblSel.disabled = true; tblSel.style.display = 'none'; }
-            const hint = document.getElementById(`${tableId}_syncHint`);
-            if (hint) hint.style.display = 'none';
-            ['_dbVal','_schemaVal','_tableVal'].forEach(s => {
-                const el = document.getElementById(tableId + s); if (el) el.value = '';
-            });
-            wizardSetStatus(tableId, '');
-        }
-
-        function wizardSetStatus(tableId, msg, isError = false) {
-            const el = document.getElementById(`${tableId}_status`);
-            if (!el) return;
-            el.textContent = msg;
-            el.style.color = isError ? 'var(--error)' : 'var(--text-muted)';
-        }
-
-        async function wizardLoadDatabases(tableId, connId) {
-            const dbSel = document.getElementById(`${tableId}_db`);
-            if (!dbSel) return;
-            dbSel.innerHTML = '<option value="">Loading…</option>';
-            dbSel.disabled = true;
-            wizardSetStatus(tableId, 'Loading databases…');
-            try {
-                const entries = await listDatabases(connId);
-                const databases = entries.map(e => e.path[0]).filter(Boolean);
-                dbSel.innerHTML = `<option value="">— Select a database —</option>` +
-                    databases.map(d => `<option value="${d}">${d}</option>`).join('');
-                dbSel.disabled = databases.length === 0;
-                wizardSetStatus(tableId, databases.length ? `${databases.length} database${databases.length !== 1 ? 's' : ''}` : 'No databases found');
-            } catch(e) {
-                if (e.message === 'CORS_BLOCKED') {
-                    // Schema browser unavailable from file:// — replace all 3 selects with text inputs
-                    const container = document.getElementById(`${tableId}_db`).parentNode;
-                    ['_db','_schema','_table'].forEach((suffix, i) => {
-                        const sel = document.getElementById(tableId + suffix);
-                        if (!sel) return;
-                        const ph = ['DATABASE','SCHEMA','TABLE_NAME'][i];
-                        const cls = ['table-database','table-schema','table-source'][i];
-                        const valId = [`${tableId}_dbVal`,`${tableId}_schemaVal`,`${tableId}_tableVal`][i];
-                        const inp = document.createElement('input');
-                        inp.type = 'text';
-                        inp.className = `form-input ${cls}`;
-                        inp.placeholder = ph;
-                        inp.style.display = '';
-                        inp.addEventListener('input', () => {
-                            const valEl = document.getElementById(valId);
-                            if (valEl) valEl.value = inp.value.trim();
-                        });
-                        sel.parentNode.replaceChild(inp, sel);
-                    });
-                    wizardSetStatus(tableId, '⚠ Browser unavailable from file:// — enter path manually', true);
-                } else {
-                    dbSel.innerHTML = '<option value="">Error loading databases</option>';
-                    wizardSetStatus(tableId, e.message, true);
-                }
-            }
-        }
-
-        async function onWizardDbChange(tableId) {
-            const connId = document.getElementById('newModelConnectionId').value;
-            const dbVal  = document.getElementById(`${tableId}_db`).value;
-            // Reset downstream
-            const schSel = document.getElementById(`${tableId}_schema`);
-            const tblSel = document.getElementById(`${tableId}_table`);
-            schSel.innerHTML = '<option value="">— Select a database first —</option>';
-            schSel.disabled = true; schSel.style.display = 'none';
-            tblSel.innerHTML = '<option value="">— Select a schema first —</option>';
-            tblSel.disabled = true; tblSel.style.display = 'none';
-            document.getElementById(`${tableId}_dbVal`).value     = dbVal;
-            document.getElementById(`${tableId}_schemaVal`).value = '';
-            document.getElementById(`${tableId}_tableVal`).value  = '';
-            document.getElementById(`${tableId}_syncHint`).style.display = 'none';
-            if (!dbVal || !connId) return;
-            wizardSetStatus(tableId, 'Loading schemas…');
-            try {
-                const entries = await listSchemas(connId, dbVal);
-                if (!entries.length) {
-                    document.getElementById(`${tableId}_syncHint`).style.display = '';
-                    document.getElementById(`${tableId}_syncHint`).__pendingPath = [dbVal];
-                    wizardSetStatus(tableId, 'No schemas found', true); return;
-                }
-                const schemas = entries.map(e => e.path[1]).filter(Boolean);
-                schSel.innerHTML = `<option value="">— Select a schema —</option>` +
-                    schemas.map(s => `<option value="${s}">${s}</option>`).join('');
-                schSel.disabled = false; schSel.style.display = '';
-                wizardSetStatus(tableId, `${schemas.length} schema${schemas.length !== 1 ? 's' : ''}`);
-            } catch(e) { wizardSetStatus(tableId, e.message, true); }
-        }
-
-        async function onWizardSchemaChange(tableId) {
-            const connId  = document.getElementById('newModelConnectionId').value;
-            const dbVal   = document.getElementById(`${tableId}_db`).value;
-            const schVal  = document.getElementById(`${tableId}_schema`).value;
-            const tblSel  = document.getElementById(`${tableId}_table`);
-            tblSel.innerHTML = '<option value="">— Select a schema first —</option>';
-            tblSel.disabled = true; tblSel.style.display = 'none';
-            document.getElementById(`${tableId}_schemaVal`).value = schVal;
-            document.getElementById(`${tableId}_tableVal`).value  = '';
-            document.getElementById(`${tableId}_syncHint`).style.display = 'none';
-            if (!schVal || !connId) return;
-            wizardSetStatus(tableId, 'Loading tables…');
-            try {
-                const entries = await listTables(connId, dbVal, schVal);
-                if (!entries.length) {
-                    document.getElementById(`${tableId}_syncHint`).style.display = '';
-                    document.getElementById(`${tableId}_syncHint`).__pendingPath = [dbVal, schVal];
-                    wizardSetStatus(tableId, 'No tables found', true); return;
-                }
-                const tables = entries.map(e => e.path[2]).filter(Boolean);
-                tblSel.innerHTML = `<option value="">— Select a table —</option>` +
-                    tables.map(t => `<option value="${t}">${t}</option>`).join('');
-                tblSel.disabled = false; tblSel.style.display = '';
-                wizardSetStatus(tableId, `${tables.length} table${tables.length !== 1 ? 's' : ''}`);
-            } catch(e) { wizardSetStatus(tableId, e.message, true); }
-        }
-
-        function onWizardTableChange(tableId) {
-            const tblVal = document.getElementById(`${tableId}_table`).value;
-            document.getElementById(`${tableId}_tableVal`).value = tblVal;
-            const dbVal  = document.getElementById(`${tableId}_dbVal`).value;
-            const schVal = document.getElementById(`${tableId}_schemaVal`).value;
-            wizardSetStatus(tableId, tblVal ? `✓ ${dbVal} / ${schVal} / ${tblVal}` : '');
-            // Auto-populate Table Name if it's still empty
-            if (tblVal) {
-                const nameInput = document.getElementById(`${tableId}`)?.querySelector('.table-name');
-                if (nameInput && !nameInput.value) {
-                    // Convert TABLE_NAME → Table Name
-                    nameInput.value = tblVal.replace(/_/g, ' ').replace(/\w/g, c => c.toUpperCase()).replace(/Dim/, 'Dim').replace(/Fact/, 'Fact');
-                }
-            }
-        }
-
-        async function wizardSyncAndRetry(tableId) {
-            const connId  = document.getElementById('newModelConnectionId').value;
-            const hintEl  = document.getElementById(`${tableId}_syncHint`);
-            const path    = hintEl?.__pendingPath;
-            if (!connId || !path) return;
-            const btn = document.getElementById(`${tableId}_syncBtn`);
-            if (btn) { btn.textContent = 'Syncing…'; btn.disabled = true; }
-            try {
-                wizardSetStatus(tableId, 'Syncing…');
-                await syncConnectionPath(connId, path);
-                hintEl.style.display = 'none';
-                // Retry the appropriate level
-                if (path.length === 1) await onWizardDbChange(tableId);
-                else await onWizardSchemaChange(tableId);
-            } catch(e) {
-                wizardSetStatus(tableId, `Sync failed: ${e.message}`, true);
-            } finally {
-                if (btn) { btn.textContent = 'Sync now'; btn.disabled = false; }
-            }
-        }
-
-        async function loadAIConnections() {
+                async function loadAIConnections() {
             const select = document.getElementById('aiConnection');
             select.innerHTML = '<option value="">Loading connections...</option>';
             
@@ -4445,8 +3921,7 @@ LIMITATIONS — what you CANNOT do via JSON
                                      || elements.find(e => e.connectionId)?.connectionId;
                     if (firstConnId) {
                         select.value = firstConnId;
-                        // Kick off the schema browser for the auto-selected connection
-                        await onAiConnectionChange();
+
                     }
                 } catch (e) {
                     // Ignore parse errors
@@ -4730,9 +4205,9 @@ RULES FOR MODIFYING EXISTING COLUMNS:
             } else if (aiCurrentMode === 'addtable') {
                 const connectionId = document.getElementById('aiConnection').value;
                 const connectionName = document.getElementById('aiConnection').selectedOptions[0]?.textContent || '';
-                const database = (document.getElementById('aiDatabaseVal') || document.getElementById('aiDatabase')).value.trim();
-                const schema   = (document.getElementById('aiSchemaVal')   || document.getElementById('aiSchema')).value.trim();
-                const table    = (document.getElementById('aiTableVal')    || document.getElementById('aiTable')).value.trim();
+                const database = document.getElementById('aiDatabase').value.trim();
+                const schema   = document.getElementById('aiSchema').value.trim();
+                const table    = document.getElementById('aiTable').value.trim();
                 const columnsText = document.getElementById('aiColumns').value.trim();
                 const additionalInstructions = document.getElementById('aiPromptAddTable').value.trim();
                 
