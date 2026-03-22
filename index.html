@@ -1368,6 +1368,34 @@
             font-family: inherit;
         }
         .btn-link-muted:hover { color: var(--text-secondary); }
+
+        /* Token cost estimate bar */
+        .token-estimate {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 12px;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .token-estimate .tok-count {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-primary);
+            font-size: 11px;
+        }
+        .token-estimate .tok-cost {
+            font-weight: 600;
+            color: var(--accent);
+        }
+        .token-estimate .tok-warn {
+            color: var(--warning);
+        }
     </style>
 </head>
 <body>
@@ -1895,7 +1923,7 @@ How it works:
                 
                 <div class="form-group">
                     <label class="form-label">Connection *</label>
-                    <select class="form-input" id="newModelConnectionId">
+                    <select class="form-input" id="newModelConnectionId" onchange="onWizardConnectionChange()">
                         <option value="">Loading connections...</option>
                     </select>
                     <div class="form-hint">Select the data warehouse connection for your tables</div>
@@ -1963,7 +1991,7 @@ How it works:
                 <div id="aiModeEnhance" class="ai-mode-content">
                     <div class="form-group">
                         <label class="form-label">What would you like to add or change?</label>
-                        <textarea class="form-input ai-prompt" id="aiPromptEnhance" rows="7" placeholder="Examples:
+                        <textarea class="form-input ai-prompt" id="aiPromptEnhance" rows="7" oninput="updateTokenEstimate()" placeholder="Examples:
 • Add a metric for Total Revenue that sums the Amount column
 • Create a calculated column for profit margin
 • Add a relationship between Orders and Customers on customer_id
@@ -1998,19 +2026,50 @@ How it works:
                 <div id="aiModeAddTable" class="ai-mode-content" style="display: none;">
                     <div class="form-group">
                         <label class="form-label">Connection</label>
-                        <select class="form-input" id="aiConnection">
+                        <select class="form-input" id="aiConnection" onchange="onAiConnectionChange()">
                             <option value="">Select a connection...</option>
                         </select>
                     </div>
                     
-                    <div class="form-group">
-                        <label class="form-label">Table Path</label>
-                        <div style="display: flex; gap: 8px;">
-                            <input type="text" class="form-input" id="aiDatabase" placeholder="DATABASE">
-                            <input type="text" class="form-input" id="aiSchema" placeholder="SCHEMA">
-                            <input type="text" class="form-input" id="aiTable" placeholder="TABLE">
+                    <!-- Cascading schema browser -->
+                    <div class="form-group" id="schemaBrowserGroup">
+                        <label class="form-label">
+                            Table Path
+                            <span id="schemaBrowserStatus" style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:8px;"></span>
+                        </label>
+
+                        <!-- Database -->
+                        <div style="display:flex;flex-direction:column;gap:6px;">
+                            <select class="form-input" id="aiDatabase" onchange="onSchemaBrowserChange('database')" disabled>
+                                <option value="">— Select a connection first —</option>
+                            </select>
+
+                            <!-- Schema (shown after database picked) -->
+                            <select class="form-input" id="aiSchema" onchange="onSchemaBrowserChange('schema')" disabled style="display:none;">
+                                <option value="">— Select a database first —</option>
+                            </select>
+
+                            <!-- Table (shown after schema picked) -->
+                            <select class="form-input" id="aiTable" disabled style="display:none;">
+                                <option value="">— Select a schema first —</option>
+                            </select>
                         </div>
-                        <div class="form-hint">e.g., PLUGS_ELECTRONICS / PLUGS / D_PRODUCT</div>
+
+                        <!-- Sync hint shown when a path hasn't been indexed yet -->
+                        <div id="schemaSyncHint" style="display:none;margin-top:8px;">
+                            <div class="ai-hint-box" style="display:flex;align-items:center;gap:10px;">
+                                <span>⚠️</span>
+                                <div style="flex:1;font-size:12px;">
+                                    This path hasn't been synced yet.
+                                    <button class="btn-link-muted" onclick="syncAndRetry()" style="margin-left:4px;" id="syncRetryBtn">Sync now</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Hidden inputs kept for backward compat with generate logic -->
+                        <input type="hidden" id="aiDatabaseVal">
+                        <input type="hidden" id="aiSchemaVal">
+                        <input type="hidden" id="aiTableVal">
                     </div>
                     
                     <div class="form-group">
@@ -2035,7 +2094,7 @@ PRODUCT_NAME
                     
                     <div class="form-group">
                         <label class="form-label">Additional Instructions (optional)</label>
-                        <textarea class="form-input" id="aiPromptAddTable" rows="4" placeholder="e.g., Add a calculated column for full name, create a metric for total count..."></textarea>
+                        <textarea class="form-input" id="aiPromptAddTable" rows="4" oninput="updateTokenEstimate()" placeholder="e.g., Add a calculated column for full name, create a metric for total count..."></textarea>
                     </div>
 
                     <!-- File attachments (shared state with Enhance mode) -->
@@ -2058,7 +2117,17 @@ PRODUCT_NAME
                     </div>
                 </div>
                 
-                <button class="btn btn-primary" onclick="generateAISuggestion()" id="aiGenerateBtn" style="width: 100%; margin-top: 16px;">
+                <!-- Token cost estimate -->
+                <div class="token-estimate" id="tokenEstimate" style="display:none;">
+                    <span>
+                        <span id="tokEstLabel">Estimated input:</span>
+                        <span class="tok-count" id="tokEstCount"> — </span> tokens
+                    </span>
+                    <span class="tok-cost" id="tokEstCost"></span>
+                    <span class="tok-warn" id="tokEstWarn" style="display:none;"></span>
+                </div>
+
+                <button class="btn btn-primary" onclick="generateAISuggestion()" id="aiGenerateBtn" style="width: 100%; margin-top: 12px;">
                     ✨ Generate Suggestion
                 </button>
                 
@@ -3389,7 +3458,7 @@ PRODUCT_NAME
             tableCounter++;
             const tableId = `table_${tableCounter}`;
             const container = document.getElementById('tablesContainer');
-            
+
             const tableHtml = `
                 <div class="table-config" id="${tableId}">
                     <div class="table-config-header">
@@ -3401,27 +3470,56 @@ PRODUCT_NAME
                         <input type="text" class="form-input table-name" placeholder="e.g., Orders">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Source Path * (Database / Schema / Table)</label>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
-                            <input type="text" class="form-input table-database" placeholder="DATABASE">
-                            <input type="text" class="form-input table-schema" placeholder="SCHEMA">
-                            <input type="text" class="form-input table-source" placeholder="TABLE_NAME">
+                        <label class="form-label">
+                            Source Path * (Database / Schema / Table)
+                            <span id="${tableId}_status" style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:8px;"></span>
+                        </label>
+                        <div style="display:flex;flex-direction:column;gap:6px;">
+                            <select class="form-input table-database" id="${tableId}_db"
+                                    onchange="onWizardDbChange('${tableId}')" disabled>
+                                <option value="">— Select a connection above first —</option>
+                            </select>
+                            <select class="form-input table-schema" id="${tableId}_schema"
+                                    onchange="onWizardSchemaChange('${tableId}')" disabled style="display:none;">
+                                <option value="">— Select a database first —</option>
+                            </select>
+                            <select class="form-input table-source" id="${tableId}_table"
+                                    onchange="onWizardTableChange('${tableId}')" disabled style="display:none;">
+                                <option value="">— Select a schema first —</option>
+                            </select>
                         </div>
-                        <div class="form-hint">The warehouse path to your source table</div>
+                        <div id="${tableId}_syncHint" style="display:none;margin-top:8px;">
+                            <div class="ai-hint-box" style="display:flex;align-items:center;gap:10px;">
+                                <span>⚠️</span>
+                                <div style="flex:1;font-size:12px;">
+                                    Path not synced yet.
+                                    <button class="btn-link-muted" onclick="wizardSyncAndRetry('${tableId}')" id="${tableId}_syncBtn" style="margin-left:4px;">Sync now</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-hint">Browse your warehouse hierarchy or type a path manually</div>
+                        <!-- Hidden text fallbacks for manual entry -->
+                        <input type="hidden" class="table-database-val" id="${tableId}_dbVal">
+                        <input type="hidden" class="table-schema-val"   id="${tableId}_schemaVal">
+                        <input type="hidden" class="table-source-val"   id="${tableId}_tableVal">
                     </div>
                     <div class="form-group">
                         <label class="form-label">Columns</label>
                         <div class="column-list" id="${tableId}_columns"></div>
                         <div class="add-column-row">
                             <input type="text" class="form-input" id="${tableId}_newColumn" placeholder="Column name" onkeypress="if(event.key==='Enter'){addColumn('${tableId}'); event.preventDefault();}">
-                            <button class="btn btn-secondary btn-small" onclick="addColumn('${tableId}')">Add</button>
+                            <button class="btn btn-secondary btn-small" onclick="addColumn('${tableId}')" title="Add column">Add</button>
                         </div>
                         <div class="form-hint">Press Enter or click Add for each column. Leave empty to add columns later in Sigma.</div>
                     </div>
                 </div>
             `;
-            
+
             container.insertAdjacentHTML('beforeend', tableHtml);
+
+            // Seed the database dropdown if a connection is already selected
+            const connId = document.getElementById('newModelConnectionId').value;
+            if (connId) wizardLoadDatabases(tableId, connId);
         }
         
         function removeTableConfig(tableId) {
@@ -3493,9 +3591,10 @@ PRODUCT_NAME
             
             tableConfigs.forEach((tableEl, index) => {
                 const tableName = tableEl.querySelector('.table-name').value.trim();
-                const database = tableEl.querySelector('.table-database').value.trim();
-                const schema = tableEl.querySelector('.table-schema').value.trim();
-                const sourceTable = tableEl.querySelector('.table-source').value.trim();
+                // Try hidden val fields first (set by cascading browser), fall back to text input
+                const database    = (tableEl.querySelector('.table-database-val')?.value || tableEl.querySelector('.table-database')?.value || '').trim();
+                const schema      = (tableEl.querySelector('.table-schema-val')?.value   || tableEl.querySelector('.table-schema')?.value   || '').trim();
+                const sourceTable = (tableEl.querySelector('.table-source-val')?.value   || tableEl.querySelector('.table-source')?.value   || '').trim();
                 
                 if (!tableName || !database || !schema || !sourceTable) {
                     return; // Skip incomplete tables
@@ -3584,86 +3683,197 @@ PRODUCT_NAME
         
         // Data Model Schema Documentation for AI
         const DATA_MODEL_SCHEMA = `
-## Sigma Data Model JSON Schema
+## Sigma Data Model JSON — Official Format (Beta)
 
-A data model has this structure:
+All data models share this top-level structure:
 {
   "schemaVersion": 1,
   "name": "Model Name",
-  "description": "Optional description",
   "pages": [
-    {
-      "id": "page_<timestamp>",
-      "name": "Page 1",
-      "elements": [...]
-    }
+    { "id": "pageId", "name": "Page 1", "elements": [ ...elements... ] }
   ]
 }
 
-### Element Types
+═══════════════════════════════════════════════════
+ELEMENT TYPES
+═══════════════════════════════════════════════════
 
-**Table Element:**
+### 1. Warehouse table element
 {
-  "id": "element_<timestamp>",
-  "type": "table",
-  "name": "Table Display Name",
-  "connectionId": "<connection-uuid>",
-  "path": ["DATABASE", "SCHEMA", "TABLE_NAME"],
-  "columns": [
-    {
-      "id": "col_<timestamp>",
-      "name": "Column Display Name",
-      "sourceName": "ORIGINAL_COLUMN_NAME",
-      "type": "text|number|datetime|boolean"
-    }
-  ]
+  "id": "elemId",
+  "kind": "table",
+  "source": {
+    "connectionId": "uuid",
+    "kind": "warehouse-table",
+    "path": ["DATABASE", "SCHEMA", "TABLE_NAME"]
+  },
+  "columns": [ ...columns... ],
+  "metrics": [ ...metrics... ],          // optional
+  "relationships": [ ...relationships... ], // optional
+  "folders": [ ...folders... ],          // optional
+  "groupings": [ ...groupings... ],      // optional
+  "sort": [ ...sort... ],                // optional
+  "order": ["colId1", "colId2", ...]
 }
 
-**Calculated Column (add to columns array):**
+### 2. Custom SQL element  (MISSING from examples — use source.kind:"sql", source.statement)
+
+### 3. Join element (creates a new element from two existing elements)
 {
-  "id": "calc_<timestamp>",
-  "name": "Calculated Column Name",
-  "formula": "[Price] - [Cost]",
-  "type": "number"
+  "id": "elemId",
+  "kind": "table",
+  "source": {
+    "kind": "join",
+    "joins": [
+      {
+        "left":  { "elementId": "leftElemId",  "kind": "table" },
+        "right": { "elementId": "rightElemId", "kind": "table" },
+        "columns": [
+          { "left": "[Origin Airport]", "right": "[Iata Code]" }
+        ],
+        "joinType": "inner"
+      }
+    ],
+    "primarySource": { "elementId": "leftElemId", "kind": "table" }
+  },
+  "columns": [...],
+  "order": [...]
 }
+Join columns use short random IDs and formulas like "[FLIGHTS/Year]" (TABLE_NAME/Display Name).
 
-**Metric:**
+### 4. Union element
 {
-  "id": "metric_<timestamp>",
-  "name": "Metric Name",
-  "description": "What this metric measures",
-  "formula": "Sum([Amount])",
-  "formatOptions": {
-    "type": "currency|percent|number"
-  }
+  "id": "elemId",
+  "kind": "table",
+  "source": {
+    "kind": "union",
+    "sources": [
+      { "connectionId": "uuid", "kind": "warehouse-table", "path": [...] },
+      { "elementId": "otherElemId", "kind": "table" }
+    ],
+    "matches": [
+      { "outputColumnName": "State", "sourceColumns": ["[State]", "[State]"] }
+    ]
+  },
+  "columns": [...],
+  "order": [...]
 }
+Union columns use short random IDs and formulas like "[Union of 2 Sources/State]".
 
-**Relationship (add to element):**
+### 5. Control element
 {
-  "relationships": [
-    {
-      "targetElementId": "<element_id_of_related_table>",
-      "sourceColumns": ["col_id_in_this_table"],
-      "targetColumns": ["col_id_in_target_table"],
-      "type": "many_to_one"
-    }
-  ]
+  "kind": "control",
+  "controlId": "Airline",        // string key used for parameter passing
+  "id": "elemId",
+  "filters": [
+    { "source": { "kind": "table", "elementId": "tableElemId" }, "columnId": "inode-xxx/COL" }
+  ],
+  "controlType": "list|text|text-area|number|number-range|date|date-range|slider|range-slider|segmented|switch|checkbox",
+  // type-specific fields below
 }
+List:         "mode": "include", "selectionMode": "multiple", "values": [], "source": {...}
+Text:         "mode": "equals", "value": "N480HA", "case": "insensitive", "includeNulls": "when-no-value-is-selected"
+Text-area:    "value": "N480HA"
+Number:       "mode": "=", "value": 10, "includeNulls": "when-no-value-is-selected"
+Number-range: "min": 10, "max": 20, "includeNulls": "when-no-value-is-selected"
+Date:         "mode": "=", "value": {"op": "now-minus", "unit": "day", "value": 2}
+Date-range:   "mode": "between", "startDate": "2026-01-01T07:00:00Z", "endDate": "2026-01-16T06:59:59Z"
+Slider:       "low": 0, "high": 100, "mode": "<=", "value": 10
+Range-slider: "low": 0, "high": 100, "min": 10, "max": 20
+Segmented:    "source": {...}, "value": true
+Switch:       "mode": "True/False", "value": true
+Checkbox:     "mode": "True/False", "value": true
 
-### Formula Syntax
-- Reference columns by their friendly name: [Column Name]
-- Do NOT include table name in formulas - just use [Column Name]
-- Aggregations: Sum(), Count(), Avg(), Min(), Max(), CountDistinct()
-- Math: +, -, *, /, ()
-- Conditional: If([condition], true_value, false_value)
-- Text: Concat(), Left(), Right(), Contains()
-- Date: DateTrunc(), DateDiff(), Today()
+═══════════════════════════════════════════════════
+COLUMN TYPES (inside element.columns array)
+═══════════════════════════════════════════════════
 
-### Formula Examples
-- Sum of a column: Sum([Amount])
-- Count distinct: CountDistinct([Customer Key])
-- Calculation: [Price] - [Cost]
-- Percentage: [Profit] / [Revenue]
+### Warehouse-backed column
+{ "id": "inode-<hash>/WAREHOUSE_COL", "formula": "[TABLE_NAME/Display Name]" }
+Note: only id and formula — NO name field for warehouse columns.
+
+### Calculated column (formula-only, no warehouse backing)
+{ "id": "shortRandomId", "formula": "[Price] - [Cost]", "name": "Profit" }
+CRITICAL: Calculated column formulas reference columns by display name ONLY — NO table prefix.
+Correct:   "[Price] - [Cost]"
+WRONG:     "[TABLE/Price] - [TABLE/Cost]"
+
+### Optional fields on any column
+"name": "Display Name"      // override display name
+"description": "Text"       // description shown to users
+"hidden": true              // hide from consumers
+
+═══════════════════════════════════════════════════
+METRICS (inside element.metrics array)
+═══════════════════════════════════════════════════
+{ "id": "shortRandomId", "formula": "CountDistinct([Sku Number])", "name": "Unique Products" }
+CRITICAL: Metric formulas reference columns by display name ONLY — NO table prefix.
+Correct:   "Sum([Revenue])"
+WRONG:     "Sum([TABLE/Revenue])"
+
+═══════════════════════════════════════════════════
+RELATIONSHIPS (inside element.relationships array)
+═══════════════════════════════════════════════════
+{
+  "id": "shortRandomId",
+  "targetElementId": "targetElemId",
+  "keys": [
+    { "sourceColumnId": "inode-xxx/SOURCE_COL", "targetColumnId": "inode-yyy/TARGET_COL" }
+  ],
+  "name": "Relationship Name"
+}
+Relationship is defined on the SOURCE (fact/many side) element pointing to the TARGET (dimension/one side).
+
+═══════════════════════════════════════════════════
+FOLDERS (inside element.folders array)
+═══════════════════════════════════════════════════
+{ "id": "shortRandomId", "name": "Date", "items": ["inode-xxx/COL1", "inode-xxx/COL2"] }
+When a folder exists, put the FOLDER ID in element.order (not the individual column IDs).
+
+═══════════════════════════════════════════════════
+GROUPINGS (inside element.groupings array)
+═══════════════════════════════════════════════════
+{ "id": "shortRandomId", "groupBy": ["inode-xxx/AIRLINE"] }
+
+═══════════════════════════════════════════════════
+SORT (inside element.sort array)
+═══════════════════════════════════════════════════
+{ "columnId": "inode-xxx/COL", "direction": "ascending|descending", "nulls": "first|last" }
+
+═══════════════════════════════════════════════════
+FORMULA REFERENCE RULES
+═══════════════════════════════════════════════════
+- Warehouse columns in element formulas: [TABLE_NAME/Display Name]  (TABLE_NAME = last segment of path)
+- Calculated column formulas:            [Display Name]              (NO table prefix)
+- Metric formulas:                       [Display Name]              (NO table prefix)
+- Custom SQL columns:                    [Custom SQL/COLUMN_ALIAS]
+- Join output columns:                   [TABLE_NAME/Display Name]
+- Union output columns:                  [Union of 2 Sources/Column Name]
+- NEVER use dot notation like [table.col] — always slash [TABLE/Col]
+
+═══════════════════════════════════════════════════
+CAPABILITIES — what you CAN do via JSON
+═══════════════════════════════════════════════════
+- Add/update name, description, hidden on existing columns and metrics
+- Add calculated columns (formula-only, short random ID, has name field)
+- Add metrics (aggregate formulas, short random ID, has name field)
+- Add relationships between elements using existing column inode IDs
+- Add new warehouse-table, custom SQL, join, or union elements
+- Add folders to group columns, add groupings, add sort
+- Add control elements to filter table elements
+
+═══════════════════════════════════════════════════
+LIMITATIONS — what you CANNOT do via JSON
+═══════════════════════════════════════════════════
+- Cannot add warehouse-backed columns that don't exist physically — inode IDs encode the column name and Sigma validates server-side
+- Cannot change a warehouse-table source connection or path — recreate the element
+- Cannot modify workbooks, dashboards, or visualizations — data models only
+- Cannot set column data types — Sigma infers from warehouse schema
+- Cannot add row-level security, permission grants, or user attribute assignments
+- Cannot create materialization schedules
+- Metric formulas do not support window functions or join functions
+- Relationships only support many-to-one or one-to-one (use fact table as source, dimension as target)
+- If asked for something in this list, explain clearly it cannot be done via data model JSON
 `;
 
         function loadAIConfig() {
@@ -3698,9 +3908,10 @@ A data model has this structure:
             // Reset input fields and attachments
             document.getElementById('aiPromptEnhance').value = '';
             document.getElementById('aiPromptAddTable').value = '';
-            document.getElementById('aiDatabase').value = '';
-            document.getElementById('aiSchema').value = '';
-            document.getElementById('aiTable').value = '';
+            ['aiDatabase','aiSchema','aiTable','aiDatabaseVal','aiSchemaVal','aiTableVal'].forEach(id => {
+                const el = document.getElementById(id); if (el) el.value = '';
+            });
+            resetSchemaBrowser();
             document.getElementById('aiColumns').value = '';
             aiAttachedFiles = [];
             renderAiAttachments();
@@ -3712,6 +3923,7 @@ A data model has this structure:
             await loadAIConnections();
             
             document.getElementById('aiModal').classList.add('active');
+            setTimeout(updateTokenEstimate, 50); // after modal renders
         }
         
         function setAIMode(mode) {
@@ -3725,8 +3937,485 @@ A data model has this structure:
             // Show/hide content
             document.getElementById('aiModeEnhance').style.display = mode === 'enhance' ? 'block' : 'none';
             document.getElementById('aiModeAddTable').style.display = mode === 'addtable' ? 'block' : 'none';
+            updateTokenEstimate();
         }
         
+        // ══════════════════════════════════════════════════════════════════════
+        // 📂 Schema Browser — cascading connection → database → schema → table
+        // Uses GET /v2/connections/{connectionId}/paths?path=[]
+        // Falls back to POST /v2/connections/{connectionId}/paths/sync on miss
+        // ══════════════════════════════════════════════════════════════════════
+
+        // Simple rate-limit guard: max 1 sync call per 5 seconds
+        let _lastSyncAt = 0;
+        const SYNC_COOLDOWN_MS = 5000;
+
+        // Track current pending sync so we can retry after it completes
+        let _pendingSyncPath = null;
+
+        // Schema index cache: connectionId → { databases: Set, schemas: Map<db,Set>, tables: Map<db/schema,Set> }
+        const _schemaCache = {};
+
+        // Track connections that are CORS-blocked so we don't retry
+        const _corsBlockedConnections = new Set();
+
+        async function fetchConnectionSchemaIndex(connectionId) {
+            if (_corsBlockedConnections.has(connectionId)) throw new Error('CORS_BLOCKED');
+            if (_schemaCache[connectionId]) return _schemaCache[connectionId];
+
+            const index = { databases: new Set(), schemas: new Map(), tables: new Map() };
+            let nextPage = null;
+
+            do {
+                // Only connectionId param — API returns all depths in one stream
+                let qs = `connectionId=${encodeURIComponent(connectionId)}`;
+                if (nextPage) qs += `&page=${nextPage}`; // nextPage is already URL-encoded by the API
+
+                let r;
+                try {
+                    r = await sigmaFetch(`/v2/connections/paths?${qs}`);
+                } catch(fetchErr) {
+                    _corsBlockedConnections.add(connectionId);
+                    throw new Error('CORS_BLOCKED');
+                }
+                if (!r.ok) {
+                    const err = await r.json().catch(() => ({}));
+                    throw new Error(err.message || `HTTP ${r.status}`);
+                }
+                const data = await r.json();
+
+                for (const e of (data.entries || [])) {
+                    if (e.connectionId !== connectionId || !Array.isArray(e.path)) continue;
+                    const [db, schema, table] = e.path;
+                    if (db)     index.databases.add(db);
+                    if (schema) {
+                        if (!index.schemas.has(db)) index.schemas.set(db, new Set());
+                        index.schemas.get(db).add(schema);
+                    }
+                    if (table) {
+                        const key = db + '/' + schema;
+                        if (!index.tables.has(key)) index.tables.set(key, new Set());
+                        index.tables.get(key).add(table);
+                    }
+                }
+
+                nextPage = data.hasMore ? data.nextPage : null;
+            } while (nextPage);
+
+            _schemaCache[connectionId] = index;
+            return index;
+        }
+
+        // Convenience wrappers that mirror the old per-level API
+        async function listDatabases(connectionId) {
+            const idx = await fetchConnectionSchemaIndex(connectionId);
+            return [...idx.databases].sort().map(name => ({ connectionId, path: [name] }));
+        }
+
+        async function listSchemas(connectionId, database) {
+            const idx = await fetchConnectionSchemaIndex(connectionId);
+            const schemas = idx.schemas.get(database) || new Set();
+            return [...schemas].sort().map(name => ({ connectionId, path: [database, name] }));
+        }
+
+        async function listTables(connectionId, database, schema) {
+            const idx = await fetchConnectionSchemaIndex(connectionId);
+            const tables = idx.tables.get(database + '/' + schema) || new Set();
+            return [...tables].sort().map(name => ({ connectionId, path: [database, schema, name] }));
+        }
+
+        async function syncConnectionPath(connectionId, pathArray) {
+            const now = Date.now();
+            if (now - _lastSyncAt < SYNC_COOLDOWN_MS) {
+                throw new Error('Please wait a moment before syncing again.');
+            }
+            _lastSyncAt = now;
+            // POST /v2/connections/{connectionId}/paths/sync
+            const r = await sigmaFetch(`/v2/connections/${connectionId}/paths/sync`, {
+                method: 'POST',
+                body: JSON.stringify({ path: pathArray })
+            });
+            if (!r.ok) {
+                const err = await r.json().catch(() => ({}));
+                throw new Error(err.message || `Sync failed: HTTP ${r.status}`);
+            }
+            return await r.json().catch(() => ({}));
+        }
+
+        function showCorsPathFallback(statusElId, dbSelId, schSelId, tblSelId) {
+            // /v2/connections/paths is blocked from file:// origin — switch to text inputs
+            const status = document.getElementById(statusElId);
+            if (status) {
+                status.innerHTML = '⚠ Path browser requires a hosted URL — enter DATABASE / SCHEMA / TABLE manually below';
+                status.style.color = 'var(--warning)';
+            }
+            // Replace each select with a text input
+            [dbSelId, schSelId, tblSelId].forEach((selId, i) => {
+                const sel = document.getElementById(selId);
+                if (!sel) return;
+                const placeholder = ['DATABASE', 'SCHEMA', 'TABLE'][i];
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'form-input';
+                input.placeholder = placeholder;
+                input.id = selId;
+                input.style.display = '';
+                sel.parentNode.replaceChild(input, sel);
+            });
+        }
+
+        function resetSchemaBrowser() {
+            const dbSel  = document.getElementById('aiDatabase');
+            const schSel = document.getElementById('aiSchema');
+            const tblSel = document.getElementById('aiTable');
+            if (!dbSel) return;
+
+            dbSel.innerHTML  = '<option value="">— Select a connection first —</option>';
+            schSel.innerHTML = '<option value="">— Select a database first —</option>';
+            tblSel.innerHTML = '<option value="">— Select a schema first —</option>';
+
+            dbSel.disabled  = true;
+            schSel.disabled = true;
+            tblSel.disabled = true;
+            schSel.style.display = 'none';
+            tblSel.style.display = 'none';
+
+            ['aiDatabaseVal','aiSchemaVal','aiTableVal'].forEach(id => {
+                const el = document.getElementById(id); if (el) el.value = '';
+            });
+
+            const hint = document.getElementById('schemaSyncHint');
+            if (hint) hint.style.display = 'none';
+            setSchemaBrowserStatus('');
+        }
+
+        function setSchemaBrowserStatus(msg, isError = false) {
+            const el = document.getElementById('schemaBrowserStatus');
+            if (!el) return;
+            el.textContent = msg;
+            el.style.color = isError ? 'var(--error)' : 'var(--text-muted)';
+        }
+
+        function populateSelect(selectId, items, placeholder) {
+            const sel = document.getElementById(selectId);
+            sel.innerHTML = `<option value="">${placeholder}</option>`;
+            items.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item;
+                opt.textContent = item;
+                sel.appendChild(opt);
+            });
+            sel.disabled = items.length === 0;
+            sel.style.display = '';
+        }
+
+        // Called when connection select changes
+        async function onAiConnectionChange() {
+            resetSchemaBrowser();
+            const connId = document.getElementById('aiConnection').value;
+            if (!connId) return;
+
+            setSchemaBrowserStatus('Loading databases…');
+            try {
+                const entries = await listDatabases(connId);
+                const databases = entries.map(e => e.path[0]).filter(Boolean);
+                if (databases.length === 0) {
+                    setSchemaBrowserStatus('No databases found — try syncing the connection.', true);
+                    return;
+                }
+                populateSelect('aiDatabase', databases.sort(), '— Select a database —');
+                document.getElementById('aiDatabase').disabled = false;
+                setSchemaBrowserStatus(`${databases.length} database${databases.length !== 1 ? 's' : ''}`);
+            } catch(e) {
+                if (e.message === 'CORS_BLOCKED') {
+                    showCorsPathFallback('schemaBrowserStatus', 'aiDatabase', 'aiSchema', 'aiTable');
+                    // Wire text inputs to hidden val fields
+                    [['aiDatabase','aiDatabaseVal'],['aiSchema','aiSchemaVal'],['aiTable','aiTableVal']].forEach(([id, valId]) => {
+                        const el = document.getElementById(id);
+                        if (el && el.tagName === 'INPUT') {
+                            el.addEventListener('input', () => {
+                                const v = document.getElementById(valId); if(v) v.value = el.value.trim();
+                            });
+                        }
+                    });
+                } else {
+                    setSchemaBrowserStatus(`Error: ${e.message}`, true);
+                }
+            }
+        }
+
+        // Called when database or schema select changes
+        async function onSchemaBrowserChange(level) {
+            const connId  = document.getElementById('aiConnection').value;
+            const dbVal   = document.getElementById('aiDatabase').value;
+            const schVal  = level === 'schema' ? document.getElementById('aiSchema').value : '';
+
+            // Reset downstream
+            if (level === 'database') {
+                document.getElementById('aiSchema').innerHTML = '<option value="">— Select a database first —</option>';
+                document.getElementById('aiSchema').disabled = true;
+                document.getElementById('aiSchema').style.display = 'none';
+                document.getElementById('aiTable').innerHTML  = '<option value="">— Select a schema first —</option>';
+                document.getElementById('aiTable').disabled   = true;
+                document.getElementById('aiTable').style.display = 'none';
+                document.getElementById('aiDatabaseVal').value = dbVal;
+                document.getElementById('aiSchemaVal').value  = '';
+                document.getElementById('aiTableVal').value   = '';
+                const hint = document.getElementById('schemaSyncHint');
+                if (hint) hint.style.display = 'none';
+            } else if (level === 'schema') {
+                document.getElementById('aiTable').innerHTML  = '<option value="">— Select a schema first —</option>';
+                document.getElementById('aiTable').disabled   = true;
+                document.getElementById('aiTable').style.display = 'none';
+                document.getElementById('aiSchemaVal').value  = schVal;
+                document.getElementById('aiTableVal').value   = '';
+                const hint = document.getElementById('schemaSyncHint');
+                if (hint) hint.style.display = 'none';
+            }
+
+            if (!dbVal) return;
+
+            const path = level === 'database' ? [dbVal] : [dbVal, schVal];
+            if (level === 'schema' && !schVal) return;
+
+            const label = level === 'database' ? 'schemas' : 'tables';
+            setSchemaBrowserStatus(`Loading ${label}…`);
+
+            try {
+                const entries = level === 'database'
+                    ? await listSchemas(connId, path[0])
+                    : await listTables(connId, path[0], path[1]);
+
+                if (entries.length === 0) {
+                    // Nothing returned — path may not be synced
+                    _pendingSyncPath = { connId, path, level };
+                    setSchemaBrowserStatus(`No ${label} found.`, true);
+                    const hint = document.getElementById('schemaSyncHint');
+                    if (hint) hint.style.display = '';
+                    return;
+                }
+
+                const names = [...new Set(entries.map(e => e.path[e.path.length - 1]).filter(Boolean))].sort();
+
+                if (level === 'database') {
+                    populateSelect('aiSchema', names, '— Select a schema —');
+                    document.getElementById('aiSchema').style.display = '';
+                    setSchemaBrowserStatus(`${names.length} schema${names.length !== 1 ? 's' : ''}`);
+                } else {
+                    populateSelect('aiTable', names, '— Select a table —');
+                    document.getElementById('aiTable').style.display = '';
+                    // Wire table select change to update hidden val
+                    document.getElementById('aiTable').onchange = () => {
+                        document.getElementById('aiTableVal').value = document.getElementById('aiTable').value;
+                        setSchemaBrowserStatus(
+                            document.getElementById('aiTable').value
+                                ? `✓ ${dbVal} / ${schVal} / ${document.getElementById('aiTable').value}`
+                                : `${names.length} table${names.length !== 1 ? 's' : ''}`
+                        );
+                    };
+                    setSchemaBrowserStatus(`${names.length} table${names.length !== 1 ? 's' : ''}`);
+                }
+
+            } catch(e) {
+                setSchemaBrowserStatus(`Error: ${e.message}`, true);
+            }
+        }
+
+        async function syncAndRetry() {
+            if (!_pendingSyncPath) return;
+            const { connId, path, level } = _pendingSyncPath;
+            const btn = document.getElementById('syncRetryBtn');
+            if (btn) { btn.textContent = 'Syncing…'; btn.disabled = true; }
+
+            try {
+                setSchemaBrowserStatus('Syncing path with warehouse…');
+                await syncConnectionPath(connId, path);
+                const hint = document.getElementById('schemaSyncHint');
+                if (hint) hint.style.display = 'none';
+                _pendingSyncPath = null;
+                // Retry the browse
+                await onSchemaBrowserChange(level);
+            } catch(e) {
+                setSchemaBrowserStatus(`Sync failed: ${e.message}`, true);
+            } finally {
+                if (btn) { btn.textContent = 'Sync now'; btn.disabled = false; }
+            }
+        }
+
+        // ── Wizard schema browser (per-table-row) ─────────────────────────────
+
+        // When the top-level connection changes, refresh all existing table rows
+        async function onWizardConnectionChange() {
+            const connId = document.getElementById('newModelConnectionId').value;
+            if (connId) delete _schemaCache[connId]; // force refresh on connection change
+            const tableConfigs = document.querySelectorAll('.table-config');
+            tableConfigs.forEach(el => {
+                const tableId = el.id;
+                // Reset each row's selects
+                wizardResetTableRow(tableId);
+                if (connId) wizardLoadDatabases(tableId, connId);
+            });
+        }
+
+        function wizardResetTableRow(tableId) {
+            const dbSel  = document.getElementById(`${tableId}_db`);
+            const schSel = document.getElementById(`${tableId}_schema`);
+            const tblSel = document.getElementById(`${tableId}_table`);
+            if (dbSel)  { dbSel.innerHTML  = '<option value="">— Select a connection above first —</option>'; dbSel.disabled = true; }
+            if (schSel) { schSel.innerHTML = '<option value="">— Select a database first —</option>';         schSel.disabled = true; schSel.style.display = 'none'; }
+            if (tblSel) { tblSel.innerHTML = '<option value="">— Select a schema first —</option>';           tblSel.disabled = true; tblSel.style.display = 'none'; }
+            const hint = document.getElementById(`${tableId}_syncHint`);
+            if (hint) hint.style.display = 'none';
+            ['_dbVal','_schemaVal','_tableVal'].forEach(s => {
+                const el = document.getElementById(tableId + s); if (el) el.value = '';
+            });
+            wizardSetStatus(tableId, '');
+        }
+
+        function wizardSetStatus(tableId, msg, isError = false) {
+            const el = document.getElementById(`${tableId}_status`);
+            if (!el) return;
+            el.textContent = msg;
+            el.style.color = isError ? 'var(--error)' : 'var(--text-muted)';
+        }
+
+        async function wizardLoadDatabases(tableId, connId) {
+            const dbSel = document.getElementById(`${tableId}_db`);
+            if (!dbSel) return;
+            dbSel.innerHTML = '<option value="">Loading…</option>';
+            dbSel.disabled = true;
+            wizardSetStatus(tableId, 'Loading databases…');
+            try {
+                const entries = await listDatabases(connId);
+                const databases = entries.map(e => e.path[0]).filter(Boolean);
+                dbSel.innerHTML = `<option value="">— Select a database —</option>` +
+                    databases.map(d => `<option value="${d}">${d}</option>`).join('');
+                dbSel.disabled = databases.length === 0;
+                wizardSetStatus(tableId, databases.length ? `${databases.length} database${databases.length !== 1 ? 's' : ''}` : 'No databases found');
+            } catch(e) {
+                if (e.message === 'CORS_BLOCKED') {
+                    // Schema browser unavailable from file:// — replace all 3 selects with text inputs
+                    const container = document.getElementById(`${tableId}_db`).parentNode;
+                    ['_db','_schema','_table'].forEach((suffix, i) => {
+                        const sel = document.getElementById(tableId + suffix);
+                        if (!sel) return;
+                        const ph = ['DATABASE','SCHEMA','TABLE_NAME'][i];
+                        const cls = ['table-database','table-schema','table-source'][i];
+                        const valId = [`${tableId}_dbVal`,`${tableId}_schemaVal`,`${tableId}_tableVal`][i];
+                        const inp = document.createElement('input');
+                        inp.type = 'text';
+                        inp.className = `form-input ${cls}`;
+                        inp.placeholder = ph;
+                        inp.style.display = '';
+                        inp.addEventListener('input', () => {
+                            const valEl = document.getElementById(valId);
+                            if (valEl) valEl.value = inp.value.trim();
+                        });
+                        sel.parentNode.replaceChild(inp, sel);
+                    });
+                    wizardSetStatus(tableId, '⚠ Browser unavailable from file:// — enter path manually', true);
+                } else {
+                    dbSel.innerHTML = '<option value="">Error loading databases</option>';
+                    wizardSetStatus(tableId, e.message, true);
+                }
+            }
+        }
+
+        async function onWizardDbChange(tableId) {
+            const connId = document.getElementById('newModelConnectionId').value;
+            const dbVal  = document.getElementById(`${tableId}_db`).value;
+            // Reset downstream
+            const schSel = document.getElementById(`${tableId}_schema`);
+            const tblSel = document.getElementById(`${tableId}_table`);
+            schSel.innerHTML = '<option value="">— Select a database first —</option>';
+            schSel.disabled = true; schSel.style.display = 'none';
+            tblSel.innerHTML = '<option value="">— Select a schema first —</option>';
+            tblSel.disabled = true; tblSel.style.display = 'none';
+            document.getElementById(`${tableId}_dbVal`).value     = dbVal;
+            document.getElementById(`${tableId}_schemaVal`).value = '';
+            document.getElementById(`${tableId}_tableVal`).value  = '';
+            document.getElementById(`${tableId}_syncHint`).style.display = 'none';
+            if (!dbVal || !connId) return;
+            wizardSetStatus(tableId, 'Loading schemas…');
+            try {
+                const entries = await listSchemas(connId, dbVal);
+                if (!entries.length) {
+                    document.getElementById(`${tableId}_syncHint`).style.display = '';
+                    document.getElementById(`${tableId}_syncHint`).__pendingPath = [dbVal];
+                    wizardSetStatus(tableId, 'No schemas found', true); return;
+                }
+                const schemas = entries.map(e => e.path[1]).filter(Boolean);
+                schSel.innerHTML = `<option value="">— Select a schema —</option>` +
+                    schemas.map(s => `<option value="${s}">${s}</option>`).join('');
+                schSel.disabled = false; schSel.style.display = '';
+                wizardSetStatus(tableId, `${schemas.length} schema${schemas.length !== 1 ? 's' : ''}`);
+            } catch(e) { wizardSetStatus(tableId, e.message, true); }
+        }
+
+        async function onWizardSchemaChange(tableId) {
+            const connId  = document.getElementById('newModelConnectionId').value;
+            const dbVal   = document.getElementById(`${tableId}_db`).value;
+            const schVal  = document.getElementById(`${tableId}_schema`).value;
+            const tblSel  = document.getElementById(`${tableId}_table`);
+            tblSel.innerHTML = '<option value="">— Select a schema first —</option>';
+            tblSel.disabled = true; tblSel.style.display = 'none';
+            document.getElementById(`${tableId}_schemaVal`).value = schVal;
+            document.getElementById(`${tableId}_tableVal`).value  = '';
+            document.getElementById(`${tableId}_syncHint`).style.display = 'none';
+            if (!schVal || !connId) return;
+            wizardSetStatus(tableId, 'Loading tables…');
+            try {
+                const entries = await listTables(connId, dbVal, schVal);
+                if (!entries.length) {
+                    document.getElementById(`${tableId}_syncHint`).style.display = '';
+                    document.getElementById(`${tableId}_syncHint`).__pendingPath = [dbVal, schVal];
+                    wizardSetStatus(tableId, 'No tables found', true); return;
+                }
+                const tables = entries.map(e => e.path[2]).filter(Boolean);
+                tblSel.innerHTML = `<option value="">— Select a table —</option>` +
+                    tables.map(t => `<option value="${t}">${t}</option>`).join('');
+                tblSel.disabled = false; tblSel.style.display = '';
+                wizardSetStatus(tableId, `${tables.length} table${tables.length !== 1 ? 's' : ''}`);
+            } catch(e) { wizardSetStatus(tableId, e.message, true); }
+        }
+
+        function onWizardTableChange(tableId) {
+            const tblVal = document.getElementById(`${tableId}_table`).value;
+            document.getElementById(`${tableId}_tableVal`).value = tblVal;
+            const dbVal  = document.getElementById(`${tableId}_dbVal`).value;
+            const schVal = document.getElementById(`${tableId}_schemaVal`).value;
+            wizardSetStatus(tableId, tblVal ? `✓ ${dbVal} / ${schVal} / ${tblVal}` : '');
+            // Auto-populate Table Name if it's still empty
+            if (tblVal) {
+                const nameInput = document.getElementById(`${tableId}`)?.querySelector('.table-name');
+                if (nameInput && !nameInput.value) {
+                    // Convert TABLE_NAME → Table Name
+                    nameInput.value = tblVal.replace(/_/g, ' ').replace(/\w/g, c => c.toUpperCase()).replace(/Dim/, 'Dim').replace(/Fact/, 'Fact');
+                }
+            }
+        }
+
+        async function wizardSyncAndRetry(tableId) {
+            const connId  = document.getElementById('newModelConnectionId').value;
+            const hintEl  = document.getElementById(`${tableId}_syncHint`);
+            const path    = hintEl?.__pendingPath;
+            if (!connId || !path) return;
+            const btn = document.getElementById(`${tableId}_syncBtn`);
+            if (btn) { btn.textContent = 'Syncing…'; btn.disabled = true; }
+            try {
+                wizardSetStatus(tableId, 'Syncing…');
+                await syncConnectionPath(connId, path);
+                hintEl.style.display = 'none';
+                // Retry the appropriate level
+                if (path.length === 1) await onWizardDbChange(tableId);
+                else await onWizardSchemaChange(tableId);
+            } catch(e) {
+                wizardSetStatus(tableId, `Sync failed: ${e.message}`, true);
+            } finally {
+                if (btn) { btn.textContent = 'Sync now'; btn.disabled = false; }
+            }
+        }
+
         async function loadAIConnections() {
             const select = document.getElementById('aiConnection');
             select.innerHTML = '<option value="">Loading connections...</option>';
@@ -3752,9 +4441,12 @@ A data model has this structure:
                 try {
                     const currentModel = JSON.parse(currentJson);
                     const elements = currentModel.pages?.[0]?.elements || [];
-                    const connectionId = elements.find(e => e.connectionId)?.connectionId;
-                    if (connectionId) {
-                        select.value = connectionId;
+                    const firstConnId = elements.find(e => e.source?.connectionId)?.source?.connectionId
+                                     || elements.find(e => e.connectionId)?.connectionId;
+                    if (firstConnId) {
+                        select.value = firstConnId;
+                        // Kick off the schema browser for the auto-selected connection
+                        await onAiConnectionChange();
                     }
                 } catch (e) {
                     // Ignore parse errors
@@ -3771,6 +4463,7 @@ A data model has this structure:
         }
         
         function onAIProviderChange() {
+            updateTokenEstimate();
             const provider = document.getElementById('aiProvider').value;
             const config = loadAIConfig();
             // Load saved key for this provider if exists
@@ -3872,6 +4565,100 @@ A data model has this structure:
             return '\n\n## Attached Files\n' + parts.join('\n\n');
         }
 
+        // ── Token cost estimation ──────────────────────────────────────────────
+        // Uses gpt-tokenizer (cl100k_base) for accurate counts.
+        // Claude and Gemini use similar tokenizers — cl100k_base is a good approximation.
+        let _tokenEncoder = null;
+        let _tokenEncoderLoading = false;
+
+        async function loadTokenEncoder() {
+            if (_tokenEncoder) return _tokenEncoder;
+            if (_tokenEncoderLoading) return null;
+            _tokenEncoderLoading = true;
+            try {
+                // gpt-tokenizer: pure-JS cl100k_base (used by GPT-4o, close approx for others)
+                const mod = await import('https://esm.sh/gpt-tokenizer@2.8.1');
+                _tokenEncoder = mod;
+                return _tokenEncoder;
+            } catch(e) {
+                _tokenEncoderLoading = false;
+                return null;
+            }
+        }
+
+        function estimateTokensFallback(text) {
+            return Math.ceil((text || '').length / 4);
+        }
+
+        async function countTokens(text) {
+            const enc = await loadTokenEncoder();
+            if (!enc) return estimateTokensFallback(text);
+            try {
+                return enc.encode(text).length;
+            } catch(e) {
+                return estimateTokensFallback(text);
+            }
+        }
+
+        // Kick off background load so it's ready when user opens AI panel
+        loadTokenEncoder();
+
+        const TOKEN_PRICING = {
+            openai:    { input: 2.50,  output: 10.00, name: 'GPT-4o' },
+            anthropic: { input: 3.00,  output: 15.00, name: 'Claude Sonnet' },
+            gemini:    { input: 0.10,  output: 0.40,  name: 'Gemini 2.0 Flash' }
+        };
+
+        function estimateTokens(text) {
+            // Sync fallback — real count comes from countTokens (async)
+            return estimateTokensFallback(text);
+        }
+
+        function formatCost(usd) {
+            if (usd < 0.001) return '<$0.001';
+            if (usd < 0.01)  return '$' + usd.toFixed(4);
+            return '$' + usd.toFixed(3);
+        }
+
+        let _estimateDebounce = null;
+        function updateTokenEstimate() {
+            clearTimeout(_estimateDebounce);
+            _estimateDebounce = setTimeout(_doUpdateTokenEstimate, 300);
+        }
+
+        async function _doUpdateTokenEstimate() {
+            const bar = document.getElementById('tokenEstimate');
+            if (!bar) return;
+            const provider = document.getElementById('aiProvider')?.value || 'anthropic';
+            const pricing  = TOKEN_PRICING[provider] || TOKEN_PRICING.anthropic;
+            const currentJson  = document.getElementById('jsonEditor')?.value || '';
+            const userPrompt   = document.getElementById('aiPromptEnhance')?.value || '';
+            const addPrompt    = document.getElementById('aiPromptAddTable')?.value || '';
+            const attached     = (typeof aiAttachedFiles !== 'undefined' ? aiAttachedFiles : []);
+            const attachedText = attached.map(f => f.content).join('\n');
+            const fullInput    = DATA_MODEL_SCHEMA + currentJson + userPrompt + addPrompt + attachedText;
+
+            // Immediate sync estimate
+            const syncEst = estimateTokens(fullInput);
+            document.getElementById('tokEstCount').textContent = '~' + syncEst.toLocaleString();
+            bar.style.display = '';
+
+            // Real async count (updates once tokenizer loads)
+            const realCount = await countTokens(fullInput);
+            const isDesc    = /description|describe|\bdesc\b/i.test(userPrompt + addPrompt);
+            const estOutput = isDesc ? Math.min(realCount * 0.8, 6000) : 1000;
+            const cost      = (realCount / 1e6) * pricing.input + (estOutput / 1e6) * pricing.output;
+            const label     = pricing.name + (_tokenEncoder ? '' : ', approx');
+
+            document.getElementById('tokEstCount').textContent = realCount.toLocaleString();
+            document.getElementById('tokEstCost').textContent  = '~' + formatCost(cost) + ' (' + label + ')';
+            const warnEl = document.getElementById('tokEstWarn');
+            if (realCount > 50000) {
+                warnEl.textContent = '⚠ Large context — response may be slow';
+                warnEl.style.display = '';
+            } else { warnEl.style.display = 'none'; }
+        }
+
         async function generateAISuggestion() {
             const config = loadAIConfig();
             const provider = document.getElementById('aiProvider').value;
@@ -3943,9 +4730,9 @@ RULES FOR MODIFYING EXISTING COLUMNS:
             } else if (aiCurrentMode === 'addtable') {
                 const connectionId = document.getElementById('aiConnection').value;
                 const connectionName = document.getElementById('aiConnection').selectedOptions[0]?.textContent || '';
-                const database = document.getElementById('aiDatabase').value.trim();
-                const schema = document.getElementById('aiSchema').value.trim();
-                const table = document.getElementById('aiTable').value.trim();
+                const database = (document.getElementById('aiDatabaseVal') || document.getElementById('aiDatabase')).value.trim();
+                const schema   = (document.getElementById('aiSchemaVal')   || document.getElementById('aiSchema')).value.trim();
+                const table    = (document.getElementById('aiTableVal')    || document.getElementById('aiTable')).value.trim();
                 const columnsText = document.getElementById('aiColumns').value.trim();
                 const additionalInstructions = document.getElementById('aiPromptAddTable').value.trim();
                 
@@ -4035,7 +4822,8 @@ CRITICAL RULES:
 - Never ask the user for information you can derive from the model context above.
 - For descriptions: infer meaning from column names and formulas — write clear, concise business descriptions (1 sentence each).
 - The JSON must be a targeted patch snippet, not the entire model.
-- Only use column IDs that exist in the model context above.`;
+- Only use column IDs that exist in the model context above.
+- FOLDERS AND ORDER: When adding folders, the folder ID must REPLACE the individual column IDs in the order array (not be appended). Columns inside a folder should NOT also appear at the top level of order. The order array should contain: [folderID, any-ungrouped-colIds...]. Do NOT put column IDs in both a folder.items and at the top level of order.`;
 
                 let response;
                 
@@ -4063,7 +4851,7 @@ CRITICAL RULES:
                     let patchObj = null;
                     try { patchObj = JSON.parse(jsonSuggestion); } catch(e) {}
                     if (patchObj && isPatchSuggestion(patchObj)) {
-                        // Count total columns across all patch elements
+                        // Patch preview
                         let patchColCount = 0;
                         for (const p of (patchObj.pages || []))
                             for (const el of (p.elements || []))
@@ -4071,6 +4859,26 @@ CRITICAL RULES:
                         document.getElementById('aiPreviewType').textContent = '🔀 Patch — merge fields into existing columns';
                         document.getElementById('aiPreviewLocation').textContent = `${patchColCount} column${patchColCount !== 1 ? 's' : ''} will be updated by ID`;
                         document.getElementById('aiPreviewDetails').textContent = 'Smart Insert will match column IDs and merge the new fields directly.';
+                        document.getElementById('aiPreview').style.display = '';
+                    } else if (patchObj && detectSuggestionType(patchObj) === 'pages-insert') {
+                        // Pages-insert preview (new columns/metrics with formula)
+                        let addCols = 0, addMets = 0, addFolders = 0, hasOrder = false;
+                        for (const p of (patchObj.pages || []))
+                            for (const el of (p.elements || [])) {
+                                addCols    += (el.columns  || []).filter(c => c.formula).length;
+                                addMets    += (el.metrics  || []).filter(m => m.formula).length;
+                                addFolders += (el.folders  || []).length;
+                                if (el.order && el.order.length) hasOrder = true;
+                            }
+                        const previewParts = [];
+                        if (addCols)    previewParts.push(`${addCols} column${addCols !== 1 ? 's' : ''}`);
+                        if (addMets)    previewParts.push(`${addMets} metric${addMets !== 1 ? 's' : ''}`);
+                        if (addFolders) previewParts.push(`${addFolders} folder${addFolders !== 1 ? 's' : ''}`);
+                        if (hasOrder)   previewParts.push('order update');
+                        document.getElementById('aiPreviewType').textContent = '➕ Insert — apply structural changes';
+                        document.getElementById('aiPreviewLocation').textContent =
+                            previewParts.length ? previewParts.join(', ') + ' will be applied' : 'No changes detected';
+                        document.getElementById('aiPreviewDetails').textContent = 'Smart Insert will merge these into the matching element.';
                         document.getElementById('aiPreview').style.display = '';
                     } else {
                         generateInsertionPreview(jsonSuggestion);
@@ -4195,20 +5003,26 @@ CRITICAL RULES:
         // A patch is a pages[] structure where elements contain only id + field updates
         // (no kind/source) — used for bulk field merges like adding descriptions.
         function isPatchSuggestion(obj) {
+            // A patch is a pages[] structure where elements contain only id + field updates
+            // on EXISTING columns/metrics. Key signal: patch entries do NOT have a formula
+            // field (that would mean they are new items to insert, not updates).
             if (!obj || !Array.isArray(obj.pages)) return false;
             for (const page of obj.pages) {
                 if (!Array.isArray(page.elements)) return false;
                 for (const el of page.elements) {
-                    // A patch element has an id but NO kind or source
+                    // Patch element: has id but no kind or source
                     if (!el.id) return false;
                     if (el.kind || el.source) return false;
-                    // Must only contain id + array fields (columns / metrics)
+                    // Must only contain id + array fields
                     const keys = Object.keys(el);
                     if (!keys.every(k => ['id', 'columns', 'metrics', 'relationships'].includes(k))) return false;
-                    // Each column entry should be id + patch fields (no formula required)
-                    for (const col of (el.columns || [])) {
+                    // Each column/metric in a patch has id + field updates but NO formula
+                    // (a formula means it's a new item to insert, not a patch)
+                    for (const col of [...(el.columns || []), ...(el.metrics || [])]) {
                         if (!col.id) return false;
                         if (col.kind || col.source) return false;
+                        // If it has a formula it's a new item — not a patch
+                        if (col.formula !== undefined) return false;
                     }
                 }
             }
@@ -4263,19 +5077,65 @@ CRITICAL RULES:
             return { colsPatched, metricsPatched, notFound };
         }
 
+        // ── JSON auto-repair for common AI generation mistakes ─────────────────
+        function repairJson(str) {
+            // Strip markdown fences if present
+            str = str.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```\s*$/, '').trim();
+
+            // Fix mismatched closing brackets/braces
+            // Strategy: count opens, fix the last closing token if mismatched
+            const opens = [];
+            let inStr = false, esc = false;
+            for (let i = 0; i < str.length; i++) {
+                const c = str[i];
+                if (esc) { esc = false; continue; }
+                if (c === '\\' && inStr) { esc = true; continue; }
+                if (c === '"') { inStr = !inStr; continue; }
+                if (inStr) continue;
+                if (c === '{' || c === '[') opens.push(c);
+                else if (c === '}' || c === ']') {
+                    const last = opens[opens.length - 1];
+                    const expected = last === '{' ? '}' : ']';
+                    if (c !== expected && i === str.length - 1) {
+                        // Wrong closing char at very end — swap it
+                        str = str.slice(0, i) + expected + str.slice(i + 1);
+                    }
+                    opens.pop();
+                }
+            }
+            // Close any unclosed brackets
+            while (opens.length) {
+                str += opens.pop() === '{' ? '}' : ']';
+            }
+
+            // Remove trailing commas before } or ]
+            str = str.replace(/,\s*([}\]])/g, '$1');
+
+            return str;
+        }
+
         // Smart Insert AI Suggestion
         async function smartInsertAISuggestion() {
             const editor = document.getElementById('jsonEditor');
             const suggestion = document.getElementById('aiSuggestion').value;
             
             try {
-                // Parse the suggestion to understand what it is
+                // Parse the suggestion — attempt auto-repair for common AI mistakes
                 let suggestionObj;
                 try {
                     suggestionObj = JSON.parse(suggestion);
                 } catch (e) {
-                    showToast('❌ AI suggestion is not valid JSON. Check for syntax errors.', 'error');
-                    return;
+                    // Try repairing common issues (wrong closing bracket, trailing comma)
+                    try {
+                        const repaired = repairJson(suggestion);
+                        suggestionObj = JSON.parse(repaired);
+                        // Update the textarea with the repaired JSON so user can see it
+                        document.getElementById('aiSuggestion').value = JSON.stringify(suggestionObj, null, 2);
+                        showToast('⚠️ JSON had a syntax error — auto-repaired before inserting.', 'warning');
+                    } catch (e2) {
+                        showToast('❌ AI suggestion is not valid JSON and could not be auto-repaired. Check for syntax errors.', 'error');
+                        return;
+                    }
                 }
                 
                 // Parse the current editor content
@@ -4301,6 +5161,22 @@ CRITICAL RULES:
                     const total = colsPatched + metricsPatched;
                     const warn = notFound.length ? ` (${notFound.length} IDs not found)` : '';
                     showToast(`✅ Patched ${total} column${total !== 1 ? 's' : ''}${warn}`, total > 0 ? 'success' : 'warning');
+                    setTimeout(() => formatJson(), 100);
+                    return;
+                }
+
+                // ── Pages-insert mode: new items inside a pages[] wrapper ──────────
+                if (detectSuggestionType(suggestionObj) === 'pages-insert') {
+                    const { colsAdded, metricsAdded, foldersAdded, orderUpdated } = applyPagesInsert(currentJson, suggestionObj);
+                    editor.value = JSON.stringify(currentJson, null, 2);
+                    closeAIModal();
+                    const total = colsAdded + metricsAdded + foldersAdded + (orderUpdated ? 1 : 0);
+                    const parts = [];
+                    if (colsAdded)    parts.push(`${colsAdded} column${colsAdded !== 1 ? 's' : ''}`);
+                    if (metricsAdded) parts.push(`${metricsAdded} metric${metricsAdded !== 1 ? 's' : ''}`);
+                    if (foldersAdded) parts.push(`${foldersAdded} folder${foldersAdded !== 1 ? 's' : ''}`);
+                    if (orderUpdated) parts.push('order updated');
+                    showToast(`✅ Applied: ${parts.length ? parts.join(', ') : 'no changes detected'}`, total > 0 ? 'success' : 'warning');
                     setTimeout(() => formatJson(), 100);
                     return;
                 }
@@ -4353,13 +5229,18 @@ CRITICAL RULES:
         
         // Detect what type of JSON suggestion this is
         function detectSuggestionType(obj) {
+            // Check for a pages-wrapped multi-insert (new metrics/columns with formulas)
+            if (obj.pages && Array.isArray(obj.pages)) {
+                return 'pages-insert';
+            }
+
             // Check for column
             if (obj.id && obj.formula && (obj.name || obj.description)) {
                 return 'column';
             }
             
             // Check for metric
-            if (obj.id && obj.formula && obj.name && !obj.description) {
+            if (obj.id && obj.formula && obj.name) {
                 return 'metric';
             }
             
@@ -4384,6 +5265,70 @@ CRITICAL RULES:
             }
             
             return 'unknown';
+        }
+
+        // Handle pages-insert: merge new columns/metrics/folders/order from a pages[] structure
+        function applyPagesInsert(currentModel, suggestion) {
+            let colsAdded = 0, metricsAdded = 0, foldersAdded = 0, orderUpdated = false;
+
+            for (const sugPage of (suggestion.pages || [])) {
+                for (const sugEl of (sugPage.elements || [])) {
+                    // Find matching element by id, or first table
+                    let targetEl = null;
+                    for (const page of (currentModel.pages || [])) {
+                        for (const el of (page.elements || [])) {
+                            if (el.id === sugEl.id) { targetEl = el; break; }
+                            if (!targetEl && el.kind === 'table') targetEl = el;
+                        }
+                        if (targetEl && targetEl.id === sugEl.id) break;
+                    }
+                    if (!targetEl) continue;
+
+                    // Add new columns (must have formula)
+                    for (const col of (sugEl.columns || [])) {
+                        if (!col.formula) continue;
+                        if (!targetEl.columns) targetEl.columns = [];
+                        if (!targetEl.columns.find(c => c.id === col.id)) {
+                            targetEl.columns.push(col);
+                            if (targetEl.order && !targetEl.order.includes(col.id))
+                                targetEl.order.push(col.id);
+                            colsAdded++;
+                        }
+                    }
+
+                    // Add new metrics (must have formula)
+                    for (const met of (sugEl.metrics || [])) {
+                        if (!met.formula) continue;
+                        if (!targetEl.metrics) targetEl.metrics = [];
+                        if (!targetEl.metrics.find(m => m.id === met.id)) {
+                            targetEl.metrics.push(met);
+                            metricsAdded++;
+                        }
+                    }
+
+                    // Merge folders: add new, update existing items
+                    if (sugEl.folders && sugEl.folders.length) {
+                        if (!targetEl.folders) targetEl.folders = [];
+                        for (const sugFolder of sugEl.folders) {
+                            const existing = targetEl.folders.find(f => f.id === sugFolder.id);
+                            if (existing) {
+                                existing.name  = sugFolder.name;
+                                existing.items = sugFolder.items;
+                            } else {
+                                targetEl.folders.push(sugFolder);
+                                foldersAdded++;
+                            }
+                        }
+                    }
+
+                    // Replace order if suggestion provides one
+                    if (sugEl.order && sugEl.order.length) {
+                        targetEl.order = sugEl.order;
+                        orderUpdated = true;
+                    }
+                }
+            }
+            return { colsAdded, metricsAdded, foldersAdded, orderUpdated };
         }
         
         // Find where to insert the suggestion
