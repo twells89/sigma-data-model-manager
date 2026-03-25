@@ -343,7 +343,7 @@
             margin-top: 8px;
         }
         
-        /* Data Models List */
+        /* Data Models Explorer */
         .models-section {
             flex: 1;
             display: flex;
@@ -362,9 +362,100 @@
         .models-list {
             flex: 1;
             overflow-y: auto;
-            padding: 12px;
+            padding: 8px;
         }
-        
+
+        /* Explorer breadcrumb */
+        .explorer-breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text-muted);
+            overflow-x: auto;
+            white-space: nowrap;
+            min-height: 36px;
+        }
+        .explorer-breadcrumb::-webkit-scrollbar { height: 0; }
+        .breadcrumb-item {
+            cursor: pointer;
+            color: var(--accent);
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: background 0.15s;
+            flex-shrink: 0;
+        }
+        .breadcrumb-item:hover { background: var(--bg-tertiary); }
+        .breadcrumb-item.current {
+            color: var(--text-primary);
+            font-weight: 600;
+            cursor: default;
+        }
+        .breadcrumb-item.current:hover { background: transparent; }
+        .breadcrumb-sep {
+            color: var(--text-muted);
+            opacity: 0.5;
+            flex-shrink: 0;
+            font-size: 10px;
+        }
+
+        /* Explorer tree nodes */
+        .explorer-node {
+            padding: 10px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            margin-bottom: 2px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .explorer-node:hover { background: var(--bg-tertiary); }
+        .explorer-node.active {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-focus);
+        }
+        .explorer-node-icon {
+            font-size: 16px;
+            flex-shrink: 0;
+            width: 22px;
+            text-align: center;
+        }
+        .explorer-node-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .explorer-node-name {
+            font-size: 13px;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: var(--text-primary);
+        }
+        .explorer-node-detail {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 1px;
+        }
+        .explorer-node-chevron {
+            color: var(--text-muted);
+            font-size: 12px;
+            flex-shrink: 0;
+            transition: transform 0.15s;
+        }
+        .explorer-node.folder-node .explorer-node-name { color: var(--text-primary); }
+        .explorer-node.model-node .explorer-node-icon { font-size: 14px; }
+        .explorer-empty {
+            padding: 30px 16px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+        .explorer-empty-icon { font-size: 28px; margin-bottom: 8px; }
+
         .model-item {
             padding: 14px 16px;
             border-radius: 10px;
@@ -389,6 +480,24 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+        }
+        
+        .model-location {
+            font-size: 11px;
+            color: var(--accent);
+            margin-bottom: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            opacity: 0.85;
+        }
+        .model-location .loc-icon {
+            margin-right: 3px;
+            font-size: 10px;
+        }
+        .model-location.resolving {
+            color: var(--text-muted);
+            font-style: italic;
         }
         
         .model-meta {
@@ -461,17 +570,53 @@
         .json-editor {
             flex: 1;
             padding: 24px;
-            overflow: auto;
+            overflow: hidden;
             background: var(--bg-primary);
         }
-        
-        .json-editor textarea {
+
+        .editor-wrap {
+            display: flex;
             width: 100%;
             height: 100%;
             min-height: calc(100vh - 200px);
             background: var(--bg-secondary);
             border: 1px solid var(--border);
             border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .editor-wrap:focus-within {
+            border-color: var(--border-focus);
+        }
+
+        .line-numbers {
+            width: 54px;
+            flex-shrink: 0;
+            padding: 20px 8px 20px 0;
+            background: var(--bg-secondary);
+            color: var(--text-tertiary, #555);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            text-align: right;
+            user-select: none;
+            overflow: hidden;
+            border-right: 1px solid var(--border);
+        }
+
+        .line-numbers span {
+            display: block;
+        }
+
+        .json-editor textarea {
+            flex: 1;
+            width: 0;
+            height: 100%;
+            min-height: calc(100vh - 200px);
+            background: transparent;
+            border: none;
+            border-radius: 0;
             padding: 20px;
             font-family: 'JetBrains Mono', monospace;
             font-size: 13px;
@@ -483,7 +628,6 @@
         
         .json-editor textarea:focus {
             outline: none;
-            border-color: var(--border-focus);
         }
         
         /* Status Messages */
@@ -1495,9 +1639,36 @@
                             ⬆ Import
                         </button>
                     </div>
+                    <div class="dev-mode-only" id="fetchByIdWrapper" style="display: none;">
+                        <button class="btn btn-secondary" onclick="toggleFetchById()" style="padding: 7px 10px; font-size: 12px; justify-content: center; width: 100%; margin-top: 6px;" id="fetchByIdBtn" disabled title="Fetch a data model directly by its ID">
+                            🔎 Fetch by ID
+                        </button>
+                        <div id="fetchByIdPanel" style="display: none; margin-top: 6px;">
+                            <div style="display: flex; gap: 4px;">
+                                <input type="text" class="form-input" id="fetchByIdInput" placeholder="Paste data model ID…" style="font-size: 12px; padding: 7px 10px; flex: 1; min-width: 0;" onkeydown="if(event.key==='Enter') fetchModelById()">
+                                <button class="btn btn-primary" onclick="fetchModelById()" style="padding: 7px 10px; font-size: 12px; white-space: nowrap; flex-shrink: 0;" id="fetchByIdGoBtn">
+                                    Go
+                                </button>
+                            </div>
+                            <div style="display: flex; gap: 6px; margin-top: 5px;">
+                                <button class="btn btn-secondary" onclick="fetchModelById('load')" style="padding: 5px 8px; font-size: 11px; flex: 1; justify-content: center;" title="Load into editor">
+                                    📝 Load
+                                </button>
+                                <button class="btn btn-secondary" onclick="fetchModelById('download')" style="padding: 5px 8px; font-size: 11px; flex: 1; justify-content: center;" title="Download as JSON file">
+                                    ⬇ Download
+                                </button>
+                                <button class="btn btn-secondary" onclick="fetchModelById('both')" style="padding: 5px 8px; font-size: 11px; flex: 1; justify-content: center;" title="Load into editor and download">
+                                    📝+⬇
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div style="padding: 8px 12px; border-bottom: 1px solid var(--border);">
-                    <input type="text" class="sidebar-search" id="modelsSearch" placeholder="Search models..." oninput="filterModels(this.value)">
+                    <input type="text" class="sidebar-search" id="modelsSearch" placeholder="Search models or locations..." oninput="filterModels(this.value)">
+                </div>
+                <div class="explorer-breadcrumb" id="explorerBreadcrumb">
+                    <span class="breadcrumb-item current">Home</span>
                 </div>
                 <div class="models-list" id="modelsList">
                     <div class="empty-state" style="padding: 40px 20px;">
@@ -1552,7 +1723,9 @@
                     <div class="editor-tab" id="tabLook" onclick="switchEditorTab('look')">🔍 LookML Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
                 </div>
                 <div class="json-editor" id="panelJson">
-                    <textarea id="jsonEditor" placeholder="Select a data model from the sidebar to view and edit its JSON representation...
+                    <div class="editor-wrap" id="editorWrap">
+                        <div class="line-numbers" id="lineNumbers" aria-hidden="true"></div>
+                        <textarea id="jsonEditor" placeholder="Select a data model from the sidebar to view and edit its JSON representation...
 
 WORKFLOW:
 1. Connect to Sigma (enter your API credentials)
@@ -1561,6 +1734,7 @@ WORKFLOW:
 4. Click 'Save to Sigma' to push changes directly
 
 This is the standalone version - changes are saved directly to Sigma."></textarea>
+                    </div>
                 </div>
 
                 <!-- dbt Converter Panel -->
@@ -2156,19 +2330,156 @@ PRODUCT_NAME
     
     <script>
         // ── API helper ─────────────────────────────────────────────────────────
+        // API call counter for DevTools
+        let _sigmaCallSeq = 0;
+        function _isDevMode() { return localStorage.getItem('sigma_standalone_dev_mode') === 'true'; }
+
+        // ── Token Auto-Refresh ─────────────────────────────────────────────
+        let _refreshingToken = null; // dedupes concurrent refresh attempts
+
+        async function _ensureFreshToken() {
+            // If token expires within 60s, proactively refresh
+            if (!state.tokenExpiry || Date.now() > state.tokenExpiry - 60000) {
+                if (_refreshingToken) return _refreshingToken; // already refreshing
+                _refreshingToken = _doRefreshToken().finally(() => { _refreshingToken = null; });
+                return _refreshingToken;
+            }
+        }
+
+        async function _doRefreshToken() {
+            const saved = localStorage.getItem('sigma_standalone_credentials');
+            if (!saved) throw new Error('Token expired and no saved credentials to refresh');
+            const { clientId, clientSecret, apiUrl } = JSON.parse(saved);
+            if (!clientId || !clientSecret) throw new Error('Token expired and credentials incomplete');
+
+            const base = apiUrl || state.baseUrl;
+            const resp = await fetch(`${base}/v2/auth/token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    grant_type: 'client_credentials',
+                    client_id: clientId,
+                    client_secret: clientSecret
+                })
+            });
+            if (!resp.ok) throw new Error(`Token refresh failed: HTTP ${resp.status}`);
+            const data = await resp.json();
+            state.accessToken = data.access_token;
+            state.tokenExpiry = Date.now() + (data.expires_in * 1000);
+            if (_isDevMode()) console.log('%c[Token]%c Auto-refreshed (expires in ' + data.expires_in + 's)', 'color:#6e6eff;font-weight:bold', 'color:inherit');
+        }
+
+        // ── Sigma API Fetch with Retry + Auto-Refresh ────────────────────────
         async function sigmaFetch(path, options = {}) {
             const pathStr = (path instanceof URL) ? path.toString() : String(path);
             const url = pathStr.startsWith('http') ? pathStr : state.baseUrl + pathStr;
             const isJson = options.body && typeof options.body === 'string';
-            const res = await fetch(url, {
-                ...options,
-                headers: {
-                    'Authorization': `Bearer ${state.accessToken}`,
-                    ...(isJson ? { 'Content-Type': 'application/json' } : {}),
-                    ...(options.headers || {})
+            const method = (options.method || 'GET').toUpperCase();
+            const debug = _isDevMode();
+            const seq = debug ? ++_sigmaCallSeq : 0;
+            const startTime = debug ? performance.now() : 0;
+
+            if (debug) {
+                const shortUrl = url.replace(state.baseUrl, '');
+                console.groupCollapsed(
+                    `%c[Sigma API #${seq}]%c ${method} %c${shortUrl}`,
+                    'color:#6e6eff;font-weight:bold', 'color:#e8a735;font-weight:bold', 'color:#aaa;font-weight:normal'
+                );
+                console.log('%cURL:%c ' + url, 'font-weight:bold;color:#888', 'color:inherit');
+                if (options.body) {
+                    try { console.log('%cRequest Body:', 'font-weight:bold;color:#888', JSON.parse(options.body)); }
+                    catch { console.log('%cRequest Body:%c ' + options.body, 'font-weight:bold;color:#888', 'color:inherit'); }
                 }
-            });
-            return res;
+            }
+
+            const MAX_RETRIES = 3;
+            const BASE_DELAY = 1000; // 1s, 2s, 4s
+
+            for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                try {
+                    // Auto-refresh token if near expiry — fail silently so we still
+                    // attempt the main request with the existing token
+                    try { await _ensureFreshToken(); } catch (refreshErr) {
+                        if (debug) console.log(`%c⚠ Token refresh failed (proceeding with current token): ${refreshErr.message}`, 'color:#f5a623');
+                    }
+
+                    const res = await fetch(url, {
+                        ...options,
+                        headers: {
+                            'Authorization': `Bearer ${state.accessToken}`,
+                            ...(isJson ? { 'Content-Type': 'application/json' } : {}),
+                            ...(options.headers || {})
+                        }
+                    });
+
+                    // 401 Unauthorized — token may have been invalidated server-side
+                    if (res.status === 401 && attempt < MAX_RETRIES) {
+                        state.tokenExpiry = 0; // force refresh on next attempt
+                        if (debug) console.log(`%c↻ 401 — refreshing token (attempt ${attempt + 1})`, 'color:#f5a623');
+                        await new Promise(r => setTimeout(r, 500));
+                        continue;
+                    }
+
+                    // 429 Rate Limited or 5xx Server Error — retry with backoff
+                    if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
+                        const delay = BASE_DELAY * Math.pow(2, attempt);
+                        const retryAfter = res.headers.get('Retry-After');
+                        const wait = retryAfter ? parseInt(retryAfter) * 1000 : delay;
+                        if (debug) console.log(`%c↻ HTTP ${res.status} — retrying in ${wait}ms (attempt ${attempt + 1})`, 'color:#f5a623');
+                        await new Promise(r => setTimeout(r, wait));
+                        continue;
+                    }
+
+                    if (debug) {
+                        const elapsed = (performance.now() - startTime).toFixed(0);
+                        const statusColor = res.ok ? '#4caf50' : '#ff4444';
+                        const retryNote = attempt > 0 ? ` [retry #${attempt}]` : '';
+                        console.log(`%cStatus:%c ${res.status} ${res.statusText}  %c(${elapsed}ms${retryNote})`,
+                            'font-weight:bold;color:#888', `color:${statusColor};font-weight:bold`, 'color:#888;font-weight:normal');
+                        const cloned = res.clone();
+                        cloned.text().then(text => {
+                            try {
+                                const json = JSON.parse(text);
+                                if (json.entries && Array.isArray(json.entries)) {
+                                    console.log(`%cResponse:%c ${json.entries.length} entries` +
+                                        (json.total ? ` (total: ${json.total})` : '') +
+                                        (json.hasMore ? ' — hasMore: true' : ''),
+                                        'font-weight:bold;color:#888', 'color:inherit');
+                                    if (json.entries.length > 0 && json.entries.length <= 5) {
+                                        console.log('%cEntries:', 'font-weight:bold;color:#888', json.entries);
+                                    } else if (json.entries.length > 5) {
+                                        console.log('%cFirst 3:', 'font-weight:bold;color:#888', json.entries.slice(0, 3));
+                                    }
+                                } else {
+                                    if (text.length > 2000) { console.log('%cResponse:', 'font-weight:bold;color:#888', '(large — expand)'); console.dir(json); }
+                                    else { console.log('%cResponse:', 'font-weight:bold;color:#888', json); }
+                                }
+                            } catch {
+                                console.log('%cResponse (text):%c ' + (text.length > 500 ? text.slice(0, 500) + '…' : text),
+                                    'font-weight:bold;color:#888', 'color:inherit');
+                            }
+                            console.groupEnd();
+                        }).catch(() => { console.groupEnd(); });
+                    }
+
+                    return res;
+
+                } catch (netErr) {
+                    // Network error (DNS, CORS, connection reset, etc.) — retry
+                    if (attempt < MAX_RETRIES) {
+                        const delay = BASE_DELAY * Math.pow(2, attempt);
+                        if (debug) console.log(`%c↻ Network error — retrying in ${delay}ms (attempt ${attempt + 1}): ${netErr.message}`, 'color:#f5a623');
+                        await new Promise(r => setTimeout(r, delay));
+                        continue;
+                    }
+                    if (debug) {
+                        console.log(`%c⛔ NETWORK ERROR (all retries exhausted)%c (${(performance.now() - startTime).toFixed(0)}ms)`, 'color:#ff4444;font-weight:bold', 'color:#888');
+                        console.error(netErr);
+                        console.groupEnd();
+                    }
+                    throw netErr;
+                }
+            }
         }
 
         // State
@@ -2182,6 +2493,14 @@ PRODUCT_NAME
             originalJson: null,
             isNewModel: false
         };
+
+        // ── Explorer State ───────────────────────────────────────────────────
+        const modelPathCache = {};  // dataModelId → "Workspace › Folder" display string
+
+        // Explorer tree: { workspaces: [{id,name,folders:[{id,name,models:[]}],models:[]}], myDocuments: {folders:[],models:[]}, unresolved: [] }
+        let explorerTree = { workspaces: [], myDocuments: { folders: [], models: [] }, unresolved: [] };
+        let explorerPath = []; // empty = Home (root)
+        let explorerViewMode = 'tree'; // 'tree' (explorer) or 'flat' (search results)
         
         // Select API region
         function selectRegion() {
@@ -2268,6 +2587,10 @@ PRODUCT_NAME
                 document.getElementById('newModelBtn').disabled = false;
                 document.getElementById('downloadAllBtn').disabled = false;
                 document.getElementById('uploadBtn').disabled = false;
+                // Enable dev-mode-only buttons if dev mode is active
+                if (localStorage.getItem(DEV_MODE_KEY) === 'true') {
+                    document.getElementById('fetchByIdBtn').disabled = false;
+                }
                 
                 // Load data models
                 await loadDataModels();
@@ -2285,118 +2608,538 @@ PRODUCT_NAME
             }
         }
         
-        // Load data models
+        // ── Load Data Models via /v2/files ──────────────────────────────────
+        // Uses /v2/files (returns all accessible files with parentId) + /v2/workspaces
+        // to build the explorer tree in ~3-4 paginated API calls instead of 100+.
         async function loadDataModels() {
-            updateStatus('loading', 'Loading data models...');
-            
+            updateStatus('loading', 'Loading files...');
+
             try {
-                let allModels = [];
-                let page = null;
-                let hasMore = true;
-                const limit = 50;
-                
-                // Paginate through all results
-                while (hasMore) {
-                    const url = new URL(`${state.baseUrl}/v2/datamodels`);
-                    url.searchParams.set('limit', limit.toString());
-                    if (page) {
-                        url.searchParams.set('page', page);
-                    }
-                    
-                    const response = await sigmaFetch(url);
-                    
-                    if (!response.ok) {
-                        throw new Error('Failed to load data models');
-                    }
-                    
-                    const data = await response.json();
-                    const entries = data.entries || [];
-                    allModels = allModels.concat(entries);
-                    
-                    // Check if more pages exist
-                    hasMore = data.hasMore === true && data.nextPage;
-                    page = data.nextPage;
-                    
-                    // Update progress
-                    if (data.total) {
-                        updateStatus('loading', `Loading data models... (${allModels.length}/${data.total})`);
-                    }
-                    
-                    // Safety break
-                    if (!entries.length) break;
+                // Step 1: Fetch all workspaces (for name resolution)
+                const workspaces = await fetchAllPages(`${state.baseUrl}/v2/workspaces`);
+                const wsMap = {}; // id → { name }
+                for (const ws of workspaces) {
+                    wsMap[ws.workspaceId] = { id: ws.workspaceId, name: ws.name || ws.workspaceId };
                 }
-                
-                // Sort alphabetically by name
-                allModels.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-                
-                state.dataModels = allModels;
-                state.filteredModels = allModels;
-                
-                renderModelsList();
+
+                if (_isDevMode()) {
+                    console.log(`%c[Explorer]%c Loaded ${workspaces.length} workspaces`, 'color:#6e6eff;font-weight:bold', 'color:inherit');
+                }
+
+                // Step 2: Fetch ALL files (paginated) — this returns data models, folders, workbooks, etc.
+                // Each entry includes: id, name, type, parentId, updatedAt, etc.
+                updateStatus('loading', 'Loading all files...');
+                const allFiles = await fetchAllPages(`${state.baseUrl}/v2/files`);
+
+                if (_isDevMode()) {
+                    console.log(`%c[Explorer]%c Loaded ${allFiles.length} total files`, 'color:#6e6eff;font-weight:bold', 'color:inherit');
+                }
+
+                // Step 3: Index everything by ID and extract data models
+                const fileIndex = {}; // id → file object
+                const dataModels = [];
+                const folders = []; // type === 'folder'
+
+                for (const file of allFiles) {
+                    const id = file.id || file.inodeId;
+                    if (!id) continue;
+                    fileIndex[id] = file;
+
+                    if (file.type === 'data-model' || file.type === 'dataset') {
+                        dataModels.push({
+                            dataModelId: id,
+                            name: file.name || 'Untitled',
+                            updatedAt: file.updatedAt,
+                            createdAt: file.createdAt,
+                            parentId: file.parentId || null,
+                            _file: file // keep reference for tree building
+                        });
+                    }
+                    if (file.type === 'folder') {
+                        folders.push(file);
+                    }
+                }
+
+                // Sort models alphabetically
+                dataModels.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+                state.dataModels = dataModels;
+                state.filteredModels = dataModels;
+
+                if (_isDevMode()) {
+                    console.log(`%c[Explorer]%c ${dataModels.length} data models, ${folders.length} folders, ${workspaces.length} workspaces`,
+                        'color:#4caf50;font-weight:bold', 'color:inherit');
+                }
+
+                // Step 4: Build tree in memory (zero additional API calls)
+                buildExplorerTreeFromFiles(dataModels, fileIndex, wsMap);
+
+                explorerViewMode = 'tree';
+                explorerPath = [];
+                renderExplorer();
                 updateStatus('connected', `Connected • ${state.dataModels.length} data models`);
-                
+
             } catch (error) {
                 console.error('Load error:', error);
                 updateStatus('error', 'Failed to load data models');
                 showToast(`Error: ${error.message}`, 'error');
             }
         }
-        
+
+        // ── Build explorer tree from in-memory file data ─────────────────────
+        // Sentinel UUIDs that Sigma uses for root/null parents
+        function isSentinelId(id) {
+            if (!id) return true;
+            return /^[0f]{8}-[0f]{4}-[0f]{4}-[0f]{4}-[0f]{12}$/i.test(id);
+        }
+
+        function buildExplorerTreeFromFiles(dataModels, fileIndex, wsMap) {
+            const tree = { workspaces: [], myDocuments: { folders: [], models: [] }, unresolved: [] };
+            const wsBuckets = {}; // wsId → { rootModels: [], folders: { folderId → { id, name, models: [] } } }
+            for (const wsId in wsMap) {
+                wsBuckets[wsId] = { rootModels: [], folders: {} };
+            }
+
+            // Helper: walk parentId chain up to find the workspace root
+            function resolveChain(parentId) {
+                const chain = []; // [{id, name}] from immediate parent up to workspace
+                let curId = parentId;
+                const visited = new Set();
+
+                while (curId && !visited.has(curId) && !isSentinelId(curId)) {
+                    visited.add(curId);
+
+                    // Is this a workspace?
+                    if (wsMap[curId]) {
+                        chain.unshift({ id: curId, name: wsMap[curId].name, type: 'workspace' });
+                        return chain;
+                    }
+
+                    // Is this in our file index? (folder, etc.)
+                    const node = fileIndex[curId];
+                    if (node) {
+                        chain.unshift({ id: curId, name: node.name || curId, type: node.type || 'folder' });
+                        curId = node.parentId;
+                    } else {
+                        // Unknown parent — stop walking
+                        chain.unshift({ id: curId, name: curId, type: 'unknown' });
+                        break;
+                    }
+                }
+                return chain;
+            }
+
+            // Place each data model into the tree
+            for (const model of dataModels) {
+                const parentId = model.parentId;
+
+                if (!parentId || isSentinelId(parentId)) {
+                    tree.myDocuments.models.push(model);
+                    modelPathCache[model.dataModelId] = 'My Documents';
+                    continue;
+                }
+
+                const chain = resolveChain(parentId);
+
+                // Build path string for search
+                modelPathCache[model.dataModelId] = chain.length
+                    ? chain.map(c => c.name).join(' › ')
+                    : 'My Documents';
+
+                // Find workspace in chain
+                const wsIdx = chain.findIndex(c => c.type === 'workspace');
+                if (wsIdx >= 0) {
+                    const wsId = chain[wsIdx].id;
+                    if (wsBuckets[wsId]) {
+                        // Folder = the node directly above the model (first non-workspace in chain)
+                        const folderNode = chain.length > wsIdx + 1 ? chain[wsIdx + 1] : null;
+                        if (folderNode && folderNode.type !== 'workspace') {
+                            if (!wsBuckets[wsId].folders[folderNode.id]) {
+                                wsBuckets[wsId].folders[folderNode.id] = {
+                                    id: folderNode.id,
+                                    name: folderNode.name,
+                                    models: []
+                                };
+                            }
+                            wsBuckets[wsId].folders[folderNode.id].models.push(model);
+                        } else {
+                            wsBuckets[wsId].rootModels.push(model);
+                        }
+                        continue;
+                    }
+                }
+
+                // No workspace found in chain — put in My Documents
+                tree.myDocuments.models.push(model);
+            }
+
+            // Assemble workspace entries
+            for (const wsId in wsBuckets) {
+                const bucket = wsBuckets[wsId];
+                const folders = Object.values(bucket.folders).sort((a, b) => a.name.localeCompare(b.name));
+                const hasContent = bucket.rootModels.length > 0 || folders.length > 0;
+                if (hasContent) {
+                    tree.workspaces.push({
+                        id: wsId,
+                        name: wsMap[wsId].name,
+                        type: 'workspace',
+                        folders: folders,
+                        models: bucket.rootModels.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                    });
+                }
+            }
+            tree.workspaces.sort((a, b) => a.name.localeCompare(b.name));
+            tree.myDocuments.models.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+            explorerTree = tree;
+        }
+
+        function getModelLocation(dataModelId) {
+            if (dataModelId in modelPathCache) return modelPathCache[dataModelId];
+            return undefined;
+        }
+
         // Filter models by search query
         function filterModels(query) {
             const searchTerm = query.toLowerCase().trim();
             if (!searchTerm) {
+                explorerViewMode = 'tree';
                 state.filteredModels = state.dataModels;
             } else {
-                state.filteredModels = state.dataModels.filter(model => 
-                    (model.name || '').toLowerCase().includes(searchTerm)
-                );
+                explorerViewMode = 'flat';
+                state.filteredModels = state.dataModels.filter(model => {
+                    const nameMatch = (model.name || '').toLowerCase().includes(searchTerm);
+                    const loc = getModelLocation(model.dataModelId);
+                    const locMatch = loc ? loc.toLowerCase().includes(searchTerm) : false;
+                    return nameMatch || locMatch;
+                });
             }
-            renderModelsList();
+            renderExplorer();
         }
-        
+
         // Refresh models
         async function refreshModels() {
             if (!state.accessToken) return;
-            // Clear search
             const searchInput = document.getElementById('modelsSearch');
             if (searchInput) searchInput.value = '';
+            Object.keys(modelPathCache).forEach(k => delete modelPathCache[k]);
+            explorerTree = { workspaces: [], myDocuments: { folders: [], models: [] }, unresolved: [] };
+            explorerPath = [];
+            explorerViewMode = 'tree';
             await loadDataModels();
             showToast('Data models refreshed', 'success');
         }
-        
-        // Render models list
-        function renderModelsList() {
-            const container = document.getElementById('modelsList');
-            const models = state.filteredModels || state.dataModels || [];
-            const totalCount = state.dataModels?.length || 0;
-            const filteredCount = models.length;
-            
-            const countDisplay = document.getElementById('modelsCount');
-            if (countDisplay) {
-                countDisplay.textContent = filteredCount !== totalCount ? `(${filteredCount}/${totalCount})` : `(${totalCount})`;
+
+        // ── Fetch by ID ──────────────────────────────────────────────────────
+        function toggleFetchById() {
+            const panel = document.getElementById('fetchByIdPanel');
+            const isVisible = panel.style.display !== 'none';
+            panel.style.display = isVisible ? 'none' : 'block';
+            if (!isVisible) {
+                const input = document.getElementById('fetchByIdInput');
+                input.value = '';
+                input.focus();
             }
-            
-            if (models.length === 0) {
-                container.innerHTML = `
-                    <div class="empty-state" style="padding: 40px 20px;">
-                        <div class="empty-state-icon">${totalCount > 0 ? '🔍' : '📭'}</div>
-                        <p>${totalCount > 0 ? 'No matching data models' : 'No data models found in your organization'}</p>
-                    </div>
-                `;
+        }
+
+        async function fetchModelById(action) {
+            // Default action: 'load' if no arg provided (Enter key / Go button)
+            if (!action) action = 'load';
+
+            const input = document.getElementById('fetchByIdInput');
+            let rawId = (input.value || '').trim();
+            if (!rawId) {
+                showToast('Please enter a data model ID', 'warning');
+                input.focus();
                 return;
             }
-            
-            container.innerHTML = models.map(model => `
-                <div class="model-item ${state.selectedModel?.dataModelId === model.dataModelId ? 'active' : ''}"
-                     onclick="selectModel('${model.dataModelId}')">
-                    <div class="model-name">${escapeHtml(model.name || 'Untitled')}</div>
-                    <div class="model-meta">
-                        <span>Updated: ${formatDate(model.updatedAt)}</span>
-                    </div>
-                </div>
-            `).join('');
+
+            // Accept full URLs too — extract the UUID if they paste a Sigma URL
+            const uuidMatch = rawId.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+            if (uuidMatch) rawId = uuidMatch[0];
+
+            if (!state.accessToken) {
+                showToast('Not connected to Sigma', 'error');
+                return;
+            }
+
+            updateStatus('loading', 'Fetching data model...');
+
+            try {
+                const response = await sigmaFetch(`/v2/dataModels/${rawId}/spec`);
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}));
+                    throw new Error(errData.message || `API returned ${response.status}`);
+                }
+                const spec = await response.json();
+                spec.dataModelId = rawId;
+
+                const doLoad = action === 'load' || action === 'both';
+                const doDownload = action === 'download' || action === 'both';
+
+                // Download
+                if (doDownload) {
+                    const filename = (spec.name || rawId).replace(/[^a-zA-Z0-9_\- ]/g, '_') + '.json';
+                    const blob = new Blob([JSON.stringify(spec, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    showToast(`Downloaded "${spec.name || rawId}" as ${filename}`, 'success');
+                }
+
+                // Load into editor
+                if (doLoad) {
+                    state.selectedModel = { ...spec, dataModelId: rawId };
+                    state.originalJson = JSON.stringify(spec, null, 2);
+                    state.isNewModel = false;
+
+                    setEditorContent(spec);
+                    const titleEl = document.getElementById('editorTitle');
+                    titleEl.textContent = spec.name || 'Untitled Data Model';
+                    const loc = getModelLocation(rawId);
+                    if (loc) titleEl.title = `📂 ${loc}`;
+
+                    document.getElementById('formatBtn').disabled = false;
+                    document.getElementById('copyBtn').disabled = false;
+                    document.getElementById('saveBtn').disabled = false;
+                    document.getElementById('refreshSigmaBtn').disabled = false;
+                    document.getElementById('aiBtn').disabled = false;
+                    enableEditorModeToggle();
+                    renderModelsList();
+
+                    if (!doDownload) showToast(`Loaded "${spec.name || rawId}" into editor`, 'success');
+                }
+
+                updateStatus('connected', doLoad ? `Editing: ${spec.name || 'Untitled'}` : `Connected • ${state.dataModels.length} data models`);
+
+                // Collapse panel after success
+                document.getElementById('fetchByIdPanel').style.display = 'none';
+
+            } catch (error) {
+                console.error('Fetch by ID error:', error);
+                updateStatus('error', 'Failed to fetch data model');
+                showToast(`Error: ${error.message}`, 'error');
+            }
         }
+
+        // ── Explorer Navigation ──────────────────────────────────────────────
+        function navigateExplorer(pathSegments) {
+            explorerPath = pathSegments;
+            explorerViewMode = 'tree';
+            // Clear search
+            const searchInput = document.getElementById('modelsSearch');
+            if (searchInput) searchInput.value = '';
+            renderExplorer();
+        }
+
+        function getExplorerCurrentItems() {
+            const tree = explorerTree;
+            if (explorerPath.length === 0) {
+                // Root: show workspaces + My Documents
+                const items = [];
+                for (const ws of tree.workspaces) {
+                    const totalModels = ws.models.length + ws.folders.reduce((s, f) => s + f.models.length, 0);
+                    items.push({ type: 'workspace', id: ws.id, name: ws.name, detail: `${totalModels} model${totalModels !== 1 ? 's' : ''}`, children: true });
+                }
+                const myDocCount = tree.myDocuments.models.length;
+                if (myDocCount > 0) {
+                    items.push({ type: 'my-documents', id: '__my_documents__', name: 'My Documents', detail: `${myDocCount} model${myDocCount !== 1 ? 's' : ''}`, children: true });
+                }
+                if (tree.unresolved.length > 0) {
+                    items.push({ type: 'unresolved', id: '__unresolved__', name: 'Other', detail: `${tree.unresolved.length} model${tree.unresolved.length !== 1 ? 's' : ''}`, children: true });
+                }
+                return items;
+            }
+
+            const first = explorerPath[0];
+
+            // My Documents
+            if (first.id === '__my_documents__') {
+                return tree.myDocuments.models.map(m => ({
+                    type: 'model', id: m.dataModelId, name: m.name || 'Untitled', detail: formatDate(m.updatedAt), model: m
+                }));
+            }
+            // Unresolved
+            if (first.id === '__unresolved__') {
+                return tree.unresolved.map(m => ({
+                    type: 'model', id: m.dataModelId, name: m.name || 'Untitled', detail: formatDate(m.updatedAt), model: m
+                }));
+            }
+
+            // Workspace
+            const ws = tree.workspaces.find(w => w.id === first.id);
+            if (!ws) return [];
+
+            if (explorerPath.length === 1) {
+                // Inside workspace: show folders + root-level models
+                const items = [];
+                for (const folder of ws.folders) {
+                    items.push({ type: 'folder', id: folder.id, name: folder.name, detail: `${folder.models.length} model${folder.models.length !== 1 ? 's' : ''}`, children: true });
+                }
+                for (const m of ws.models) {
+                    items.push({ type: 'model', id: m.dataModelId, name: m.name || 'Untitled', detail: formatDate(m.updatedAt), model: m });
+                }
+                return items;
+            }
+
+            if (explorerPath.length === 2) {
+                // Inside a folder
+                const folder = ws.folders.find(f => f.id === explorerPath[1].id);
+                if (!folder) return [];
+                return folder.models.map(m => ({
+                    type: 'model', id: m.dataModelId, name: m.name || 'Untitled', detail: formatDate(m.updatedAt), model: m
+                }));
+            }
+
+            return [];
+        }
+
+        // Temp storage for explorer click paths (avoids HTML escaping issues)
+        let _explorerClickPaths = [];
+
+        // ── Explorer Rendering ───────────────────────────────────────────────
+        function renderExplorer() {
+            renderBreadcrumb();
+            _explorerClickPaths = []; // reset each render
+            const container = document.getElementById('modelsList');
+            const totalCount = state.dataModels?.length || 0;
+
+            const countDisplay = document.getElementById('modelsCount');
+
+            // Flat search mode
+            if (explorerViewMode === 'flat') {
+                const models = state.filteredModels || [];
+                if (countDisplay) countDisplay.textContent = models.length !== totalCount ? `(${models.length}/${totalCount})` : `(${totalCount})`;
+
+                if (models.length === 0) {
+                    container.innerHTML = `<div class="explorer-empty"><div class="explorer-empty-icon">🔍</div>No matching data models</div>`;
+                    return;
+                }
+                container.innerHTML = models.map(model => {
+                    const loc = getModelLocation(model.dataModelId);
+                    const locHtml = loc ? `<div class="explorer-node-detail" style="color:var(--accent);opacity:0.85;">📂 ${escapeHtml(loc)}</div>` : '';
+                    return `
+                    <div class="explorer-node model-node ${state.selectedModel?.dataModelId === model.dataModelId ? 'active' : ''}"
+                         onclick="selectModel('${model.dataModelId}')">
+                        <span class="explorer-node-icon">📊</span>
+                        <div class="explorer-node-info">
+                            <div class="explorer-node-name">${escapeHtml(model.name || 'Untitled')}</div>
+                            ${locHtml}
+                            <div class="explorer-node-detail">Updated: ${formatDate(model.updatedAt)}</div>
+                        </div>
+                    </div>`;
+                }).join('');
+                return;
+            }
+
+            // Tree mode — check if tree is populated
+            const treeHasContent = explorerTree.workspaces.length > 0 || explorerTree.myDocuments.models.length > 0 || explorerTree.unresolved.length > 0;
+
+            if (!treeHasContent && totalCount > 0) {
+                // Tree still resolving — show flat list of all models with a loading banner
+                if (countDisplay) countDisplay.textContent = `(${totalCount})`;
+                const banner = `
+                    <div style="padding:8px 12px;background:var(--bg-tertiary);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);">
+                        <span style="animation:pulse 1.5s infinite;">🗂️</span>
+                        <span>Organizing into folders…</span>
+                    </div>`;
+                const models = state.dataModels || [];
+                container.innerHTML = banner + models.map(model => `
+                    <div class="explorer-node model-node ${state.selectedModel?.dataModelId === model.dataModelId ? 'active' : ''}"
+                         onclick="selectModel('${model.dataModelId}')">
+                        <span class="explorer-node-icon">📊</span>
+                        <div class="explorer-node-info">
+                            <div class="explorer-node-name">${escapeHtml(model.name || 'Untitled')}</div>
+                            <div class="explorer-node-detail">Updated: ${formatDate(model.updatedAt)}</div>
+                        </div>
+                    </div>`).join('');
+                return;
+            }
+
+            const items = getExplorerCurrentItems();
+            if (countDisplay) {
+                const modelCount = items.filter(i => i.type === 'model').length;
+                if (explorerPath.length === 0) {
+                    countDisplay.textContent = `(${totalCount})`;
+                } else {
+                    countDisplay.textContent = modelCount > 0 ? `(${modelCount})` : '';
+                }
+            }
+
+            if (items.length === 0) {
+                container.innerHTML = `<div class="explorer-empty"><div class="explorer-empty-icon">${totalCount > 0 ? '📂' : '📭'}</div>${totalCount > 0 ? 'No items in this location' : 'No data models found'}</div>`;
+                return;
+            }
+
+            container.innerHTML = items.map(item => {
+                if (item.type === 'model') {
+                    return `
+                    <div class="explorer-node model-node ${state.selectedModel?.dataModelId === item.id ? 'active' : ''}"
+                         onclick="selectModel('${item.id}')">
+                        <span class="explorer-node-icon">📊</span>
+                        <div class="explorer-node-info">
+                            <div class="explorer-node-name">${escapeHtml(item.name)}</div>
+                            <div class="explorer-node-detail">Updated: ${item.detail}</div>
+                        </div>
+                    </div>`;
+                }
+                // Folder / Workspace / My Documents node
+                const icons = { workspace: '🏢', folder: '📁', 'my-documents': '👤', unresolved: '📋' };
+                const icon = icons[item.type] || '📁';
+                const pathIdx = _explorerClickPaths.length;
+                _explorerClickPaths.push([...explorerPath, { id: item.id, name: item.name, type: item.type }]);
+                return `
+                <div class="explorer-node folder-node" onclick="navigateExplorer(_explorerClickPaths[${pathIdx}])">
+                    <span class="explorer-node-icon">${icon}</span>
+                    <div class="explorer-node-info">
+                        <div class="explorer-node-name">${escapeHtml(item.name)}</div>
+                        <div class="explorer-node-detail">${item.detail}</div>
+                    </div>
+                    <span class="explorer-node-chevron">›</span>
+                </div>`;
+            }).join('');
+        }
+
+        // Breadcrumb click paths (separate from explorer items)
+        let _breadcrumbClickPaths = [];
+
+        function renderBreadcrumb() {
+            const bc = document.getElementById('explorerBreadcrumb');
+            if (!bc) return;
+            _breadcrumbClickPaths = [];
+
+            if (explorerViewMode === 'flat') {
+                bc.innerHTML = '<span class="breadcrumb-item" onclick="navigateExplorer([])">Home</span><span class="breadcrumb-sep">›</span><span class="breadcrumb-item current">🔍 Search Results</span>';
+                return;
+            }
+
+            let html = '';
+            if (explorerPath.length === 0) {
+                html = '<span class="breadcrumb-item current">Home</span>';
+            } else {
+                html = '<span class="breadcrumb-item" onclick="navigateExplorer([])">Home</span>';
+                for (let i = 0; i < explorerPath.length; i++) {
+                    html += '<span class="breadcrumb-sep">›</span>';
+                    const seg = explorerPath[i];
+                    if (i === explorerPath.length - 1) {
+                        html += `<span class="breadcrumb-item current">${escapeHtml(seg.name)}</span>`;
+                    } else {
+                        const idx = _breadcrumbClickPaths.length;
+                        _breadcrumbClickPaths.push(explorerPath.slice(0, i + 1));
+                        html += `<span class="breadcrumb-item" onclick="navigateExplorer(_breadcrumbClickPaths[${idx}])">${escapeHtml(seg.name)}</span>`;
+                    }
+                }
+            }
+            bc.innerHTML = html;
+        }
+
+        // Keep renderModelsList as alias for backward compat (used by selectModel, etc.)
+        function renderModelsList() { renderExplorer(); }
 
         // ── Bulk Export — Selection Modal ────────────────────────────────────
         function bulkDownload() {
@@ -2409,12 +3152,16 @@ PRODUCT_NAME
             let modal = document.getElementById('exportSelectModal');
             if (modal) modal.remove();
 
-            const rows = models.map(m => `
+            const rows = models.map(m => {
+                const loc = getModelLocation(m.dataModelId);
+                const locLabel = loc ? `<span style="font-size:10px;color:var(--accent);opacity:0.85;display:block;margin-top:1px;">📂 ${escapeHtml(loc)}</span>` : '';
+                return `
                 <label class="export-select-row">
                     <input type="checkbox" class="export-model-cb" data-id="${escapeHtml(m.dataModelId)}" data-name="${escapeHtml(m.name || 'Untitled')}" checked style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;">
-                    <span class="export-row-name" title="${escapeHtml(m.name || 'Untitled')}">${escapeHtml(m.name || 'Untitled')}</span>
+                    <span class="export-row-name" title="${escapeHtml(m.name || 'Untitled')}${loc ? '\n📂 ' + escapeHtml(loc) : ''}">${escapeHtml(m.name || 'Untitled')}${locLabel}</span>
                     <span style="font-size:11px;color:var(--text-muted);flex-shrink:0;">${formatDate(m.updatedAt)}</span>
-                </label>`).join('');
+                </label>`;
+            }).join('');
 
             modal = document.createElement('div');
             modal.id = 'exportSelectModal';
@@ -2750,7 +3497,15 @@ PRODUCT_NAME
                     addBulkLog(`✅ ${action}: ${meta.name}${connNote}`, 'success');
                 } catch(e) {
                     failed++;
-                    addBulkLog(`❌ ${meta.name}: ${e.message}`, 'error');
+                    const msg = e.message === 'Failed to fetch'
+                        ? 'Network error (possible rate limit — retries exhausted)'
+                        : e.message;
+                    addBulkLog(`❌ ${meta.name}: ${msg}`, 'error');
+                }
+
+                // Pace requests to avoid triggering API rate limits
+                if (fileMeta.indexOf(meta) < fileMeta.length - 1) {
+                    await new Promise(r => setTimeout(r, 500));
                 }
             }
 
@@ -2869,7 +3624,12 @@ PRODUCT_NAME
                 
                 // Update UI
                 setEditorContent(data);
-                document.getElementById('editorTitle').textContent = data.name || 'Untitled Data Model';
+                const loc = getModelLocation(dataModelId);
+                const titleEl = document.getElementById('editorTitle');
+                titleEl.textContent = data.name || 'Untitled Data Model';
+                if (loc) {
+                    titleEl.title = `📂 ${loc}`;
+                }
                 
                 // Enable buttons
                 document.getElementById('formatBtn').disabled = false;
@@ -2911,6 +3671,7 @@ PRODUCT_NAME
                 }
                 editorMode = mode;
                 _updateModeToggleUI();
+                updateLineNumbers();
             } catch(e) {
                 showToast(`Cannot switch mode — fix ${editorMode.toUpperCase()} errors first: ${e.message}`, 'error');
             }
@@ -2958,6 +3719,7 @@ PRODUCT_NAME
             } else {
                 editor.value = JSON.stringify(obj, null, 2);
             }
+            updateLineNumbers();
         }
 
         // Format the editor content in current mode
@@ -2990,6 +3752,36 @@ PRODUCT_NAME
         // Legacy aliases (used in a few places internally)
         function formatJson() { formatEditor(); }
         function copyJson()   { copyEditor(); }
+
+        // ── Line Numbers ─────────────────────────────────────────────────────
+        function updateLineNumbers() {
+            const editor = document.getElementById('jsonEditor');
+            const gutter = document.getElementById('lineNumbers');
+            if (!editor || !gutter) return;
+            const count = (editor.value || '').split('\n').length;
+            // Only rebuild if count changed
+            if (gutter._lastCount === count) return;
+            gutter._lastCount = count;
+            const lines = [];
+            for (let i = 1; i <= count; i++) lines.push(`<span>${i}</span>`);
+            gutter.innerHTML = lines.join('');
+        }
+
+        function syncLineScroll() {
+            const editor = document.getElementById('jsonEditor');
+            const gutter = document.getElementById('lineNumbers');
+            if (editor && gutter) gutter.scrollTop = editor.scrollTop;
+        }
+
+        // Hook up events once DOM is ready
+        document.addEventListener('DOMContentLoaded', () => {
+            const editor = document.getElementById('jsonEditor');
+            if (editor) {
+                editor.addEventListener('input', updateLineNumbers);
+                editor.addEventListener('scroll', syncLineScroll);
+                updateLineNumbers();
+            }
+        });
 
 
         // Refresh from Sigma (reload current model)
@@ -3139,8 +3931,11 @@ PRODUCT_NAME
                 await loadDataModels();
             } catch (error) {
                 console.error('Save error:', error);
+                const msg = error.message === 'Failed to fetch'
+                    ? 'Network error — Sigma API may be temporarily unreachable. Please try again.'
+                    : error.message;
                 updateStatus('error', 'Failed to save');
-                showToast(`Save failed: ${error.message}`, 'error');
+                showToast(`Save failed: ${msg}`, 'error');
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = 'Save to Sigma';
@@ -3653,6 +4448,8 @@ ELEMENT TYPES
   "folders": [ ...folders... ],          // optional
   "groupings": [ ...groupings... ],      // optional
   "sort": [ ...sort... ],                // optional
+  "filters": [ ...filters... ],          // optional — element-level filters (used for RLS, etc.)
+  "columnSecurities": [ ...cls rules... ], // optional — column-level security
   "order": ["colId1", "colId2", ...]
 }
 
@@ -3781,6 +4578,94 @@ SORT (inside element.sort array)
 { "columnId": "inode-xxx/COL", "direction": "ascending|descending", "nulls": "first|last" }
 
 ═══════════════════════════════════════════════════
+ELEMENT FILTERS (inside element.filters array)
+═══════════════════════════════════════════════════
+Filters on table elements restrict which rows are visible. Two main patterns:
+
+### Static list filter (used for RLS boolean columns)
+{ "id": "shortId", "columnId": "colId", "kind": "list", "mode": "include|exclude", "values": [val1, val2] }
+Common RLS pattern: mode "exclude", values [null, false] — only shows rows where the boolean column is true.
+
+### Control-linked filter (connects a control element to a table)
+{ "source": { "kind": "table", "elementId": "tableElemId" }, "columnId": "inode-xxx/COL" }
+
+Filter kinds: "list", "text", "number", "number-range", "date", "date-range"
+For list filters: "mode" can be "include" or "exclude", "values" is an array of literal values.
+
+═══════════════════════════════════════════════════
+COLUMN-LEVEL SECURITY (inside element.columnSecurities array)
+═══════════════════════════════════════════════════
+Column-level security (CLS) restricts who can view specific columns. Each entry has an id, a criteria object, and a restrictedColumns array.
+
+There are THREE types of CLS criteria:
+
+### Type 1: no-one-can-view — Completely hides columns from ALL users (including admins viewing as consumers)
+{
+  "id": "shortRandomId",
+  "criteria": { "kind": "no-one-can-view" },
+  "restrictedColumns": ["colId1", "colId2"]
+}
+
+### Type 2: specific-users-and-teams — Only the listed users/teams can view these columns
+{
+  "id": "shortRandomId",
+  "criteria": {
+    "kind": "specific-users-and-teams",
+    "assignments": [
+      { "type": "user", "userId": "userIdString" },
+      { "type": "team", "teamId": "teamIdString" }
+    ]
+  },
+  "restrictedColumns": ["colId1"]
+}
+
+### Type 3: user-attribute — Only users whose user attribute matches the specified value(s) can view
+{
+  "id": "shortRandomId",
+  "criteria": {
+    "kind": "user-attribute",
+    "assignments": [
+      { "userAttributeId": "uaUuid", "value": "East" }
+    ]
+  },
+  "restrictedColumns": ["inode-xxx/COLUMN_NAME"]
+}
+
+NOTES on CLS:
+- restrictedColumns uses column IDs (same format as in element.columns[].id — either "inode-xxx/COL" or short random IDs)
+- Multiple CLS entries can coexist on the same element (e.g., one no-one-can-view + one user-attribute rule)
+- CLS is applied at the element level, not page level
+- For "specific-users-and-teams": assignments can mix users and teams
+- For "user-attribute": the userAttributeId must reference an existing user attribute UUID in the org
+- CLS does NOT support row-level filtering — it only restricts column visibility
+
+═══════════════════════════════════════════════════
+ROW-LEVEL SECURITY (via calculated columns + filters)
+═══════════════════════════════════════════════════
+RLS is implemented through a pattern of calculated boolean columns and element-level filters:
+
+### Step 1: Create boolean RLS columns (hidden from consumers)
+{ "id": "shortId1", "formula": "CurrentUserAttributeText(\"region\") = [Cust Region]", "name": "rls_region", "hidden": true }
+{ "id": "shortId2", "formula": "CurrentUserAttributeText(\"admin\") = \"true\"", "name": "rls_admin", "hidden": true }
+
+### Step 2: Create a rollup column that combines all RLS checks
+{ "id": "shortId3", "formula": "[rls_admin] or [rls_region]", "name": "rls_rollup", "hidden": true }
+
+### Step 3: Add a filter on the element that excludes rows where the rollup is false/null
+In element.filters array:
+{ "id": "shortId4", "columnId": "shortId3", "kind": "list", "mode": "exclude", "values": [null, false] }
+
+KEY FUNCTIONS for RLS formulas:
+- CurrentUserAttributeText("attributeName") — returns the current user's text attribute value
+- CurrentUserAttributeNumber("attributeName") — returns a numeric attribute value
+- CurrentUserEmail() — returns the current viewer's email
+- CurrentUserInTeam("TeamName") — returns true if user is in the named team
+
+PATTERN: Each RLS check produces a boolean. Combine with OR for permissive access (pass if ANY rule matches), 
+use an admin bypass column so org admins can see all data. Mark all RLS columns as hidden:true so consumers don't see the machinery.
+The exclude-filter on the rollup column is what actually restricts rows.
+
+═══════════════════════════════════════════════════
 FORMULA REFERENCE RULES
 ═══════════════════════════════════════════════════
 - Warehouse columns in element formulas: [TABLE_NAME/Display Name]  (TABLE_NAME = last segment of path)
@@ -3792,15 +4677,156 @@ FORMULA REFERENCE RULES
 - NEVER use dot notation like [table.col] — always slash [TABLE/Col]
 
 ═══════════════════════════════════════════════════
+SIGMA FORMULA FUNCTION REFERENCE
+═══════════════════════════════════════════════════
+Use these in calculated column formulas and metric formulas.
+Metric formulas MUST use aggregate functions. Calculated columns can use row-level, aggregate, or window functions.
+
+### AGGREGATE FUNCTIONS (for metrics and calculated columns)
+Sum([Col])              — sum of values
+Avg([Col])              — mean of values
+Min([Col])              — minimum value
+Max([Col])              — maximum value
+Count([Col])            — count of non-null values
+CountDistinct([Col])    — count of unique values
+CountIf([BoolCol])      — count rows where condition is true
+SumIf([BoolCol], [Col]) — sum where condition is true (SumIf(condition, value))
+AvgIf([BoolCol], [Col]) — avg where condition is true
+Median([Col])           — median value
+Percentile([Col], 0.95) — percentile (0–1)
+StdDev([Col])           — standard deviation
+Variance([Col])         — variance
+ListAgg([Col])          — concatenate values into comma-separated string
+ListAgg([Col], " | ")   — concatenate with custom delimiter
+ArrayAgg([Col])         — aggregate into an array
+
+### LOGICAL FUNCTIONS
+If([Cond], trueVal, falseVal)  — conditional; can be nested for IFS-style logic
+And([A], [B])                  — logical AND
+Or([A], [B])                   — logical OR
+Not([A])                       — logical negation
+Coalesce([A], [B], ...)        — first non-null value
+IsNull([Col])                  — true if value is null
+IsNotNull([Col])               — true if value is not null
+Switch([Col], val1, result1, val2, result2, ..., default) — multi-match
+
+### MATH FUNCTIONS
+Abs([Col])              — absolute value
+Round([Col], 2)         — round to N decimal places
+Ceiling([Col])          — round up to integer
+Floor([Col])            — round down to integer
+Power([Col], 2)         — raise to power
+Sqrt([Col])             — square root
+Exp([Col])              — e^x
+Ln([Col])               — natural logarithm
+Log([Col], 10)          — log base N
+Mod([Col], 3)           — modulus/remainder
+Truncate([Col], 2)      — truncate to N decimals
+
+### TEXT FUNCTIONS
+Concat([A], " ", [B])   — concatenate strings
+Left([Col], 5)          — first N characters
+Right([Col], 5)         — last N characters
+Substring([Col], 2, 5)  — extract from position, length
+Length([Col])            — character count
+Upper([Col])            — uppercase
+Lower([Col])            — lowercase
+Trim([Col])             — remove leading/trailing spaces
+Contains([Col], "text") — true if string contains substring
+StartsWith([Col], "AB") — true if starts with
+EndsWith([Col], "XY")   — true if ends with
+Replace([Col], "old", "new") — replace occurrences
+Position("needle", [Col])    — position of substring (1-based)
+Split([Col], ",", 1)    — split string and return Nth part
+MD5([Col])              — MD5 hash
+RegexpReplace([Col], "pattern", "replacement") — regex replace
+RegexpExtract([Col], "pattern", 1) — regex extract group
+
+### DATE FUNCTIONS
+Today()                          — current date
+Now()                            — current timestamp
+Year([DateCol])                  — extract year
+Month([DateCol])                 — extract month (1–12)
+Day([DateCol])                   — extract day of month
+Hour([DateCol])                  — extract hour
+Minute([DateCol])                — extract minute
+Second([DateCol])                — extract second
+Weekday([DateCol])               — day of week (1=Sun .. 7=Sat)
+WeekOfYear([DateCol])            — week number in year
+Quarter([DateCol])               — quarter (1–4)
+DateAdd("day", 7, [DateCol])     — add interval: "day","week","month","quarter","year","hour","minute","second"
+DateDiff("day", [Start], [End])  — difference between dates in units
+DateTrunc("month", [DateCol])    — truncate to start of period: "day","week","month","quarter","year"
+MakeDate(2025, 1, 15)            — construct date from year, month, day
+DateFromUnixMs([Col])            — date from Unix milliseconds
+DateFromUnixUs([Col])            — date from Unix microseconds
+
+### TYPE CONVERSION FUNCTIONS
+ToNumber([TextCol])     — convert text to number
+ToText([NumCol])        — convert number/date to text
+ToDate([TextCol])       — convert text to date
+Number([Col])           — cast to number
+Text([Col])             — cast to text
+
+### WINDOW FUNCTIONS (for CALCULATED COLUMNS only — NOT metrics)
+Lag([Col], 1)                    — previous row's value (within partition)
+Lead([Col], 1)                   — next row's value
+Rank()                           — rank within partition (ties get same rank, gaps after)
+DenseRank()                      — rank without gaps
+RowNumber()                      — sequential row number
+CumulativeSum([Col])             — running total
+CumulativeAvg([Col])             — running average
+CumulativeCount([Col])           — running count
+CumulativeMin([Col])             — running minimum
+CumulativeMax([Col])             — running maximum
+MovingAvg([Col], 7)              — moving average over N rows
+MovingSum([Col], 7)              — moving sum over N rows
+FirstValue([Col])                — first value in partition
+LastValue([Col])                 — last value in partition
+NthValue([Col], 3)               — Nth value in partition
+NOTE: Window functions can specify partition/order using Sigma's grouping and sort. They cannot be used in metric formulas.
+
+### FINANCIAL FUNCTIONS
+FV(rate, nper, pmt)              — future value
+NOTE: For IRR, NPV, XIRR, XNPV — use warehouse UDFs via passthrough (see below).
+For variable-rate compounding: Exp(CumulativeSum(Ln(1 + [Rate]))) * [Initial Amount]
+
+### PASSTHROUGH FUNCTIONS (call warehouse/Snowflake native functions or UDFs)
+CallNumber("DB.SCHEMA.FUNC", arg1, arg2)     — call function returning number
+CallText("DB.SCHEMA.FUNC", arg1)             — call function returning text
+CallDatetime("DB.SCHEMA.FUNC", arg1)         — call function returning datetime
+CallLogical("DB.SCHEMA.FUNC", arg1)          — call function returning boolean
+CallVariant("DB.SCHEMA.FUNC", arg1)          — call function returning variant/JSON
+AggNumber("DB.SCHEMA.AGGFUNC", [Col])        — aggregate passthrough returning number
+AggText("DB.SCHEMA.AGGFUNC", [Col])          — aggregate passthrough returning text
+NOTE: Use these when Sigma lacks a native function. Wrap in custom function for reuse.
+
+### SYSTEM / USER FUNCTIONS (for RLS and dynamic behavior)
+CurrentUserAttributeText("attrName")  — current user's text attribute value
+CurrentUserAttributeNumber("attrName") — current user's numeric attribute value
+CurrentUserEmail()                     — current viewer's email address
+CurrentUserInTeam("TeamName")          — true if current user is in team
+
+### ARRAY FUNCTIONS
+ArrayContains([ArrayCol], value) — check if array contains value
+ArrayLength([ArrayCol])          — number of elements in array
+ArraySlice([ArrayCol], start, end) — subset of array
+
+═══════════════════════════════════════════════════
 CAPABILITIES — what you CAN do via JSON
 ═══════════════════════════════════════════════════
 - Add/update name, description, hidden on existing columns and metrics
-- Add calculated columns (formula-only, short random ID, has name field)
-- Add metrics (aggregate formulas, short random ID, has name field)
+- Add calculated columns (formula-only, short random ID, has name field) — supports row-level, aggregate, AND window functions
+- Add metrics (aggregate formulas, short random ID, has name field) — aggregate functions ONLY
 - Add relationships between elements using existing column inode IDs
 - Add new warehouse-table, custom SQL, join, or union elements
 - Add folders to group columns, add groupings, add sort
 - Add control elements to filter table elements
+- Add column-level security (CLS) rules: no-one-can-view, specific-users-and-teams, or user-attribute
+- Add row-level security (RLS) via calculated boolean columns + filters using CurrentUserAttributeText(), CurrentUserEmail(), CurrentUserInTeam()
+- Use any Sigma function from the FORMULA FUNCTION REFERENCE above in formulas
+- Use passthrough functions (CallNumber, CallText, etc.) to access warehouse UDFs and native functions
+- REMOVE columns, metrics, filters, CLS rules, and folders by ID using the _remove instruction format
 
 ═══════════════════════════════════════════════════
 LIMITATIONS — what you CANNOT do via JSON
@@ -3809,9 +4835,10 @@ LIMITATIONS — what you CANNOT do via JSON
 - Cannot change a warehouse-table source connection or path — recreate the element
 - Cannot modify workbooks, dashboards, or visualizations — data models only
 - Cannot set column data types — Sigma infers from warehouse schema
-- Cannot add row-level security, permission grants, or user attribute assignments
+- Cannot add row-level security via a dedicated API property — however, RLS IS achievable via calculated columns + filters (see RLS pattern below)
+- CAN add column-level security (CLS) rules directly
 - Cannot create materialization schedules
-- Metric formulas do not support window functions or join functions
+- Metric formulas do not support window functions — but calculated columns CAN use window functions (Lag, Lead, Rank, CumulativeSum, MovingAvg, etc.)
 - Relationships only support many-to-one or one-to-one (use fact table as source, dimension as target)
 - If asked for something in this list, explain clearly it cannot be done via data model JSON
 `;
@@ -4281,7 +5308,10 @@ ${contextInfo}
 2. If a request is about modifying existing columns (e.g. adding descriptions, renaming), output an array of objects each containing the column's exact "id" plus only the changed fields.
 3. If a request is about adding new elements (columns, metrics, relationships), generate them with unique IDs using pattern: sigmaId_${Date.now()}_N where N increments.
 4. Use proper Sigma formula syntax: reference columns as [Column Name] — never include the table name.
-5. Return your response in this exact format:
+5. If a request is about REMOVING or DELETING columns, metrics, filters, folders, or columnSecurities, output a removal instruction in this format:
+{"_remove": {"elementId": "TARGET_ELEMENT_ID", "columns": ["colId1","colId2"], "metrics": ["metId1"], "filters": ["filtId1"], "columnSecurities": ["clsId1"], "folders": ["folderId1"]}}
+Only include the arrays that have items to remove. Use the exact IDs from the model context. Also remove the IDs from the element's order array.
+6. Return your response in this exact format:
 
 JSON:
 \`\`\`json
@@ -4298,6 +5328,8 @@ CRITICAL RULES:
 - For descriptions: infer meaning from column names and formulas — write clear, concise business descriptions (1 sentence each).
 - The JSON must be a targeted patch snippet, not the entire model.
 - Only use column IDs that exist in the model context above.
+- ELEMENT TARGETING: The model may have MULTIPLE elements (tables). When adding columns, metrics, RLS, CLS, or filters, you MUST target the correct element — the one that contains the columns referenced in your formulas. Check which element has the relevant columns before generating. Use that element's "id" in your output. For example, if adding RLS based on [Region] and Region only exists on the Customers element, target the Customers element — NOT the first/default element.
+- When outputting JSON for multi-element models, wrap in pages structure: {"pages": [{"elements": [{"id": "CORRECT_ELEMENT_ID", ...}]}]}
 - FOLDERS AND ORDER: When adding folders, the folder ID must REPLACE the individual column IDs in the order array (not be appended). Columns inside a folder should NOT also appear at the top level of order. The order array should contain: [folderID, any-ungrouped-colIds...]. Do NOT put column IDs in both a folder.items and at the top level of order.`;
 
                 let response;
@@ -4325,7 +5357,20 @@ CRITICAL RULES:
                 try {
                     let patchObj = null;
                     try { patchObj = JSON.parse(jsonSuggestion); } catch(e) {}
-                    if (patchObj && isPatchSuggestion(patchObj)) {
+                    if (patchObj && detectSuggestionType(patchObj) === 'remove') {
+                        // Removal preview
+                        const rem = patchObj._remove || {};
+                        const parts = [];
+                        if (rem.columns?.length)          parts.push(`${rem.columns.length} column${rem.columns.length !== 1 ? 's' : ''}`);
+                        if (rem.metrics?.length)           parts.push(`${rem.metrics.length} metric${rem.metrics.length !== 1 ? 's' : ''}`);
+                        if (rem.filters?.length)           parts.push(`${rem.filters.length} filter${rem.filters.length !== 1 ? 's' : ''}`);
+                        if (rem.columnSecurities?.length)  parts.push(`${rem.columnSecurities.length} CLS rule${rem.columnSecurities.length !== 1 ? 's' : ''}`);
+                        if (rem.folders?.length)           parts.push(`${rem.folders.length} folder${rem.folders.length !== 1 ? 's' : ''}`);
+                        document.getElementById('aiPreviewType').textContent = '🗑️ Remove — delete items by ID';
+                        document.getElementById('aiPreviewLocation').textContent = parts.length ? parts.join(', ') + ' will be removed' : 'No items specified';
+                        document.getElementById('aiPreviewDetails').textContent = rem.elementId ? `Target element: ${rem.elementId}` : 'Will target the first table element';
+                        document.getElementById('aiPreview').style.display = '';
+                    } else if (patchObj && isPatchSuggestion(patchObj)) {
                         // Patch preview
                         let patchColCount = 0;
                         for (const p of (patchObj.pages || []))
@@ -4335,22 +5380,39 @@ CRITICAL RULES:
                         document.getElementById('aiPreviewLocation').textContent = `${patchColCount} column${patchColCount !== 1 ? 's' : ''} will be updated by ID`;
                         document.getElementById('aiPreviewDetails').textContent = 'Smart Insert will match column IDs and merge the new fields directly.';
                         document.getElementById('aiPreview').style.display = '';
-                    } else if (patchObj && detectSuggestionType(patchObj) === 'pages-insert') {
-                        // Pages-insert preview (new columns/metrics with formula)
-                        let addCols = 0, addMets = 0, addFolders = 0, hasOrder = false;
-                        for (const p of (patchObj.pages || []))
-                            for (const el of (p.elements || [])) {
-                                addCols    += (el.columns  || []).filter(c => c.formula).length;
-                                addMets    += (el.metrics  || []).filter(m => m.formula).length;
-                                addFolders += (el.folders  || []).length;
-                                if (el.order && el.order.length) hasOrder = true;
-                            }
+                    } else if (patchObj && (detectSuggestionType(patchObj) === 'pages-insert' || detectSuggestionType(patchObj) === 'element-fragment' || detectSuggestionType(patchObj) === 'elements-fragment')) {
+                        // Pages-insert or element/elements-fragment preview
+                        const detectedType = detectSuggestionType(patchObj);
+                        const isFragment = detectedType === 'element-fragment';
+                        const isElementsFragment = detectedType === 'elements-fragment';
+                        let addCols = 0, addMets = 0, addFolders = 0, addCls = 0, addFilters = 0, hasOrder = false;
+                        if (isFragment) {
+                            addCols    = (patchObj.columns  || []).filter(c => c.formula).length;
+                            addMets    = (patchObj.metrics  || []).filter(m => m.formula).length;
+                            addFolders = (patchObj.folders  || []).length;
+                            addCls     = (patchObj.columnSecurities || []).length;
+                            addFilters = (patchObj.filters  || []).length;
+                            if (patchObj.order && patchObj.order.length) hasOrder = true;
+                        } else {
+                            const pages = isElementsFragment ? [{ elements: patchObj.elements }] : (patchObj.pages || []);
+                            for (const p of pages)
+                                for (const el of (p.elements || [])) {
+                                    addCols    += (el.columns  || []).filter(c => c.formula).length;
+                                    addMets    += (el.metrics  || []).filter(m => m.formula).length;
+                                    addFolders += (el.folders  || []).length;
+                                    addCls     += (el.columnSecurities || []).length;
+                                    addFilters += (el.filters  || []).length;
+                                    if (el.order && el.order.length) hasOrder = true;
+                                }
+                        }
                         const previewParts = [];
                         if (addCols)    previewParts.push(`${addCols} column${addCols !== 1 ? 's' : ''}`);
                         if (addMets)    previewParts.push(`${addMets} metric${addMets !== 1 ? 's' : ''}`);
                         if (addFolders) previewParts.push(`${addFolders} folder${addFolders !== 1 ? 's' : ''}`);
+                        if (addCls)     previewParts.push(`${addCls} CLS rule${addCls !== 1 ? 's' : ''}`);
+                        if (addFilters) previewParts.push(`${addFilters} filter${addFilters !== 1 ? 's' : ''}`);
                         if (hasOrder)   previewParts.push('order update');
-                        document.getElementById('aiPreviewType').textContent = '➕ Insert — apply structural changes';
+                        document.getElementById('aiPreviewType').textContent = (isFragment || isElementsFragment) ? '➕ Insert — auto-wrapped element fragment' : '➕ Insert — apply structural changes';
                         document.getElementById('aiPreviewLocation').textContent =
                             previewParts.length ? previewParts.join(', ') + ' will be applied' : 'No changes detected';
                         document.getElementById('aiPreviewDetails').textContent = 'Smart Insert will merge these into the matching element.';
@@ -4640,16 +5702,113 @@ CRITICAL RULES:
                     return;
                 }
 
-                // ── Pages-insert mode: new items inside a pages[] wrapper ──────────
-                if (detectSuggestionType(suggestionObj) === 'pages-insert') {
-                    const { colsAdded, metricsAdded, foldersAdded, orderUpdated } = applyPagesInsert(currentJson, suggestionObj);
+                // ── Remove mode: delete columns, metrics, filters, CLS, folders by ID ──
+                if (detectSuggestionType(suggestionObj) === 'remove') {
+                    const rem = suggestionObj._remove;
+                    const elementId = rem.elementId;
+                    let targetEl = null;
+
+                    // Find target element
+                    for (const page of (currentJson.pages || [])) {
+                        for (const el of (page.elements || [])) {
+                            if (elementId && el.id === elementId) { targetEl = el; break; }
+                            if (!targetEl && el.kind === 'table') targetEl = el;
+                        }
+                        if (targetEl && targetEl.id === elementId) break;
+                    }
+
+                    if (!targetEl) {
+                        showToast('❌ Could not find target element for removal', 'error');
+                        return;
+                    }
+
+                    let removed = 0;
+                    const removeFromArray = (arr, ids) => {
+                        if (!arr || !ids || !ids.length) return 0;
+                        const idSet = new Set(ids);
+                        const before = arr.length;
+                        const kept = arr.filter(item => !idSet.has(item.id));
+                        arr.length = 0;
+                        kept.forEach(item => arr.push(item));
+                        return before - arr.length;
+                    };
+
+                    removed += removeFromArray(targetEl.columns, rem.columns);
+                    removed += removeFromArray(targetEl.metrics, rem.metrics);
+                    removed += removeFromArray(targetEl.filters, rem.filters);
+                    removed += removeFromArray(targetEl.columnSecurities, rem.columnSecurities);
+                    removed += removeFromArray(targetEl.folders, rem.folders);
+
+                    // Also clean up order array — remove any IDs that were deleted
+                    if (targetEl.order && Array.isArray(targetEl.order)) {
+                        const allRemovedIds = new Set([
+                            ...(rem.columns || []),
+                            ...(rem.metrics || []),
+                            ...(rem.filters || []),
+                            ...(rem.columnSecurities || []),
+                            ...(rem.folders || [])
+                        ]);
+                        targetEl.order = targetEl.order.filter(id => !allRemovedIds.has(id));
+                    }
+
+                    // Clean up empty arrays
+                    if (targetEl.columns && targetEl.columns.length === 0) delete targetEl.columns;
+                    if (targetEl.metrics && targetEl.metrics.length === 0) delete targetEl.metrics;
+                    if (targetEl.filters && targetEl.filters.length === 0) delete targetEl.filters;
+                    if (targetEl.columnSecurities && targetEl.columnSecurities.length === 0) delete targetEl.columnSecurities;
+                    if (targetEl.folders && targetEl.folders.length === 0) delete targetEl.folders;
+
                     editor.value = JSON.stringify(currentJson, null, 2);
                     closeAIModal();
-                    const total = colsAdded + metricsAdded + foldersAdded + (orderUpdated ? 1 : 0);
+                    showToast(`✅ Removed ${removed} item${removed !== 1 ? 's' : ''} from ${targetEl.id}`, removed > 0 ? 'success' : 'warning');
+                    setTimeout(() => formatJson(), 100);
+                    return;
+                }
+
+                // ── Elements-fragment mode: {elements: [...]} without pages wrapper ──
+                if (detectSuggestionType(suggestionObj) === 'elements-fragment') {
+                    suggestionObj = { pages: [{ elements: suggestionObj.elements }] };
+                    if (_isDevMode()) {
+                        console.log('%c[Smart Insert]%c Auto-wrapped {elements} into pages-insert', 'color:#6e6eff;font-weight:bold', 'color:inherit');
+                    }
+                }
+
+                // ── Element-fragment mode: auto-wrap bare columns/metrics/order into pages-insert ──
+                if (detectSuggestionType(suggestionObj) === 'element-fragment') {
+                    // Find the first table element to get its ID for targeting
+                    let targetElId = null;
+                    for (const page of (currentJson.pages || [])) {
+                        for (const el of (page.elements || [])) {
+                            if (el.kind === 'table') { targetElId = el.id; break; }
+                        }
+                        if (targetElId) break;
+                    }
+                    // Wrap into pages-insert structure
+                    const wrappedEl = { id: targetElId || 'auto' };
+                    if (suggestionObj.columns) wrappedEl.columns = suggestionObj.columns;
+                    if (suggestionObj.metrics) wrappedEl.metrics = suggestionObj.metrics;
+                    if (suggestionObj.folders) wrappedEl.folders = suggestionObj.folders;
+                    if (suggestionObj.order) wrappedEl.order = suggestionObj.order;
+                    if (suggestionObj.filters) wrappedEl.filters = suggestionObj.filters;
+                    if (suggestionObj.columnSecurities) wrappedEl.columnSecurities = suggestionObj.columnSecurities;
+                    suggestionObj = { pages: [{ elements: [wrappedEl] }] };
+                    if (_isDevMode()) {
+                        console.log('%c[Smart Insert]%c Auto-wrapped element fragment into pages-insert', 'color:#6e6eff;font-weight:bold', 'color:inherit');
+                    }
+                }
+
+                // ── Pages-insert mode: new items inside a pages[] wrapper ──────────
+                if (detectSuggestionType(suggestionObj) === 'pages-insert') {
+                    const { colsAdded, metricsAdded, foldersAdded, clsAdded, filtersAdded, orderUpdated } = applyPagesInsert(currentJson, suggestionObj);
+                    editor.value = JSON.stringify(currentJson, null, 2);
+                    closeAIModal();
+                    const total = colsAdded + metricsAdded + foldersAdded + (clsAdded || 0) + (filtersAdded || 0) + (orderUpdated ? 1 : 0);
                     const parts = [];
                     if (colsAdded)    parts.push(`${colsAdded} column${colsAdded !== 1 ? 's' : ''}`);
                     if (metricsAdded) parts.push(`${metricsAdded} metric${metricsAdded !== 1 ? 's' : ''}`);
                     if (foldersAdded) parts.push(`${foldersAdded} folder${foldersAdded !== 1 ? 's' : ''}`);
+                    if (clsAdded)     parts.push(`${clsAdded} CLS rule${clsAdded !== 1 ? 's' : ''}`);
+                    if (filtersAdded) parts.push(`${filtersAdded} filter${filtersAdded !== 1 ? 's' : ''}`);
                     if (orderUpdated) parts.push('order updated');
                     showToast(`✅ Applied: ${parts.length ? parts.join(', ') : 'no changes detected'}`, total > 0 ? 'success' : 'warning');
                     setTimeout(() => formatJson(), 100);
@@ -4704,9 +5863,31 @@ CRITICAL RULES:
         
         // Detect what type of JSON suggestion this is
         function detectSuggestionType(obj) {
+            // Check for removal instruction
+            if (obj._remove && typeof obj._remove === 'object') {
+                return 'remove';
+            }
+
             // Check for a pages-wrapped multi-insert (new metrics/columns with formulas)
             if (obj.pages && Array.isArray(obj.pages)) {
                 return 'pages-insert';
+            }
+
+            // Check for elements[] at top level without pages wrapper (e.g. {elements: [{id, columns, order}]})
+            // Auto-wrap into pages-insert
+            if (!obj.pages && obj.elements && Array.isArray(obj.elements)) {
+                return 'elements-fragment';
+            }
+
+            // Check for an element fragment (columns/metrics/order/folders at top level without pages wrapper)
+            // This is a common AI output pattern — needs to be auto-wrapped into pages-insert
+            if (!obj.pages && (
+                (obj.columns && Array.isArray(obj.columns)) ||
+                (obj.metrics && Array.isArray(obj.metrics)) ||
+                (obj.columnSecurities && Array.isArray(obj.columnSecurities)) ||
+                (obj.filters && Array.isArray(obj.filters))
+            )) {
+                return 'element-fragment';
             }
 
             // Check for column
@@ -4744,7 +5925,7 @@ CRITICAL RULES:
 
         // Handle pages-insert: merge new columns/metrics/folders/order from a pages[] structure
         function applyPagesInsert(currentModel, suggestion) {
-            let colsAdded = 0, metricsAdded = 0, foldersAdded = 0, orderUpdated = false;
+            let colsAdded = 0, metricsAdded = 0, foldersAdded = 0, clsAdded = 0, filtersAdded = 0, orderUpdated = false;
 
             for (const sugPage of (suggestion.pages || [])) {
                 for (const sugEl of (sugPage.elements || [])) {
@@ -4796,6 +5977,35 @@ CRITICAL RULES:
                         }
                     }
 
+                    // Merge column-level security rules
+                    if (sugEl.columnSecurities && sugEl.columnSecurities.length) {
+                        if (!targetEl.columnSecurities) targetEl.columnSecurities = [];
+                        for (const sugCls of sugEl.columnSecurities) {
+                            const existing = targetEl.columnSecurities.find(c => c.id === sugCls.id);
+                            if (existing) {
+                                existing.criteria = sugCls.criteria;
+                                existing.restrictedColumns = sugCls.restrictedColumns;
+                            } else {
+                                targetEl.columnSecurities.push(sugCls);
+                                clsAdded++;
+                            }
+                        }
+                    }
+
+                    // Merge filters (RLS filters, etc.)
+                    if (sugEl.filters && sugEl.filters.length) {
+                        if (!targetEl.filters) targetEl.filters = [];
+                        for (const sugFilter of sugEl.filters) {
+                            const existing = targetEl.filters.find(f => f.id === sugFilter.id);
+                            if (existing) {
+                                Object.assign(existing, sugFilter);
+                            } else {
+                                targetEl.filters.push(sugFilter);
+                                filtersAdded++;
+                            }
+                        }
+                    }
+
                     // Replace order if suggestion provides one
                     if (sugEl.order && sugEl.order.length) {
                         targetEl.order = sugEl.order;
@@ -4803,7 +6013,7 @@ CRITICAL RULES:
                     }
                 }
             }
-            return { colsAdded, metricsAdded, foldersAdded, orderUpdated };
+            return { colsAdded, metricsAdded, foldersAdded, clsAdded, filtersAdded, orderUpdated };
         }
         
         // Find where to insert the suggestion
@@ -5175,14 +6385,22 @@ CRITICAL RULES:
             document.getElementById('stagingOptgroup').style.display = '';
             document.querySelectorAll('.staging-option').forEach(opt => opt.style.display = '');
             document.getElementById('devModeBadge').style.display = 'inline-flex';
+            // Show dev-mode-only elements
+            document.querySelectorAll('.dev-mode-only').forEach(el => el.style.display = '');
+            // Enable fetch-by-ID button if connected
+            if (state.accessToken) {
+                document.getElementById('fetchByIdBtn').disabled = false;
+            }
             localStorage.setItem(DEV_MODE_KEY, 'true');
-            showToast('Developer mode enabled - staging environments available', 'success');
+            showToast('Developer mode enabled — staging environments + API logging + Fetch by ID', 'success');
         }
         
         function disableDevMode() {
             document.getElementById('stagingOptgroup').style.display = 'none';
             document.querySelectorAll('.staging-option').forEach(opt => opt.style.display = 'none');
             document.getElementById('devModeBadge').style.display = 'none';
+            // Hide dev-mode-only elements
+            document.querySelectorAll('.dev-mode-only').forEach(el => el.style.display = 'none');
             localStorage.setItem(DEV_MODE_KEY, 'false');
             showToast('Developer mode disabled', 'success');
         }
@@ -5302,6 +6520,9 @@ CRITICAL RULES:
                 count:          `CountIf(IsNotNull([${dn}]))`,
                 count_distinct: `CountDistinct([${dn}])`,
                 count_distict:  `CountDistinct([${dn}])`,
+                median:         `Median([${dn}])`,
+                percentile:     `Percentile([${dn}], 0.5)`,
+                sum_boolean:    `CountIf([${dn}])`,
             };
             return map[agg?.toLowerCase()] || `Sum([${dn}])`;
         }
@@ -6743,6 +7964,11 @@ metrics:
                 max: `Max([${dn}])`,
                 min: `Min([${dn}])`,
                 list: `ListAgg([${dn}])`,
+                sum_distinct: `Sum(Distinct [${dn}])`,
+                average_distinct: `Avg(Distinct [${dn}])`,
+                median: `Median([${dn}])`,
+                number: `[${dn}]`,
+                yesno: `CountIf([${dn}])`,
             };
             return map[(measureType || '').toLowerCase()] || `CountIf(IsNotNull([${dn}]))`;
         }
