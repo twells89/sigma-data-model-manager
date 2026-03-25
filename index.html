@@ -2006,8 +2006,28 @@ Conversion notes:
 
                     <div class="dbt-badge-row" id="lookInputStats"></div>
 
+                    <!-- AI key for complex expression conversion -->
+                    <details id="lookAiKeySection" style="margin-bottom: 10px;">
+                        <summary style="cursor:pointer; font-size:12px; color:var(--text-secondary); user-select:none; padding: 4px 0;">
+                            🤖 AI key for formula conversion <span style="color:var(--text-muted); font-size:11px;">(optional — converts complex sql expressions)</span>
+                        </summary>
+                        <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+                            <select class="form-input" id="lookAiProvider" style="width: 110px; flex-shrink: 0;">
+                                <option value="anthropic">Anthropic</option>
+                                <option value="openai">OpenAI</option>
+                                <option value="gemini">Gemini</option>
+                            </select>
+                            <input type="password" class="form-input" id="lookAiApiKey"
+                                placeholder="API key (uses AI Assistant key if set)"
+                                style="flex: 1; font-size: 12px;">
+                        </div>
+                        <div class="form-hint" style="margin-top: 4px;">
+                            Without a key, simple patterns (ROUND, DATEDIFF, column = 1, CASE WHEN) are converted automatically. Complex expressions need a key.
+                        </div>
+                    </details>
+
                     <div class="dbt-convert-row">
-                        <button class="btn btn-primary" style="flex: 1;" onclick="runLookConversion()">
+                        <button class="btn btn-primary" style="flex: 1;" id="lookConvertBtn" onclick="runLookConversion()">
                             🔍 Convert to Sigma JSON
                         </button>
                     </div>
@@ -6582,27 +6602,59 @@ CRITICAL RULES:
                 return id;
             }
 
-            // Extract BOTH the physical column identifier (from expression, stripped of table prefix)
-            // AND the semantic alias (from name). The formula must use the physical column so Sigma
-            // can find it in the warehouse. The semantic alias is stored in colIdMap as a fallback
-            // for relationship key lookups that reference the alias name.
+            // Extract physical column identifier from expression.
+            // For complex expressions (ROUND, CASE, arithmetic), returns null for physical
+            // so the caller can generate a calculated column instead.
             function resolveCol(col) {
-                if (typeof col === 'string') return { physical: col.toUpperCase(), semantic: col.toUpperCase() };
+                if (typeof col === 'string') return { physical: col.toUpperCase(), semantic: col.toUpperCase(), expr: null };
                 const semantic = (col.name || '').toUpperCase();
                 const expr = (col.expression || col.expr || '').trim();
-                const physical = expr ? expr.split('.').pop().toUpperCase() : semantic;
-                return { physical, semantic };
+                if (!expr) return { physical: semantic, semantic, expr: null };
+                // Simple qualified ref like SCHEMA.TABLE.COLUMN or TABLE.COLUMN → take last part
+                if (/^[\w."]+$/.test(expr)) {
+                    const physical = expr.split('.').pop().replace(/"/g,'').toUpperCase();
+                    return { physical, semantic, expr: null };
+                }
+                // Complex expression — needs formula conversion
+                if (lookIsComplexSql(expr)) {
+                    return { physical: null, semantic, expr };
+                }
+                // Fallback: extract leading identifier
+                const m = expr.match(/^([A-Za-z_][A-Za-z0-9_]*)/);
+                return { physical: m ? m[1].toUpperCase() : semantic, semantic, expr: null };
             }
 
             // 1. Dimensions
             for (const col of table.dimensions || []) {
-                const { physical, semantic } = resolveCol(col);
-                if (physical) addColById(physical, semantic);
+                const { physical, semantic, expr } = resolveCol(col);
+                if (physical) {
+                    addColById(physical, semantic);
+                } else if (expr) {
+                    // Complex expression → calculated column (sync rule-based only)
+                    const formula = lookSqlToSigmaRules(expr);
+                    if (formula) {
+                        const id = sigmaShortId();
+                        colIdMap[semantic] = id;
+                        element.columns.push({ id, formula, name: sigmaDisplayName(semantic) });
+                        element.order.push(id);
+                    }
+                    // else: silently skip — can't convert without AI in sync context
+                }
             }
             // 2. Time dimensions
             for (const col of table.time_dimensions || []) {
-                const { physical, semantic } = resolveCol(col);
-                if (physical) addColById(physical, semantic);
+                const { physical, semantic, expr } = resolveCol(col);
+                if (physical) {
+                    addColById(physical, semantic);
+                } else if (expr) {
+                    const formula = lookSqlToSigmaRules(expr);
+                    if (formula) {
+                        const id = sigmaShortId();
+                        colIdMap[semantic] = id;
+                        element.columns.push({ id, formula, name: sigmaDisplayName(semantic) });
+                        element.order.push(id);
+                    }
+                }
             }
             // 3. Facts + auto-metrics
             const autoMetrics = document.getElementById('snowAutoMetrics') ? document.getElementById('snowAutoMetrics').checked !== false : true;
@@ -7172,14 +7224,29 @@ relationships:
                 }
             }
 
-            // Dimensions → columns
+            // Dimensions → columns (handle complex expressions)
             for (const dim of model.dimensions || []) {
-                addCol((dim.expr || dim.name).toUpperCase());
+                const rawExpr = (dim.expr || dim.name || '').trim();
+                if (lookIsComplexSql(rawExpr)) {
+                    const formula = lookSqlToSigmaRules(rawExpr);
+                    if (formula) {
+                        const id = sigmaShortId();
+                        const semantic = dim.name.toUpperCase();
+                        colIdMap[semantic] = id;
+                        element.columns.push({ id, formula, name: sigmaDisplayName(dim.name) });
+                        element.order.push(id);
+                    }
+                } else {
+                    // Simple column reference — extract identifier
+                    const identifier = rawExpr.split('.').pop().replace(/"/g,'').toUpperCase() || dim.name.toUpperCase();
+                    addCol(identifier);
+                }
             }
 
             // Measures → source column (if not already present) + metric
             for (const measure of model.measures || []) {
-                const exprId = (measure.expr || measure.name).toUpperCase();
+                const rawExpr = (measure.expr || measure.name || '').trim();
+                const exprId = rawExpr.split('.').pop().replace(/"/g,'').toUpperCase() || measure.name.toUpperCase();
                 if (!colIdMap[exprId]) addCol(exprId);
                 element.metrics.push({
                     id: sigmaShortId(),
@@ -7939,7 +8006,192 @@ metrics:
             sql = sql.replace(/\$\{TABLE\}\./gi, '').trim();
             // ${view_name.field} → field (for cross-view refs — just take the field part)
             sql = sql.replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1');
-            return sql.trim();
+            sql = sql.trim();
+            // Extract only the leading simple identifier — drop trailing expressions
+            // e.g. "IS_FIRST_ORDER = 1"  → "IS_FIRST_ORDER"
+            // e.g. "COLUMN_NAME::DATE"   → "COLUMN_NAME"
+            const m = sql.match(/^([A-Za-z_][A-Za-z0-9_]*)/);
+            return m ? m[1] : sql;
+        }
+
+        // Returns true if a sql: value is a complex expression that needs formula conversion
+        function lookIsComplexSql(sql) {
+            if (!sql) return false;
+            const cleaned = sql.replace(/\$\{TABLE\}\./gi, '').replace(/\$\{[^}]+\}/g, 'X').trim();
+            if (/^[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(cleaned)) return true;
+            if (/^CASE\b/i.test(cleaned)) return true;
+            if (/[=<>!+\-*\/]/.test(cleaned.replace(/'[^']*'/g, ''))) return true;
+            return false;
+        }
+
+        // Convert bare ALL_CAPS SQL identifier to Sigma display-name column ref [Title Case]
+        function lookColRef(identifier) {
+            return `[${sigmaDisplayName(identifier)}]`;
+        }
+
+        // Rule-based SQL → Sigma formula converter for common LookML patterns.
+        // Returns a Sigma formula string, or null if the pattern isn't recognised.
+        function lookSqlToSigmaRules(sql) {
+            // Strip ${TABLE}. and resolve ${view.field}
+            let expr = sql
+                .replace(/\$\{TABLE\}\./gi, '')
+                .replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1')
+                .trim();
+
+            // ── Pattern 1: COLUMN = 1  (yesno boolean flag) ───────────────────
+            // e.g. IS_ACTIVE = 1  →  [Is Active] = 1
+            {
+                const m = expr.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(\d+)$/i);
+                if (m) return `${lookColRef(m[1])} = ${m[2]}`;
+            }
+
+            // ── Pattern 2: ROUND(expr, n) ──────────────────────────────────────
+            // First convert any NULLIF inside, then wrap in Round()
+            if (/^ROUND\s*\(/i.test(expr)) {
+                // Extract inner content of outermost ROUND(...)
+                const inner = expr.replace(/^ROUND\s*\(/i, '').replace(/\)\s*$/, '');
+                // Split on last comma to get (expression, decimals)
+                const lastComma = inner.lastIndexOf(',');
+                if (lastComma >= 0) {
+                    const mathExpr = inner.slice(0, lastComma).trim();
+                    const decimals = inner.slice(lastComma + 1).trim();
+                    // Convert the inner math expression
+                    const converted = lookConvertMathExpr(mathExpr);
+                    return `Round(${converted}, ${decimals})`;
+                }
+            }
+
+            // ── Pattern 3: DATEDIFF('unit', col_a, col_b) ────────────────────
+            {
+                const m = expr.match(/^DATEDIFF\s*\(\s*'([^']+)'\s*,\s*([A-Z_][A-Z0-9_]*)\s*,\s*([A-Z_][A-Z0-9_]*)\s*\)$/i);
+                if (m) return `DateDiff("${m[1]}", ${lookColRef(m[2])}, ${lookColRef(m[3])})`;
+            }
+
+            // ── Pattern 4: CASE WHEN ... THEN ... [WHEN ...] ELSE ... END ────
+            if (/^CASE\b/i.test(expr)) {
+                return lookConvertCase(expr);
+            }
+
+            // ── Pattern 5: simple arithmetic on column refs ───────────────────
+            // e.g. GROSS_PROFIT / NULLIF(GROSS_REVENUE, 0) * 100
+            if (/^[A-Z_][A-Z0-9_]*\s*[+\-*\/]/.test(expr) || /NULLIF/i.test(expr)) {
+                return lookConvertMathExpr(expr);
+            }
+
+            return null; // Not recognised — fall back to AI
+        }
+
+        // Convert arithmetic/comparison SQL expression to Sigma formula
+        function lookConvertMathExpr(expr) {
+            // NULLIF(x, val) → If([x] = val, null, [x])  (special-cased before general processing)
+            expr = expr.replace(/NULLIF\s*\(([A-Z_][A-Z0-9_]*)\s*,\s*([^)]+)\)/gi, (_, col, val) =>
+                `If(${lookColRef(col)} = ${val.trim()}, null, ${lookColRef(col)})`
+            );
+            return lookConvertExpression(expr);
+        }
+
+        // Map common SQL function names to Sigma equivalents
+        const LOOK_FUNC_MAP = {
+            'MONTH': 'Month', 'YEAR': 'Year', 'DAY': 'Day', 'HOUR': 'Hour',
+            'MINUTE': 'Minute', 'SECOND': 'Second', 'QUARTER': 'Quarter',
+            'WEEK': 'WeekOfYear', 'WEEKDAY': 'Weekday',
+            'DATE_TRUNC': 'DateTrunc', 'DATEADD': 'DateAdd', 'DATEDIFF': 'DateDiff',
+            'COALESCE': 'Coalesce', 'NVL': 'Coalesce', 'NULLIF': 'Nullif',
+            'ROUND': 'Round', 'FLOOR': 'Floor', 'CEILING': 'Ceiling', 'ABS': 'Abs',
+            'UPPER': 'Upper', 'LOWER': 'Lower', 'TRIM': 'Trim', 'LENGTH': 'Length',
+            'SUBSTR': 'Substring', 'SUBSTRING': 'Substring', 'CONCAT': 'Concat',
+            'CURRENT_DATE': 'Today()', 'GETDATE': 'Now()',
+            'IFF': 'If', 'IIF': 'If', 'DECODE': 'Switch',
+            'ISNULL': 'IsNull', 'IFNULL': 'Coalesce',
+            'TO_DATE': 'ToDate', 'TO_NUMBER': 'ToNumber', 'TO_VARCHAR': 'Text',
+        };
+
+        // Convert an entire expression: map functions, convert column refs, fix IN lists
+        function lookConvertExpression(expr) {
+            // 1. Map SQL function names to Sigma equivalents (preserving arguments)
+            expr = expr.replace(/\b([A-Z_][A-Z0-9_]*)\s*(?=\()/gi, (match, fn) => {
+                const upper = fn.toUpperCase();
+                return LOOK_FUNC_MAP[upper] || (fn.charAt(0).toUpperCase() + fn.slice(1).toLowerCase());
+            });
+
+            // 2. Convert EXPR IN (a, b, c) → In(EXPR, a, b, c)
+            expr = expr.replace(/([\w\]\)]+(?:\([^)]*\))?)\s+IN\s*\(([^)]+)\)/gi, (_, lhs, list) => {
+                return `In(${lhs}, ${list})`;
+            });
+
+            // 3. Convert bare ALL_CAPS identifiers (not followed by '(') to [Display Name]
+            expr = expr.replace(/\b([A-Z_][A-Z0-9_]*)\b(?!\s*\()/g, (match) => {
+                if (/^(AND|OR|NOT|NULL|IS|IN|BETWEEN|LIKE|THEN|ELSE|END|WHEN|CASE|TRUE|FALSE)$/i.test(match)) return match;
+                if (/^\d+$/.test(match)) return match;
+                return lookColRef(match);
+            });
+
+            return expr.trim();
+        }
+
+        // Convert CASE WHEN ... THEN ... ELSE ... END to nested If()
+        function lookConvertCase(expr) {
+            const body = expr.replace(/^CASE\s*/i, '').replace(/\s*END\s*$/i, '').trim();
+            const branches = [];
+            const branchRe = /WHEN\s+(.+?)\s+THEN\s+('(?:[^'\\]|\\.)*'|\S+)/gi;
+            let bm;
+            while ((bm = branchRe.exec(body)) !== null) {
+                const cond = lookConvertExpression(bm[1].trim());
+                const val  = bm[2].trim();
+                branches.push({ cond, val });
+            }
+            const elseMatch = body.match(/ELSE\s+('(?:[^'\\]|\\.)*'|\S+)\s*$/i);
+            const elseVal = elseMatch ? elseMatch[1] : 'null';
+
+            if (branches.length === 0) return null;
+            let result = elseVal;
+            for (let i = branches.length - 1; i >= 0; i--) {
+                result = `If(${branches[i].cond}, ${branches[i].val}, ${result})`;
+            }
+            return result;
+        }
+
+        // AI-powered SQL → Sigma formula converter — called only when rules don't match.
+        async function lookSqlToSigmaFormulaAI(sql, dimensionName, tableName) {
+            const cleanedSql = sql
+                .replace(/\$\{TABLE\}\./gi, '')
+                .replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1')
+                .trim();
+
+            // Prefer the LookML tab's own key; fall back to AI assistant key; then saved config
+            const config = JSON.parse(localStorage.getItem('sigma_standalone_credentials') || '{}');
+            const lookProvider = document.getElementById('lookAiProvider')?.value || null;
+            const lookKey     = document.getElementById('lookAiApiKey')?.value?.trim() || null;
+            const aiProvider  = document.getElementById('aiProvider')?.value || config.provider || 'anthropic';
+            const savedKeys   = config.keys || {};
+            const provider    = lookProvider || aiProvider;
+            const apiKey      = lookKey || document.getElementById('aiApiKey')?.value || savedKeys[provider] || '';
+
+            if (!apiKey) return null;
+
+            const systemPrompt = `You are a Sigma Computing formula expert. Convert SQL expressions to Sigma calculated column formulas.
+- Column references: SNAKE_CASE_COL → [Title Case] e.g. GROSS_PROFIT → [Gross Profit]
+- NULLIF(x, 0) → If([x] = 0, null, [x])
+- ROUND(x, n) → Round(x, n)
+- DATEDIFF('day', a, b) → DateDiff("day", [A], [B])
+- CASE WHEN x IN (a,b) THEN 'v' ELSE 'o' END → If(In([X], a, b), "v", "o")
+- CURRENT_DATE → Today()
+- COALESCE/NVL → Coalesce()
+${DATA_MODEL_SCHEMA}
+Respond with ONLY the Sigma formula — no explanation, no markdown.`;
+
+            const userMessage = `Convert this SQL from dimension "${dimensionName}" (table: ${tableName}) to a Sigma formula:
+${cleanedSql}`;
+
+            try {
+                let result = '';
+                if (provider === 'openai') result = await callOpenAI(apiKey, systemPrompt, userMessage);
+                else if (provider === 'anthropic') result = await callAnthropic(apiKey, systemPrompt, userMessage);
+                else if (provider === 'gemini') result = await callGemini(apiKey, systemPrompt, userMessage);
+                return result.replace(/^```[\w]*\n?/,'').replace(/\n?```$/,'').trim() || null;
+            } catch(e) {
+                return null;
+            }
         }
 
         // ── Map LookML type to Sigma type ─────────────────────────────────────
@@ -8054,13 +8306,19 @@ metrics:
         function onLookExploreChange() { /* could pre-show join count */ }
 
         // ── Main Conversion ───────────────────────────────────────────────────
-        function runLookConversion() {
+        async function runLookConversion() {
             _usedIds.clear(); // reset ID registry for this conversion run
             const exploreName = document.getElementById('lookExploreSelect').value;
             if (!exploreName) { showToast('Select an explore first', 'warning'); return; }
 
+            const convertBtn = document.getElementById('lookConvertBtn');
+            if (convertBtn) { convertBtn.disabled = true; convertBtn.textContent = '⏳ Converting…'; }
+
             const explore = lookProject.explores[exploreName];
-            if (!explore) { showToast('Explore not found in project', 'error'); return; }
+            if (!explore) {
+                if (convertBtn) { convertBtn.disabled = false; convertBtn.textContent = '🔍 Convert to Sigma JSON'; }
+                showToast('Explore not found in project', 'error'); return;
+            }
 
             const connectionId = document.getElementById('lookConnectionId').value;
             const strategy = document.getElementById('lookJoinStrategy').value;
@@ -8128,21 +8386,21 @@ metrics:
             const physViewMap = {};  // viewName → { element, elementId, colIdMap }
 
             // Base view — all columns included (FK cols present, matching Snow SV structure)
-            const baseResult = lookConvertView(baseViewName, baseAlias, connectionId, warnings);
+            const baseResult = await lookConvertView(baseViewName, baseAlias, connectionId, warnings);
             elementMap[baseAlias]    = baseResult;
             physViewMap[baseViewName] = baseResult;
             if (baseAlias !== baseViewName) elementMap[baseViewName] = baseResult;
 
             // Join views — create at most ONE element per physical viewName
-            joinDefs.forEach(j => {
+            for (const j of joinDefs) {
                 if (!physViewMap[j.viewName]) {
-                    const res = lookConvertView(j.viewName, j.viewName, connectionId, warnings);
+                    const res = await lookConvertView(j.viewName, j.viewName, connectionId, warnings);
                     physViewMap[j.viewName] = res;
                 }
                 // Register alias → same physical element
                 elementMap[j.alias] = physViewMap[j.viewName];
                 if (!elementMap[j.viewName]) elementMap[j.viewName] = physViewMap[j.viewName];
-            });
+            }
 
             // ── Build relationships ───────────────────────────────────────────
             // Track which physical targets already have a relationship to avoid
@@ -8193,12 +8451,14 @@ metrics:
                 return true;
             }).map(r => r.element);
 
-            // Fact element (with relationships) goes FIRST — matches Sigma's own export format
+            // Dimension elements (no relationships) FIRST, fact element (with relationships) LAST.
+            // The Sigma spec API must encounter target element IDs before the relationship
+            // that references them — putting the fact table first causes "cycle in dependency order".
             allElements.sort((a, b) => {
                 const aHasRel = !!(a.relationships && a.relationships.length > 0);
                 const bHasRel = !!(b.relationships && b.relationships.length > 0);
                 if (aHasRel === bHasRel) return 0;
-                return aHasRel ? -1 : 1;
+                return aHasRel ? 1 : -1;  // dims first, fact last
             });
 
             if (physicalJoins.length > 0) {
@@ -8292,11 +8552,12 @@ metrics:
             ].filter(Boolean).join('');
 
             ['lookCopyBtn','lookLoadBtn','lookSaveBtn'].forEach(id => document.getElementById(id).disabled = false);
+            if (convertBtn) { convertBtn.disabled = false; convertBtn.textContent = '🔍 Convert to Sigma JSON'; }
             showToast(`Converted explore "${exploreName}" → ${elemCount} elements`, 'success');
         }
 
         // ── Convert a single LookML view to a Sigma element ──────────────────
-        function lookConvertView(viewName, displayAlias, connectionId, warnings) {
+        async function lookConvertView(viewName, displayAlias, connectionId, warnings) {
             const view = lookProject.views[viewName];
             if (!view) {
                 warnings.push(`⚠ View "${viewName}" not found in uploaded files — element will have no columns`);
@@ -8360,9 +8621,44 @@ metrics:
                 ? (Array.isArray(view.dimension) ? view.dimension : [view.dimension])
                 : [];
 
-            dims.forEach(d => {
-                if (!d._name) return;
+            for (const d of dims) {
+                if (!d._name) continue;
                 const colName = d._name.toUpperCase();
+
+                // Complex sql expressions → calculated columns
+                if (lookIsComplexSql(d.sql)) {
+                    const colId = sigmaShortId();
+                    colIdMap[colName] = colId;
+
+                    // Step 1: try rule-based conversion (no API key needed)
+                    let sigmaFormula = lookSqlToSigmaRules(d.sql);
+
+                    // Step 2: fall back to AI if rules didn't match
+                    if (!sigmaFormula) {
+                        sigmaFormula = await lookSqlToSigmaFormulaAI(d.sql, d._name, tableName);
+                    }
+
+                    if (sigmaFormula) {
+                        element.columns.push({
+                            id: colId,
+                            formula: sigmaFormula,
+                            name: d.label || sigmaDisplayName(d._name)
+                        });
+                        element.order.push(colId);
+                        warnings.push(`ℹ "${d._name}" → calculated column. Review: ${sigmaFormula}`);
+                    } else {
+                        // Neither rules nor AI worked — placeholder + raw SQL in warning
+                        element.columns.push({
+                            id: colId,
+                            formula: `[${tableName}/${sigmaDisplayName(colName)}]`,
+                            name: d.label || sigmaDisplayName(d._name)
+                        });
+                        element.order.push(colId);
+                        warnings.push(`⚠ "${d._name}": could not auto-convert. Edit formula manually: ${(d.sql||'').replace(/\$\{TABLE\}\./gi,'').trim()}`);
+                    }
+                    continue;
+                }
+
                 const sqlCol = lookStripSql(d.sql) || colName;
                 const physicalCol = sqlCol.split('.').pop().toUpperCase();
                 const colId = sigmaShortId();
@@ -8373,7 +8669,7 @@ metrics:
                     formula: `[${tableName}/${colLabel(physicalCol)}]`
                 });
                 element.order.push(colId);
-            });
+            }
 
             // ── Dimension groups (time) ──────────────────────────────────────
             const dimGroups = view.dimension_group
@@ -8383,6 +8679,12 @@ metrics:
             dimGroups.forEach(dg => {
                 if (!dg._name) return;
                 const colName = dg._name.toUpperCase();
+
+                if (lookIsComplexSql(dg.sql)) {
+                    warnings.push(`⚠ Dimension group "${dg._name}": sql is a complex expression — skipped.`);
+                    return;
+                }
+
                 const sqlCol = lookStripSql(dg.sql) || colName;
                 const physicalCol = sqlCol.split('.').pop().toUpperCase();
                 const colId = sigmaShortId();
@@ -8511,7 +8813,9 @@ metrics:
 
         // Two-step LookML save: called from confirmSaveLocation when _lookTwoStepSpec is set
         async function executeLookTwoStepSave(name, folderId) {
-            // Parse fresh from the output textarea — never trust stashed state
+            // Must save in two steps: POST without relationships first (Sigma API rejects
+            // relationship targetElementId references on initial create because elements
+            // don't have server-assigned IDs yet), then PUT the full spec with relationships.
             delete state._lookTwoStepSpec;
             const rawVal = document.getElementById('lookJsonOutput').value;
             if (!rawVal) { showToast('LookML output is empty', 'error'); return; }
@@ -8523,11 +8827,21 @@ metrics:
             btn.innerHTML = '<div class="spinner"></div><span>Saving…</span>';
 
             try {
-                // Single POST with full spec
-                updateStatus('loading', 'Saving model…');
+                // ── Step 1: POST without relationships ────────────────────────
+                updateStatus('loading', 'Creating model (step 1/2)…');
+
+                // Deep-clone pages, strip relationships from all elements
+                const pagesNoRels = JSON.parse(JSON.stringify(fullSpec.pages)).map(page => ({
+                    ...page,
+                    elements: (page.elements || []).map(el => {
+                        const { relationships, ...rest } = el;
+                        return rest;
+                    })
+                }));
+
                 const postResp = await sigmaFetch(`/v2/dataModels/spec`, {
                     method: 'POST',
-                    body: JSON.stringify({ schemaVersion: 1, name, folderId, pages: JSON.parse(JSON.stringify(fullSpec.pages)) })
+                    body: JSON.stringify({ schemaVersion: 1, name, folderId, pages: pagesNoRels })
                 });
                 if (!postResp.ok) {
                     const t = await postResp.text();
@@ -8537,12 +8851,102 @@ metrics:
                 }
                 const postResult = await postResp.json();
                 const dataModelId = postResult.dataModelId;
-                if (!dataModelId) throw new Error('No dataModelId returned');
+                if (!dataModelId) throw new Error('No dataModelId returned from POST');
 
-                // Refresh editor with saved spec
+                // ── Step 2: GET saved spec — use it as base for the PUT ──────
+                // The server assigns its own element and column IDs. We must PUT
+                // using those server IDs throughout — NOT our locally generated ones.
+                // We inject relationships by matching source/target columns by formula.
+                updateStatus('loading', 'Adding relationships (step 2/2)…');
                 const getResp = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`);
-                if (getResp.ok) {
-                    const saved = await getResp.json();
+                if (!getResp.ok) throw new Error('Could not retrieve saved spec for relationship wiring');
+                const savedSpec = await getResp.json();
+
+                // ── Build lookup maps from the saved spec ─────────────────────
+                // formula → { elementId, columnId } for the saved spec
+                const savedFormulaToCol = {};  // "[TABLE/Col]" → { elementId, colId }
+                (savedSpec.pages || []).forEach(page => {
+                    (page.elements || []).forEach(el => {
+                        (el.columns || []).forEach(col => {
+                            if (col.formula) {
+                                savedFormulaToCol[col.formula] = { elementId: el.id, colId: col.id };
+                            }
+                        });
+                    });
+                });
+
+                // Also build formula → { elementId, columnId } for our local spec
+                const localFormulaToCol = {};  // formula → { elementId, colId }
+                (fullSpec.pages || []).forEach(page => {
+                    (page.elements || []).forEach(el => {
+                        (el.columns || []).forEach(col => {
+                            if (col.formula && col.id) {
+                                localFormulaToCol[col.id] = col.formula;  // colId → formula
+                            }
+                        });
+                    });
+                });
+
+                // Map local element IDs to saved element IDs via positional match
+                const elemIdRemap = {};
+                (fullSpec.pages || []).forEach((origPage, pi) => {
+                    const savedPage = (savedSpec.pages || [])[pi];
+                    if (!savedPage) return;
+                    (origPage.elements || []).forEach((origEl, ei) => {
+                        const savedEl = (savedPage.elements || [])[ei];
+                        if (savedEl) elemIdRemap[origEl.id] = savedEl.id;
+                    });
+                });
+
+                // Translate a local column ID to the matching saved column ID
+                // by looking up its formula in the saved spec
+                const remapColId = (localColId) => {
+                    const formula = localFormulaToCol[localColId];
+                    if (!formula) return localColId;
+                    const saved = savedFormulaToCol[formula];
+                    return saved ? saved.colId : localColId;
+                };
+
+                // ── Build PUT body: saved spec + relationships ────────────────
+                // Deep-clone the saved spec and inject relationships using remapped IDs
+                const savedSpecWithRels = JSON.parse(JSON.stringify(savedSpec));
+                (fullSpec.pages || []).forEach((origPage, pi) => {
+                    const savedPage = (savedSpecWithRels.pages || [])[pi];
+                    if (!savedPage) return;
+                    (origPage.elements || []).forEach((origEl, ei) => {
+                        if (!origEl.relationships || origEl.relationships.length === 0) return;
+                        const savedEl = (savedPage.elements || [])[ei];
+                        if (!savedEl) return;
+
+                        savedEl.relationships = origEl.relationships.map(rel => ({
+                            id: rel.id,
+                            name: rel.name,
+                            targetElementId: elemIdRemap[rel.targetElementId] || rel.targetElementId,
+                            keys: (rel.keys || []).map(k => ({
+                                sourceColumnId: remapColId(k.sourceColumnId),
+                                targetColumnId: remapColId(k.targetColumnId)
+                            }))
+                        }));
+                    });
+                });
+
+                const putResp = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ schemaVersion: 1, name, pages: savedSpecWithRels.pages })
+                });
+                if (!putResp.ok) {
+                    const t = await putResp.text();
+                    let msg = `HTTP ${putResp.status}`;
+                    try { msg = JSON.parse(t).message || msg; } catch(e) {}
+                    showToast(`⚠️ Model created but relationships could not be saved: ${msg}`, 'warning');
+                } else {
+                    showToast('✅ LookML model saved to Sigma!', 'success');
+                }
+
+                // ── Refresh editor with final saved spec ──────────────────────
+                const finalResp = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`);
+                if (finalResp.ok) {
+                    const saved = await finalResp.json();
                     saved.dataModelId = dataModelId;
                     state.selectedModel = saved;
                     state.originalJson = JSON.stringify(saved, null, 2);
@@ -8554,7 +8958,7 @@ metrics:
                 }
 
                 updateStatus('connected', 'Saved!');
-                showToast('✅ LookML model saved to Sigma!', 'success');                await loadDataModels();
+                await loadDataModels();
 
             } catch(err) {
                 updateStatus('error', 'Save failed');
