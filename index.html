@@ -8793,6 +8793,126 @@ ${cleanedSql}`;
                 }
             }
 
+            // ── Generate controls from filter:/parameter: fields ──────────────
+            // Collect filter and parameter fields from all views used in this explore
+            const controls = [];
+            const viewNamesUsed = [baseViewName, ...joinDefs.map(j => j.viewName)];
+            const seenControlNames = new Set();
+
+            viewNamesUsed.forEach(vName => {
+                const v = lookProject.views[vName];
+                if (!v) return;
+
+                // filter: fields → list controls (string/date)
+                const filterFields = v.filter ? (Array.isArray(v.filter) ? v.filter : [v.filter]) : [];
+                filterFields.forEach(f => {
+                    if (!f._name || seenControlNames.has(f._name)) return;
+                    seenControlNames.add(f._name);
+                    const controlId = sigmaDisplayName(f._name).replace(/\s+/g, '-');
+                    const fType = (f.type || 'string').toLowerCase();
+                    const label = f.label || sigmaDisplayName(f._name);
+
+                    if (fType === 'date' || fType === 'date_time' || fType === 'time') {
+                        controls.push({
+                            kind: 'control',
+                            controlId,
+                            id: sigmaShortId() + 'con',
+                            controlType: 'date-range',
+                            mode: 'between',
+                            includeNulls: 'when-no-value-is-selected'
+                        });
+                        warnings.push(`ℹ filter: "${f._name}" → date-range control (controlId: "${controlId}"). Reference in formulas as [${controlId}].start and [${controlId}].end`);
+                    } else {
+                        // String/number filter → list control
+                        // Find the source element and column for this filter
+                        const srcResult = elementMap[vName] || elementMap[baseAlias];
+                        const srcEl = srcResult?.element;
+                        const physCol = lookStripSql(f.sql) || f._name.toUpperCase();
+                        const srcColId = srcResult ? lookFindColId(srcResult, physCol) : null;
+
+                        if (srcEl && srcColId) {
+                            controls.push({
+                                kind: 'control',
+                                controlId,
+                                id: sigmaShortId() + 'con',
+                                filters: [{ source: { kind: 'table', elementId: srcEl.id }, columnId: srcColId }],
+                                controlType: 'list',
+                                mode: 'include',
+                                selectionMode: 'multiple',
+                                values: [],
+                                source: { kind: 'source', source: { kind: 'table', elementId: srcEl.id }, columnId: srcColId }
+                            });
+                            warnings.push(`ℹ filter: "${f._name}" → list control (controlId: "${controlId}") sourced from ${vName}.${physCol}`);
+                        } else {
+                            warnings.push(`ℹ filter: "${f._name}" → list control generated without source column (add source manually in Sigma)`);
+                            controls.push({
+                                kind: 'control',
+                                controlId,
+                                id: sigmaShortId() + 'con',
+                                controlType: 'list',
+                                mode: 'include',
+                                selectionMode: 'multiple',
+                                values: []
+                            });
+                        }
+                    }
+                });
+
+                // parameter: fields → list (with allowed_values) or text control
+                const paramFields = v.parameter ? (Array.isArray(v.parameter) ? v.parameter : [v.parameter]) : [];
+                paramFields.forEach(p => {
+                    if (!p._name || seenControlNames.has(p._name)) return;
+                    seenControlNames.add(p._name);
+                    const controlId = sigmaDisplayName(p._name).replace(/\s+/g, '-');
+                    const label = p.label || sigmaDisplayName(p._name);
+                    const pType = (p.type || 'string').toLowerCase();
+                    const allowedVals = p.allowed_value
+                        ? (Array.isArray(p.allowed_value) ? p.allowed_value : [p.allowed_value]).map(av => av.value || av.label || av)
+                        : [];
+
+                    if (allowedVals.length > 0) {
+                        // Parameter with predefined values → manual list control
+                        // values[] is the current selection (empty); source.values holds the options
+                        controls.push({
+                            kind: 'control',
+                            controlId,
+                            id: sigmaShortId() + 'con',
+                            controlType: 'list',
+                            mode: 'include',
+                            selectionMode: 'single',
+                            values: [],
+                            source: {
+                                kind: 'manual',
+                                valueType: 'text',
+                                values: allowedVals
+                            }
+                        });
+                        warnings.push(`ℹ parameter: "${p._name}" → list control (controlId: "${controlId}") with ${allowedVals.length} predefined values: ${allowedVals.join(', ')}`);
+                    } else if (pType === 'date' || pType === 'date_time') {
+                        controls.push({
+                            kind: 'control',
+                            controlId,
+                            id: sigmaShortId() + 'con',
+                            controlType: 'date-range',
+                            mode: 'between',
+                            includeNulls: 'when-no-value-is-selected'
+                        });
+                        warnings.push(`ℹ parameter: "${p._name}" → date-range control (controlId: "${controlId}")`);
+                    } else {
+                        // Free-form text/number parameter
+                        controls.push({
+                            kind: 'control',
+                            controlId,
+                            id: sigmaShortId() + 'con',
+                            controlType: 'text',
+                            mode: 'include',
+                            values: []
+                        });
+                        warnings.push(`ℹ parameter: "${p._name}" → text control (controlId: "${controlId}"). Note: LookML Liquid references ({% parameter %}) in sql: blocks are not converted`);
+                    }
+                });
+            });
+
             // ── Assemble final data model JSON ───────────────────────────────
             const modelName = explore.label || exploreName;
             const outputJson = {
@@ -8800,7 +8920,7 @@ ${cleanedSql}`;
                 pages: [{
                     id: sigmaShortId(),
                     name: 'Page 1',
-                    elements: allElements
+                    elements: [...controls, ...allElements]
                 }]
             };
 
@@ -8820,8 +8940,10 @@ ${cleanedSql}`;
             const relCount = relJoins.length;
             const phyCount = physicalJoins.length;
             const elemCount = allElements.length;
+            const ctrlCount = controls.length;
             document.getElementById('lookOutputStats').innerHTML = [
                 `<span class="dbt-stat-badge">${elemCount} element${elemCount!==1?'s':''}</span>`,
+                ctrlCount ? `<span class="dbt-stat-badge" style="color:var(--accent);">${ctrlCount} control${ctrlCount!==1?'s':''}</span>` : '',
                 relCount ? `<span class="dbt-stat-badge" style="color:var(--success);">${relCount} relationship${relCount!==1?'s':''}</span>` : '',
                 phyCount ? `<span class="dbt-stat-badge" style="color:var(--warning);">${phyCount} physical join${phyCount!==1?'s':''}</span>` : '',
                 warnings.length ? `<span class="dbt-stat-badge" style="color:var(--warning);">${warnings.length} warning${warnings.length!==1?'s':''}</span>` : ''
@@ -8829,7 +8951,7 @@ ${cleanedSql}`;
 
             ['lookCopyBtn','lookLoadBtn','lookSaveBtn'].forEach(id => document.getElementById(id).disabled = false);
             if (convertBtn) { convertBtn.disabled = false; convertBtn.textContent = '🔍 Convert to Sigma JSON'; }
-            showToast(`Converted explore "${exploreName}" → ${elemCount} elements`, 'success');
+            showToast(`Converted explore "${exploreName}" → ${elemCount} element${elemCount!==1?'s':''}${ctrlCount ? `, ${ctrlCount} control${ctrlCount!==1?'s':''}` : ''}`, 'success');
         }
 
         // ── Convert a single LookML view to a Sigma element ──────────────────
