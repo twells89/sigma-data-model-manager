@@ -456,6 +456,93 @@
         }
         .explorer-empty-icon { font-size: 28px; margin-bottom: 8px; }
 
+        /* ── Dev mode bulk select ─────────────────────────────────── */
+        .model-checkbox {
+            display: none;
+            width: 15px;
+            height: 15px;
+            cursor: pointer;
+            flex-shrink: 0;
+            accent-color: var(--accent);
+            margin-right: 2px;
+        }
+        .dev-mode .explorer-node.model-node .model-checkbox {
+            display: block;
+        }
+        .dev-mode .explorer-node.model-node {
+            padding-left: 8px;
+        }
+        .bulk-delete-bar {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: rgba(224,82,82,0.1);
+            border: 1px solid rgba(224,82,82,0.3);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        .bulk-delete-bar.visible {
+            display: flex;
+        }
+        .bulk-delete-bar-count {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .bulk-delete-bar-actions {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+        .btn-bulk-delete {
+            padding: 4px 10px;
+            font-size: 11px;
+            background: #e05252;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .btn-bulk-delete:hover { background: #c73e3e; }
+        .btn-bulk-clear {
+            padding: 4px 8px;
+            font-size: 11px;
+            background: transparent;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .btn-bulk-clear:hover { color: var(--text-primary); }
+
+        .model-delete-btn {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            flex-shrink: 0;
+            padding: 0;
+            margin-left: auto;
+            transition: color 0.15s, background 0.15s;
+        }
+        .model-delete-btn:hover {
+            color: #e05252;
+            background: rgba(224,82,82,0.12);
+        }
+        .explorer-node.model-node:hover .model-delete-btn {
+            display: flex;
+        }
+
         .model-item {
             padding: 14px 16px;
             border-radius: 10px;
@@ -1670,6 +1757,13 @@
                 <div class="explorer-breadcrumb" id="explorerBreadcrumb">
                     <span class="breadcrumb-item current">Home</span>
                 </div>
+                <div id="bulkDeleteBar" class="bulk-delete-bar">
+                    <span><span id="bulkDeleteCount" class="bulk-delete-bar-count">0</span> models selected</span>
+                    <div class="bulk-delete-bar-actions">
+                        <button class="btn-bulk-clear" onclick="clearBulkSelection()">Clear</button>
+                        <button class="btn-bulk-delete" onclick="bulkDeleteSelected()">🗑 Delete Selected</button>
+                    </div>
+                </div>
                 <div class="models-list" id="modelsList">
                     <div class="empty-state" style="padding: 40px 20px;">
                         <div class="empty-state-icon">📊</div>
@@ -2353,6 +2447,85 @@ PRODUCT_NAME
         // API call counter for DevTools
         let _sigmaCallSeq = 0;
         function _isDevMode() { return localStorage.getItem('sigma_standalone_dev_mode') === 'true'; }
+
+        function _applyDevModeClass() {
+            const sidebar = document.querySelector('.sidebar');
+            if (sidebar) {
+                if (_isDevMode()) sidebar.classList.add('dev-mode');
+                else sidebar.classList.remove('dev-mode');
+            }
+        }
+
+        // ── Bulk select/delete (dev mode only) ───────────────────────────────
+        function onModelCheckbox(checkbox, event) {
+            event.stopPropagation();
+            updateBulkDeleteBar();
+        }
+
+        function updateBulkDeleteBar() {
+            const checked = document.querySelectorAll('.model-checkbox:checked');
+            const bar = document.getElementById('bulkDeleteBar');
+            const countEl = document.getElementById('bulkDeleteCount');
+            if (!bar || !countEl) return;
+            countEl.textContent = checked.length;
+            bar.classList.toggle('visible', checked.length > 0);
+        }
+
+        function clearBulkSelection() {
+            document.querySelectorAll('.model-checkbox:checked').forEach(cb => cb.checked = false);
+            updateBulkDeleteBar();
+        }
+
+        async function bulkDeleteSelected() {
+            const checked = Array.from(document.querySelectorAll('.model-checkbox:checked'));
+            if (!checked.length) return;
+
+            const names = checked.map(cb => `• ${cb.dataset.modelName}`).join('\n');
+            const confirmed = window.confirm(
+                `Delete ${checked.length} model${checked.length > 1 ? 's' : ''}?\n\n${names}\n\nThis cannot be undone.`
+            );
+            if (!confirmed) return;
+
+            const savedPath = [...explorerPath];
+            let deleted = 0, failed = 0;
+            updateStatus('loading', `Deleting ${checked.length} models…`);
+
+            for (const cb of checked) {
+                const id = cb.dataset.modelId;
+                const name = cb.dataset.modelName;
+                try {
+                    const resp = await sigmaFetch(`/v2/files/${id}`, { method: 'DELETE' });
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    state.dataModels = (state.dataModels || []).filter(m => m.dataModelId !== id);
+                    if (state.selectedModel?.dataModelId === id) {
+                        state.selectedModel = null;
+                        document.getElementById('jsonEditor').value = '';
+                        document.getElementById('editorTitle').textContent = 'Select a data model';
+                        ['formatBtn','copyBtn','saveBtn'].forEach(bid => {
+                            const el = document.getElementById(bid);
+                            if (el) el.disabled = true;
+                        });
+                    }
+                    deleted++;
+                } catch(e) {
+                    failed++;
+                    showToast(`Failed to delete "${name}": ${e.message}`, 'error');
+                }
+            }
+
+            updateStatus('connected', 'Connected');
+            if (deleted > 0) showToast(`Deleted ${deleted} model${deleted > 1 ? 's' : ''}${failed > 0 ? ` (${failed} failed)` : ''}`, failed > 0 ? 'warning' : 'success');
+
+            explorerPath = savedPath;
+            renderExplorer();
+            updateBulkDeleteBar();
+
+            setTimeout(async () => {
+                await loadDataModels();
+                explorerPath = savedPath;
+                renderExplorer();
+            }, 800);
+        }
 
         // ── Token Auto-Refresh ─────────────────────────────────────────────
         let _refreshingToken = null; // dedupes concurrent refresh attempts
@@ -3046,12 +3219,17 @@ PRODUCT_NAME
                     return `
                     <div class="explorer-node model-node ${state.selectedModel?.dataModelId === model.dataModelId ? 'active' : ''}"
                          onclick="selectModel('${model.dataModelId}')">
+                        <input type="checkbox" class="model-checkbox" data-model-id="${model.dataModelId}"
+                               data-model-name="${escapeHtml(model.name || 'Untitled')}"
+                               onclick="onModelCheckbox(this, event)">
                         <span class="explorer-node-icon">📊</span>
                         <div class="explorer-node-info">
                             <div class="explorer-node-name">${escapeHtml(model.name || 'Untitled')}</div>
                             ${locHtml}
                             <div class="explorer-node-detail">Updated: ${formatDate(model.updatedAt)}</div>
                         </div>
+                        <button class="model-delete-btn" title="Delete model"
+                                onclick="deleteDataModel('${model.dataModelId}', this, event)" data-model-name="${escapeHtml(model.name || 'Untitled')}">🗑</button>
                     </div>`;
                 }).join('');
                 return;
@@ -3072,11 +3250,16 @@ PRODUCT_NAME
                 container.innerHTML = banner + models.map(model => `
                     <div class="explorer-node model-node ${state.selectedModel?.dataModelId === model.dataModelId ? 'active' : ''}"
                          onclick="selectModel('${model.dataModelId}')">
+                        <input type="checkbox" class="model-checkbox" data-model-id="${model.dataModelId}"
+                               data-model-name="${escapeHtml(model.name || 'Untitled')}"
+                               onclick="onModelCheckbox(this, event)">
                         <span class="explorer-node-icon">📊</span>
                         <div class="explorer-node-info">
                             <div class="explorer-node-name">${escapeHtml(model.name || 'Untitled')}</div>
                             <div class="explorer-node-detail">Updated: ${formatDate(model.updatedAt)}</div>
                         </div>
+                        <button class="model-delete-btn" title="Delete model"
+                                onclick="deleteDataModel('${model.dataModelId}', this, event)" data-model-name="${escapeHtml(model.name || 'Untitled')}">🗑</button>
                     </div>`).join('');
                 return;
             }
@@ -3101,11 +3284,16 @@ PRODUCT_NAME
                     return `
                     <div class="explorer-node model-node ${state.selectedModel?.dataModelId === item.id ? 'active' : ''}"
                          onclick="selectModel('${item.id}')">
+                        <input type="checkbox" class="model-checkbox" data-model-id="${item.id}"
+                               data-model-name="${escapeHtml(item.name)}"
+                               onclick="onModelCheckbox(this, event)">
                         <span class="explorer-node-icon">📊</span>
                         <div class="explorer-node-info">
                             <div class="explorer-node-name">${escapeHtml(item.name)}</div>
                             <div class="explorer-node-detail">Updated: ${item.detail}</div>
                         </div>
+                        <button class="model-delete-btn" title="Delete model"
+                                onclick="deleteDataModel('${item.id}', this, event)" data-model-name="${escapeHtml(item.name)}">🗑</button>
                     </div>`;
                 }
                 // Folder / Workspace / My Documents node
@@ -3160,6 +3348,13 @@ PRODUCT_NAME
 
         // Keep renderModelsList as alias for backward compat (used by selectModel, etc.)
         function renderModelsList() { renderExplorer(); }
+
+        // Patch renderExplorer to always apply dev-mode class after render
+        const _origRenderExplorer = renderExplorer;
+        renderExplorer = function(...args) {
+            _origRenderExplorer(...args);
+            _applyDevModeClass();
+        };
 
         // ── Bulk Export — Selection Modal ────────────────────────────────────
         function bulkDownload() {
@@ -3624,6 +3819,56 @@ PRODUCT_NAME
         }
         
         // Select a model
+        async function deleteDataModel(dataModelId, btnEl, event) {
+            // Stop the click from also selecting the model
+            event.stopPropagation();
+
+            const modelName = btnEl.dataset.modelName || 'this model';
+            const confirmed = window.confirm(
+                `Delete "${modelName}"?\n\nThis will permanently remove the data model from Sigma. Any workbooks using it as a source will break.\n\nThis cannot be undone.`
+            );
+            if (!confirmed) return;
+
+            try {
+                updateStatus('loading', `Deleting "${modelName}"…`);
+                // Data models are files — use the files DELETE endpoint
+                const resp = await sigmaFetch(`/v2/files/${dataModelId}`, { method: 'DELETE' });
+                if (!resp.ok) {
+                    const t = await resp.text();
+                    let msg = `HTTP ${resp.status}`;
+                    try { msg = JSON.parse(t).message || msg; } catch(e) {}
+                    throw new Error(msg);
+                }
+                showToast(`"${modelName}" deleted`, 'success');
+                // Remove from local state immediately
+                state.dataModels = (state.dataModels || []).filter(m => m.dataModelId !== dataModelId);
+                if (state.selectedModel?.dataModelId === dataModelId) {
+                    state.selectedModel = null;
+                    state.isNewModel = false;
+                    document.getElementById('jsonEditor').value = '';
+                    document.getElementById('editorTitle').textContent = 'Select a data model';
+                    ['formatBtn','copyBtn','saveBtn'].forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) el.disabled = true;
+                    });
+                }
+                updateStatus('connected', 'Connected');
+                // Re-render in place — preserve current folder path so user
+                // can keep deleting without navigating back each time
+                renderExplorer();
+                // Background refresh to sync with server, still preserving path
+                setTimeout(async () => {
+                    const savedPath = [...explorerPath];
+                    await loadDataModels();
+                    explorerPath = savedPath;
+                    renderExplorer();
+                }, 1000);
+            } catch(e) {
+                showToast(`Delete failed: ${e.message}`, 'error');
+                updateStatus('connected', 'Connected');
+            }
+        }
+
         async function selectModel(dataModelId) {
             updateStatus('loading', 'Loading data model...');
             
@@ -7338,34 +7583,65 @@ relationships:
             }
 
             // Resolve foreign entity cross-references → Sigma relationships
+            // Build a colIdMap per element index so we can add missing FK columns
+            const elementColIdMaps = elements.map((el, i) => {
+                const map = {};
+                (el.columns || []).forEach(c => {
+                    const parts = c.id.split('/');
+                    if (parts.length > 1) map[parts[parts.length - 1]] = c.id;
+                });
+                return map;
+            });
+
             semanticModels.forEach((model, i) => {
                 const element = elements[i];
                 if (!element) return;
                 for (const entity of model.entities || []) {
                     if (entity.type !== 'foreign') continue;
-                    const entityId = (entity.expr || entity.name).toUpperCase();
+                    // entity.name = logical key name (matches the PK name on the target)
+                    // entity.expr = physical FK column on this table (may differ e.g. ORDER_STORE_KEY)
+                    const logicalName = (entity.name || '').toUpperCase();
+                    const physicalFk  = (entity.expr || entity.name || '').toUpperCase();
+                    const entityId    = physicalFk; // used to add/find the FK column on source
+
+                    // Match target by logical name against target primary/unique entity names
                     const targetIdx = semanticModels.findIndex(m =>
                         m.entities?.some(en =>
-                            (en.expr || en.name).toUpperCase() === entityId &&
+                            (en.name || '').toUpperCase() === logicalName &&
                             (en.type === 'primary' || en.type === 'unique')
                         )
                     );
-                    if (targetIdx >= 0 && elements[targetIdx]) {
-                        const targetEl = elements[targetIdx];
-                        const srcColId = element.columns.find(c => c.id.endsWith('/' + entityId))?.id;
-                        const tgtColId = targetEl.columns.find(c => c.id.endsWith('/' + entityId))?.id;
-                        if (srcColId && tgtColId) {
-                            if (!element.relationships) element.relationships = [];
-                            element.relationships.push({
-                                id: sigmaShortId(),
-                                targetElementId: targetEl.id,
-                                keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
-                                name: `${sigmaDisplayName(model.name)} to ${sigmaDisplayName(semanticModels[targetIdx].name)}`
-                            });
-                        }
-                    } else {
-                        warnings.push(`Foreign entity "${entity.name}" on "${model.name}" — target not found in this YAML`);
+                    if (targetIdx < 0 || !elements[targetIdx]) {
+                        warnings.push(`Foreign entity "${entity.name}" on "${model.name}" — no matching primary entity found in this YAML`);
+                        continue;
                     }
+
+                    const targetEl = elements[targetIdx];
+                    const srcTableName = (element.source?.path?.[2] || model.name).toUpperCase();
+
+                    // Ensure FK column exists on source element — add it if not present
+                    let srcColId = elementColIdMaps[i][entityId];
+                    if (!srcColId) {
+                        srcColId = sigmaInodeId(entityId);
+                        element.columns.push({ id: srcColId, formula: sigmaColFormula(srcTableName, entityId) });
+                        element.order.push(srcColId);
+                        elementColIdMaps[i][entityId] = srcColId;
+                    }
+
+                    // Look up target column by logical name (PK name), not physical FK name
+                    const tgtColId = elementColIdMaps[targetIdx][logicalName];
+                    if (!tgtColId) {
+                        warnings.push(`Foreign entity "${entity.name}" on "${model.name}" — target column "${logicalName}" not found on target element`);
+                        continue;
+                    }
+
+                    if (!element.relationships) element.relationships = [];
+                    element.relationships.push({
+                        id: sigmaShortId(),
+                        targetElementId: targetEl.id,
+                        keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
+                        name: `${sigmaDisplayName(model.name)} to ${sigmaDisplayName(semanticModels[targetIdx].name)}`
+                    });
                 }
             });
 
@@ -8625,15 +8901,50 @@ ${cleanedSql}`;
                 if (!d._name) continue;
                 const colName = d._name.toUpperCase();
 
-                // Complex sql expressions → calculated columns
                 if (lookIsComplexSql(d.sql)) {
+                    // ── Special case: COLUMN = value (yesno boolean flag) ────────
+                    // The physical column must exist in the element before the
+                    // calculated column can reference it by display name.
+                    const cleanedSql = (d.sql || '')
+                        .replace(/\$\{TABLE\}\./gi, '')
+                        .replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1')
+                        .trim();
+                    const boolMatch = cleanedSql.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(\d+)$/i);
+
+                    if (boolMatch) {
+                        // Add the physical warehouse column first
+                        const physicalCol = boolMatch[1].toUpperCase();
+                        const val = boolMatch[2];
+                        let physColId = colIdMap[physicalCol];
+                        if (!physColId) {
+                            physColId = sigmaShortId();
+                            colIdMap[physicalCol] = physColId;
+                            element.columns.push({
+                                id: physColId,
+                                formula: `[${tableName}/${colLabel(physicalCol)}]`
+                            });
+                            element.order.push(physColId);
+                        }
+                        // Now add the calculated boolean column referencing the warehouse col
+                        const calcId = sigmaShortId();
+                        colIdMap[colName] = calcId;
+                        const displayName = d.label || sigmaDisplayName(d._name);
+                        const physDisplayName = colLabel(physicalCol);
+                        element.columns.push({
+                            id: calcId,
+                            formula: `[${physDisplayName}] = ${val}`,
+                            name: displayName
+                        });
+                        element.order.push(calcId);
+                        warnings.push(`ℹ "${d._name}" → boolean calculated column using [${physDisplayName}] = ${val}`);
+                        continue;
+                    }
+
+                    // ── All other complex expressions ─────────────────────────────
                     const colId = sigmaShortId();
                     colIdMap[colName] = colId;
 
-                    // Step 1: try rule-based conversion (no API key needed)
                     let sigmaFormula = lookSqlToSigmaRules(d.sql);
-
-                    // Step 2: fall back to AI if rules didn't match
                     if (!sigmaFormula) {
                         sigmaFormula = await lookSqlToSigmaFormulaAI(d.sql, d._name, tableName);
                     }
@@ -8647,7 +8958,6 @@ ${cleanedSql}`;
                         element.order.push(colId);
                         warnings.push(`ℹ "${d._name}" → calculated column. Review: ${sigmaFormula}`);
                     } else {
-                        // Neither rules nor AI worked — placeholder + raw SQL in warning
                         element.columns.push({
                             id: colId,
                             formula: `[${tableName}/${sigmaDisplayName(colName)}]`,
@@ -8702,55 +9012,62 @@ ${cleanedSql}`;
                 ? (Array.isArray(view.measure) ? view.measure : [view.measure])
                 : [];
 
+            // Measure types that cannot be cleanly converted to Sigma metrics
+            const UNSUPPORTED_MEASURE_TYPES = new Set([
+                'running_total',    // requires window function — not supported in Sigma metrics
+                'percent_of_total', // requires total context — no equivalent in Sigma metrics
+            ]);
+
             measures.forEach(ms => {
                 if (!ms._name) return;
                 const msName = ms._name.toUpperCase();
                 const sqlCol = lookStripSql(ms.sql) || msName;
                 const physicalCol = sqlCol.split('.').pop().toUpperCase() || msName;
                 const msType = (ms.type || 'count').toLowerCase();
+                const msLabel = ms.label || sigmaDisplayName(msName);
+
+                // ── Unsupported types — skip and warn rather than silently create wrong metric
+                if (UNSUPPORTED_MEASURE_TYPES.has(msType)) {
+                    warnings.push(`⚠ Measure "${ms._name}" (type: ${msType}) cannot be converted — ${msType === 'running_total' ? 'running totals require a window function and cannot be used in Sigma metrics; add as a calculated column manually' : 'percent_of_total has no direct equivalent in Sigma metrics; use a calculated column with CumulativeSum or a ratio metric'}`);
+                    return;
+                }
+
+                // ── Filtered measures — convert the base metric but warn the filter is dropped
+                if (ms.filters && ms.filters.length) {
+                    warnings.push(`⚠ Measure "${ms._name}": the filters: block is not converted — Sigma has no equivalent inline filter on a metric. Create a separate calculated column with If() logic or a filtered element instead. The metric will be created without the filter.`);
+                }
 
                 if (msType === 'count') {
-                    // Plain row count — no source column needed, use Count()
                     element.metrics.push({
                         id: sigmaShortId(),
                         formula: 'Count()',
-                        name: ms.label || sigmaDisplayName(msName)
+                        name: msLabel
                     });
                 } else if (msType === 'count_distinct') {
-                    // Count distinct requires a column — use physicalCol if available, else fall back to Count()
-                    const cdFormula = physicalCol && physicalCol !== msName
-                        ? `CountDistinct([${colLabel(physicalCol)}])`
-                        : `CountDistinct([${colLabel(msName)}])`;
-                    // Ensure the source column exists
-                    if (physicalCol && !colIdMap[physicalCol]) {
+                    const cdCol = physicalCol && physicalCol !== msName ? physicalCol : msName;
+                    if (!colIdMap[cdCol]) {
                         const colId = sigmaShortId();
-                        colIdMap[physicalCol] = colId;
-                        element.columns.push({
-                            id: colId,
-                            formula: `[${tableName}/${colLabel(physicalCol)}]`
-                        });
+                        colIdMap[cdCol] = colId;
+                        element.columns.push({ id: colId, formula: `[${tableName}/${colLabel(cdCol)}]` });
                         element.order.push(colId);
                     }
                     element.metrics.push({
                         id: sigmaShortId(),
-                        formula: cdFormula,
-                        name: ms.label || sigmaDisplayName(msName)
+                        formula: `CountDistinct([${colLabel(cdCol)}])`,
+                        name: msLabel
                     });
                 } else {
-                    // Make sure source column exists
+                    // Ensure source column exists
                     if (!colIdMap[physicalCol]) {
                         const colId = sigmaShortId();
                         colIdMap[physicalCol] = colId;
-                        element.columns.push({
-                            id: colId,
-                            formula: `[${tableName}/${colLabel(physicalCol)}]`
-                        });
+                        element.columns.push({ id: colId, formula: `[${tableName}/${colLabel(physicalCol)}]` });
                         element.order.push(colId);
                     }
                     element.metrics.push({
                         id: sigmaShortId(),
                         formula: lookSigmaMetric(msType, colLabel(physicalCol)),
-                        name: ms.label || sigmaDisplayName(msName)
+                        name: msLabel
                     });
                 }
             });
