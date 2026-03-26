@@ -39,6 +39,19 @@
 
 An optional AI key (OpenAI, Anthropic, or Gemini) can be configured on the LookML tab for expressions the rule-based converter doesn't recognise. Rules always run first — AI is only invoked as a fallback.
 
+### filter: and parameter: Fields → Sigma Controls
+This is an important distinction: LookML `filter:` and `parameter:` fields are view-level declarations that drive dynamic SQL via Liquid. Sigma data model **controls** are interactive UI elements (date pickers, dropdowns) embedded in the model itself — every workbook that uses the data model automatically inherits them. They're more powerful than the LookML equivalent because they're reusable across all workbooks without rebuilding.
+
+| LookML | Sigma Control | Notes |
+|---|---|---|
+| `filter: { type: date }` | `date-range` control | Reference in formulas as `[ControlId].start` and `[ControlId].end` |
+| `filter: { type: string }` | `list` control | Sourced from the matching warehouse column — populated dropdown |
+| `parameter: { allowed_values: [...] }` | `list` control | Predefined values hardcoded — single-select |
+| `parameter: { type: date }` | `date-range` control | |
+| `parameter: { type: string }` (free-form) | `text` control | Liquid `{% parameter %}` references in `sql:` blocks are **not** converted — manual wiring needed |
+
+Controls are prepended to the element list in the output (Sigma expects controls before the table elements they filter). The stats badge shows control count alongside elements and relationships.
+
 ### Explore / Join Layer
 | LookML Construct | Sigma Output |
 |---|---|
@@ -68,12 +81,13 @@ Models with relationships use two API calls (POST then PUT) to work around a Sig
 | LookML Construct | Behavior |
 |---|---|
 | `dimension_group { type: time }` | Creates ONE datetime column — LookML expands to multiple time-grain columns (date, week, month, year); Sigma data models don't — that granularity lives in the workbook layer |
-| `type: tier` | Creates a calculated column using the same `sql:` expression as the underlying numeric dimension (e.g. `ROUND((UNIT_PRICE - UNIT_COST) / NULLIF(UNIT_PRICE, 0) * 100, 1)`). The tier bucketing/labeling is dropped — LookML tier syntax has no Sigma equivalent. Appears as a duplicate calculated column alongside the numeric one. |
+| `type: tier` | Creates a calculated column using the same `sql:` expression as the underlying numeric dimension. The tier bucketing/labeling is dropped — LookML tier syntax has no Sigma equivalent. Appears as a duplicate calculated column alongside the numeric one. |
 | `sql_on:` with complex expressions | Only a simple `${a.key} = ${b.key}` equality is auto-parsed. Anything more complex generates a warning and the join keys need manual review |
 | Role-playing dimensions (two joins to the same physical table) | One Sigma element is created per physical table. E.g. `order_store` and `ship_store` both pointing to `STORE_DIM` — only one element is created, the second alias gets a warning and must be added manually in Sigma's ERD view |
 | `derived_table { sql: ... ;; }` | SQL is extracted correctly including commas and subqueries. `${TABLE}.COL` is stripped to `COL`. Complex Liquid tags or `${view.field}` cross-references are simplified |
 | `type: number` with complex `sql:` | Routes through the rule-based converter. Simple patterns (ROUND, DATEDIFF, CASE) convert correctly. Unrecognised expressions fall back to AI if a key is configured, otherwise a warning is shown |
 | `measure { filters: [...] }` | Metric is created without the filter condition. An explicit warning is shown explaining what was dropped and how to implement it manually in Sigma |
+| `parameter: { type: string }` (free-form) | Text control generated, but Liquid `{% parameter %}` references in `sql:` blocks are not converted — the downstream `sql:` formula won't dynamically swap based on the control without manual wiring |
 
 ---
 
@@ -100,11 +114,9 @@ Models with relationships use two API calls (POST then PUT) to work around a Sig
 | `access_filter:` | Not converted — handled via Sigma user attributes |
 | `always_filter:` / `conditionally_filter:` | Not converted |
 | `set: name { fields: [...] }` | Parsed but not used |
-| `filter:` named filter fields | Not converted to Sigma controls |
-| `parameter:` templated filter fields | Not converted to Sigma controls |
-| `sql_always_where:` | Not converted |
 | `html:` / `link:` / `action:` on dimensions | Not converted |
 | `persist_with:` / `datagroup:` | Not converted (materialization is out of scope) |
+| `sql_always_where:` | Not converted |
 
 ### Explore-Level Constructs
 | Construct | Status |
@@ -138,7 +150,10 @@ The ORDER_FACT explore joins `order_store` and `ship_store`, both pointing to `S
 Correct and intentional. Running totals require a window function which can't be expressed as a Sigma data model metric. The converter skips it with a warning rather than creating a `Count()` that would be silently wrong. Add it as a calculated column in the workbook instead.
 
 **"I have a ROUND() expression in a dimension — will it convert?"**
-Yes. The rule-based converter handles `ROUND(expr, n)`, `DATEDIFF('unit', a, b)`, `CASE WHEN col IN (...) THEN ... END`, and arithmetic with `NULLIF`. These produce valid Sigma formulas without needing an AI key. The converter shows an info warning for any calculated column it creates so you can review the output formula.
+Yes. The rule-based converter handles `ROUND(expr, n)`, `DATEDIFF('unit', a, b)`, `CASE WHEN col IN (...) THEN ... END`, and arithmetic with `NULLIF`. These produce valid Sigma formulas without needing an AI key.
+
+**"My filter:/parameter: fields came through as controls — is that right?"**
+Yes, and it's actually better than what LookML does. Sigma data model controls are interactive UI elements that every downstream workbook inherits automatically — date pickers, dropdowns — without having to rebuild them per workbook. The key difference: Liquid `{% parameter %}` references in `sql:` blocks aren't converted, so if your LookML used dynamic SQL driven by a parameter value, that part needs manual wiring in Sigma after import.
 
 ---
 
@@ -146,7 +161,7 @@ Yes. The rule-based converter handles `ROUND(expr, n)`, `DATEDIFF('unit', a, b)`
 
 | Icon | Meaning |
 |---|---|
-| ℹ️ | Informational — something was converted but should be reviewed (e.g. calculated column formula, role-playing join) |
+| ℹ️ | Informational — something was converted but should be reviewed (e.g. calculated column formula, control generated, role-playing join) |
 | ⚠️ | Partial conversion — something was created but a piece was dropped (e.g. filtered measure, tier bucketing) |
 | ⛔ | Skipped — construct cannot be meaningfully converted (e.g. running_total, percent_of_total) |
 
@@ -157,7 +172,7 @@ Upload `retail_analytics.model.lkml` plus any combination of view files:
 
 | File | Tests |
 |---|---|
-| `order_fact_view.lkml` | All measure types including unsupported (running_total, percent_of_total — both now skipped with warnings), filtered measure (online_revenue), yesno flags, FK dimensions for relationships |
+| `order_fact_view.lkml` | All measure types including unsupported (running_total, percent_of_total — both skipped with warnings), filtered measure (online_revenue), yesno flags, FK dimensions for relationships |
 | `customer_dim_view.lkml` | zipcode type, yesno flags (IS_ACTIVE, IS_EMAIL_OPT_IN), tier type, dimension_group |
 | `product_dim_view.lkml` | yesno flags (IS_ACTIVE, IS_PRIVATE_LABEL, IS_SEASONAL), ROUND sql expression, tier type, two dimension_groups |
 | `store_dim_view.lkml` | Role-playing join target, yesno flags (IS_ACTIVE, HAS_CAFE, HAS_CURBSIDE), ROUND/NULLIF sql expression, tier type |
@@ -169,3 +184,5 @@ Upload `retail_analytics.model.lkml` plus any combination of view files:
 - `order_fact` — full star schema with 7 joins (includes role-playing store and date joins)
 - `customer_orders` — one_to_many join → tests physical join fallback
 - `monthly_revenue_summary` — derived table explore
+
+**To test filter:/parameter: conversion**, add `filter:` or `parameter:` fields to any view file. Date filters produce date-range controls; string filters with a matching dimension produce list controls; parameters with `allowed_values` produce single-select list controls.
