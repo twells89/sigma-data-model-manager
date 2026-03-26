@@ -39,6 +39,19 @@ For expressions the converter doesn't recognise, you can optionally provide an A
 | `median` | `Median([Col])` |
 | `list` | `ListAgg([Col])` |
 
+### Controls (filter: and parameter: Fields)
+LookML `filter:` and `parameter:` fields are converted into Sigma **data model controls** — interactive UI elements (date pickers, dropdowns) that are embedded in the model itself. Every workbook that uses the data model automatically inherits these controls, which is more powerful than the LookML equivalent.
+
+| LookML | Sigma Control |
+|---|---|
+| `filter: { type: date }` | Date range picker — reference in formulas as `[ControlId].start` and `[ControlId].end` |
+| `filter: { type: string }` | Dropdown list populated from the matching warehouse column |
+| `parameter: { allowed_values: [...] }` | Single-select dropdown with your predefined options |
+| `parameter: { type: date }` | Date range picker |
+| `parameter: { type: string }` (free-form) | Text input control |
+
+**Important note on free-form parameters:** If your LookML used `{% parameter %}` Liquid tags in `sql:` blocks to dynamically swap SQL based on a parameter value, that dynamic behavior is not converted. The control will be created, but you'll need to manually wire it to the relevant columns or formulas in Sigma after import.
+
 ### Joins & Relationships
 - **many_to_one / one_to_one** joins → Sigma **relationships** (lazy — the join only executes when a column from the related table is used in a workbook)
 - **one_to_many / many_to_many / full_outer** joins → Sigma **physical join element** (always joined in SQL)
@@ -59,11 +72,11 @@ For expressions the converter doesn't recognise, you can optionally provide an A
 
 **Complex `sql_on:` expressions** — only simple equality joins (`${a.key} = ${b.key}`) are parsed automatically. More complex join conditions are flagged and need to be reviewed manually.
 
+**Free-form parameters** — a text control is generated, but Liquid-driven dynamic SQL in `sql:` blocks is not converted. The control will appear in the model; the downstream formula wiring is manual.
+
 ---
 
 ## What Doesn't Convert
-
-These constructs are either skipped with an explanatory warning or are out of scope for the data model layer:
 
 | Construct | Why |
 |---|---|
@@ -71,22 +84,23 @@ These constructs are either skipped with an explanatory warning or are out of sc
 | `type: percent_of_total` | No direct equivalent in Sigma data model metrics. Use a ratio calculated column in a workbook. |
 | `extends:` / `refinements:` | Not processed — fields inherited from parent views are not included |
 | `access_filter:` / `always_filter:` | Not converted — Sigma handles row-level security via user attributes configured separately |
-| `filter:` / `parameter:` fields | Not converted — Sigma workbook controls serve a similar purpose but can't be defined in the data model |
 | `html:` / `link:` / `action:` | Not converted — Sigma handles these at the workbook layer |
 | `persist_with:` / `datagroup:` | Materialization is configured separately in Sigma |
 | Compound join keys | Only the first key pair per join is extracted |
+| Liquid `{% parameter %}` in `sql:` | The control is created but the dynamic SQL substitution is not converted |
 
 ---
 
 ## After Import — What to Check
 
 1. **Review the warnings panel** — every conversion decision that needs a human eye is listed there with an explanation
-2. **Boolean calculated columns** — check that `[Is Active] = 1` style columns reference the correct underlying warehouse column
-3. **Role-playing joins** — add any second or third alias joins manually in Sigma's ERD view
-4. **Filtered measures** — rebuild as `If()` calculated columns or filtered elements in Sigma
-5. **Tier dimensions** — the numeric expression came through; add any label/bucketing logic in a workbook calculated column
-6. **running_total / percent_of_total measures** — these were skipped; rebuild in workbooks using window functions or ratio columns
-7. **Publish the model** — the API saves to draft; go to the model in Sigma and click Publish to make it available to workbook authors
+2. **Controls** — check that date-range and list controls are wired to the right columns. Free-form parameter controls need their downstream formulas updated manually
+3. **Boolean calculated columns** — check that `[Is Active] = 1` style columns reference the correct underlying warehouse column
+4. **Role-playing joins** — add any second or third alias joins manually in Sigma's ERD view
+5. **Filtered measures** — rebuild as `If()` calculated columns or filtered elements in Sigma
+6. **Tier dimensions** — the numeric expression came through; add any label/bucketing logic in a workbook calculated column
+7. **running_total / percent_of_total measures** — these were skipped; rebuild in workbooks using window functions or ratio columns
+8. **Publish the model** — the API saves to draft; go to the model in Sigma and click Publish to make it available to workbook authors
 
 ---
 
@@ -96,3 +110,4 @@ These constructs are either skipped with an explanatory warning or are out of sc
 - **One explore at a time** — select the explore you want to convert from the dropdown before clicking Convert. Each explore becomes one data model
 - **Star schema explores work best** — the converter is optimised for many_to_one fact-to-dimension patterns. Highly nested or self-referential LookML may need more post-import cleanup
 - **Use the Load into Editor button** to inspect the JSON before saving — you can edit it directly before it hits the Sigma API
+- **filter: and parameter: fields** are picked up from all views in the explore — you don't need to do anything special, they'll appear as controls in the output automatically
