@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sigma Data Model Manager (Standalone)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
         
@@ -1837,12 +1838,24 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                     <!-- Left: dbt Input -->
                     <div class="dbt-pane">
                         <div class="dbt-pane-header">
-                            <span class="dbt-pane-title">dbt Semantic Model YAML</span>
-                            <div style="display: flex; gap: 8px; align-items: center;">
-                                <button class="btn btn-secondary btn-small" onclick="openDbtImportModal()" style="gap: 5px;">📥 Import from dbt</button>
-                                <button class="btn-example" onclick="loadDbtExample()">Load example</button>
-                            </div>
+                            <span class="dbt-pane-title">dbt Semantic Model</span>
+                            <button class="btn-example" onclick="loadDbtExample()">Load example</button>
                         </div>
+
+                        <!-- File drop zone — accepts .json (manifest) or .yml/.yaml -->
+                        <div id="dbtDropZone" class="lookml-drop-zone" style="margin-bottom: 0;"
+                             onclick="document.getElementById('dbtFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleDbtFileDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">🔄</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop dbt files here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">semantic_manifest.json · .yml semantic model files</div>
+                            <input type="file" id="dbtFileInput" accept=".json,.yml,.yaml" multiple style="display:none" onchange="handleDbtFileSelect(event)">
+                        </div>
+
+                        <!-- File list badges — shown after upload -->
+                        <div id="dbtFileList" style="display: flex; flex-direction: column; gap: 4px;"></div>
 
                         <div class="dbt-config-row">
                             <div class="form-group">
@@ -1861,27 +1874,19 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                             </div>
                         </div>
 
-                        <textarea id="dbtYamlInput" placeholder="Paste your dbt semantic model YAML here...
+                        <textarea id="dbtYamlInput" placeholder="Or paste your dbt semantic model YAML here...
 
 Example structure:
 semantic_models:
   - name: orders
     model: ref('stg_orders')
-    description: Order fact table
     entities:
       - name: order_id
         type: primary
     dimensions:
-      - name: order_date
-        type: time
-        type_params:
-          time_granularity: day
       - name: status
         type: categorical
     measures:
-      - name: order_count
-        agg: count
-        expr: order_id
       - name: revenue
         agg: sum
         expr: amount
@@ -1891,14 +1896,7 @@ metrics:
     type: simple
     type_params:
       measure:
-        name: revenue
-  - name: aov
-    type: ratio
-    type_params:
-      numerator:
-        name: revenue
-      denominator:
-        name: order_count"></textarea>
+        name: revenue"></textarea>
 
                         <div class="dbt-badge-row" id="dbtInputStats"></div>
 
@@ -7702,6 +7700,109 @@ relationships:
             return result;
         }
 
+        // ── dbt Inline File Drop Zone ─────────────────────────────────────
+        function handleDbtFileDrop(event) {
+            event.preventDefault();
+            document.getElementById('dbtDropZone').classList.remove('drag-over');
+            processDbtFiles(Array.from(event.dataTransfer.files));
+        }
+
+        function handleDbtFileSelect(event) {
+            processDbtFiles(Array.from(event.target.files));
+            event.target.value = '';
+        }
+
+        async function processDbtFiles(files) {
+            if (!files.length) return;
+            const allModels = [], allMetrics = [];
+            let errors = 0;
+            const loadedFiles = [];
+
+            for (const file of files) {
+                const name = file.name.toLowerCase();
+                try {
+                    const text = await file.text();
+                    if (name.endsWith('.json')) {
+                        // Treat as semantic_manifest.json or manifest.json
+                        const manifest = JSON.parse(text);
+                        let models = manifest.semantic_models || [];
+                        // If it's a full manifest.json (has nodes), extract semantic models
+                        if (!models.length && manifest.nodes) {
+                            models = Object.values(manifest.nodes).filter(n => n.resource_type === 'semantic_model');
+                        }
+                        if (!models.length) {
+                            showToast(`${file.name}: no semantic_models found`, 'warning');
+                            errors++;
+                            continue;
+                        }
+                        allModels.push(...models);
+                        if (manifest.metrics) {
+                            const metricsList = Array.isArray(manifest.metrics)
+                                ? manifest.metrics
+                                : Object.values(manifest.metrics);
+                            allMetrics.push(...metricsList);
+                        }
+                        // Auto-extract db/schema from node_relation
+                        for (const m of models) {
+                            if (m.node_relation) {
+                                if (m.node_relation.database && !document.getElementById('dbtDatabase').value)
+                                    document.getElementById('dbtDatabase').value = m.node_relation.database;
+                                if ((m.node_relation.schema_name || m.node_relation.schema) && !document.getElementById('dbtSchema').value)
+                                    document.getElementById('dbtSchema').value = m.node_relation.schema_name || m.node_relation.schema;
+                            }
+                        }
+                        loadedFiles.push({ name: file.name, type: 'JSON', count: models.length });
+                    } else if (name.endsWith('.yml') || name.endsWith('.yaml')) {
+                        const parsed = jsyaml.load(text);
+                        if (!parsed) { errors++; continue; }
+                        if (parsed.semantic_models) allModels.push(...parsed.semantic_models);
+                        else if (parsed.name && (parsed.entities || parsed.dimensions || parsed.measures)) allModels.push(parsed);
+                        if (parsed.metrics) allMetrics.push(...parsed.metrics);
+                        const count = parsed.semantic_models?.length || (parsed.entities ? 1 : 0);
+                        loadedFiles.push({ name: file.name, type: 'YAML', count });
+                    } else {
+                        showToast(`${file.name}: unsupported file type (use .json or .yml)`, 'warning');
+                        errors++;
+                    }
+                } catch (e) {
+                    showToast(`${file.name}: ${e.message}`, 'error');
+                    errors++;
+                }
+            }
+
+            if (!allModels.length) {
+                showToast('No valid semantic models found in the dropped files', 'error');
+                return;
+            }
+
+            // Render file badges
+            const fileList = document.getElementById('dbtFileList');
+            fileList.innerHTML = '';
+            loadedFiles.forEach(f => {
+                const badge = document.createElement('div');
+                badge.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-tertiary);border-radius:6px;font-size:12px;';
+                badge.innerHTML = `<span style="font-size:14px;">${f.type === 'JSON' ? '📄' : '📁'}</span>
+                    <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${f.name}">${f.name}</span>
+                    <span style="font-size:10px;color:var(--text-muted);flex-shrink:0;">${f.count} model${f.count !== 1 ? 's' : ''}</span>`;
+                fileList.appendChild(badge);
+            });
+
+            // Populate YAML textarea
+            try {
+                document.getElementById('dbtYamlInput').value = jsyaml.dump(
+                    { semantic_models: allModels, ...(allMetrics.length ? { metrics: allMetrics } : {}) },
+                    { indent: 2, lineWidth: -1, noRefs: true }
+                );
+            } catch (e) {
+                document.getElementById('dbtYamlInput').value = JSON.stringify({ semantic_models: allModels, metrics: allMetrics }, null, 2);
+            }
+
+            showToast(`Loaded ${allModels.length} model${allModels.length !== 1 ? 's' : ''} from ${loadedFiles.length} file${loadedFiles.length !== 1 ? 's' : ''}${errors ? ` (${errors} skipped)` : ''}`, 'success');
+
+            // Auto-run conversion
+            runDbtConversion();
+        }
+
         function runDbtConversion() {
             const yamlText = document.getElementById('dbtYamlInput').value.trim();
             const database = document.getElementById('dbtDatabase').value.trim();
@@ -8025,11 +8126,11 @@ metrics:
             } catch(e) {
                 const isCors = e.message.includes('Failed to fetch') || e.message.includes('NetworkError');
                 showToast(isCors
-                    ? 'CORS error — dbt Cloud may require a proxy or browser extension for direct API access'
+                    ? 'dbt Cloud API blocks browser requests (CORS). Use the file upload options below instead.'
                     : 'Connection failed: ' + e.message,
                     'error');
-                document.getElementById('dbtCloudConnectErr').textContent =
-                    isCors ? '⚠ Browser CORS restriction. Try running this tool from a server, or use the dbt Core / file upload option instead.' : '✗ ' + e.message;
+                document.getElementById('dbtCloudConnectErr').innerHTML =
+                    isCors ? '⚠ <strong>dbt Cloud blocks direct browser API calls</strong> (CORS restriction — this is a dbt limitation, not a bug).<br><br>✅ <strong>Use these alternatives instead:</strong><br>• <strong>dbt Core tab →</strong> Upload your <code>semantic_manifest.json</code> or <code>.yml</code> files<br>• <strong>Paste YAML</strong> directly into the input on the left<br>• <strong>MCP Server →</strong> <code>claude mcp add sigma-data-model --transport http https://sigma-data-model-mcp.onrender.com/mcp</code>' : '✗ ' + e.message;
                 document.getElementById('dbtCloudConnectErr').style.display = '';
                 btn.disabled = false;
                 btn.innerHTML = 'Connect to dbt Cloud';
@@ -9968,14 +10069,20 @@ ${cleanedSql}`;
         function loadTableauOutputToEditor() {
             const val = document.getElementById('tableauJsonOutput').value;
             if (!val) return;
-            try { const obj = JSON.parse(val); document.getElementById('jsonEditor').value = JSON.stringify(obj, null, 2); }
-            catch(e) { document.getElementById('jsonEditor').value = val; }
+            try {
+                const obj = JSON.parse(val);
+                editorMode = 'json';
+                _updateModeToggleUI();
+                setEditorContent(obj);
+            } catch(e) {
+                document.getElementById('jsonEditor').value = val;
+            }
             state.isNewModel = true; state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from Tableau (unsaved)';
             ['formatBtn','copyBtn','saveBtn'].forEach(id => document.getElementById(id).disabled = false);
             enableEditorModeToggle();
             switchEditorTab('json');
-            showToast('Loaded into editor', 'success');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
         }
 
         async function loadAndSaveTableauModel() {
@@ -10397,108 +10504,6 @@ view: date_dim {
     </div>
 
     <!-- dbt Import Modal -->
-    <div class="modal-overlay" id="dbtImportModal">
-        <div class="modal" style="max-width: 640px;">
-            <div class="modal-header">
-                <div class="modal-title">📥 Import from dbt</div>
-                <button class="modal-close" onclick="closeDbtImportModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-
-                <!-- Source Tabs -->
-                <div class="ai-mode-tabs" style="margin-bottom: 20px;">
-                    <button class="ai-mode-tab active" id="dbtImportTab_cloud" onclick="switchDbtImportTab('cloud')">☁️ dbt Cloud</button>
-                    <button class="ai-mode-tab" id="dbtImportTab_core" onclick="switchDbtImportTab('core')">🖥️ dbt Core</button>
-                </div>
-
-                <!-- ── dbt Cloud ── -->
-                <div id="dbtImportPane_cloud">
-                    <div class="form-group">
-                        <label class="form-label">dbt Cloud Host</label>
-                        <select class="form-input" id="dbtCloudHost">
-                            <option value="https://cloud.getdbt.com">cloud.getdbt.com (North America)</option>
-                            <option value="https://emea.dbt.com">emea.dbt.com (Europe)</option>
-                            <option value="https://au.dbt.com">au.dbt.com (Pacific)</option>
-                        </select>
-                    </div>
-                    <div class="form-row" style="margin-bottom: 14px;">
-                        <div class="form-group" style="margin-bottom:0;">
-                            <label class="form-label">Account ID</label>
-                            <input type="text" class="form-input" id="dbtAccountId" placeholder="12345">
-                            <div class="form-hint">Found in dbt Cloud URL: /accounts/{id}/</div>
-                        </div>
-                        <div class="form-group" style="margin-bottom:0;">
-                            <label class="form-label">Service Token</label>
-                            <input type="password" class="form-input" id="dbtServiceToken" placeholder="dbtst_…">
-                            <div class="form-hint">Account Settings → Service Tokens</div>
-                        </div>
-                    </div>
-
-                    <button class="btn btn-primary" id="dbtCloudConnectBtn" onclick="connectToDbtCloud()" style="width:100%; margin-bottom: 8px;">
-                        Connect to dbt Cloud
-                    </button>
-                    <div id="dbtCloudConnectErr" style="display:none; font-size: 12px; color: var(--warning); padding: 8px 0; line-height: 1.5;"></div>
-
-                    <!-- Post-connect: project + run selection -->
-                    <div id="dbtCloudProjectSection" style="display:none; margin-top: 12px; border-top: 1px solid var(--border); padding-top: 16px;">
-                        <div class="form-group">
-                            <label class="form-label">Project</label>
-                            <select class="form-input" id="dbtCloudProject" onchange="onDbtProjectChange()">
-                                <option value="">Select a project…</option>
-                            </select>
-                        </div>
-                        <button class="btn btn-secondary" id="dbtFetchModelsBtn" onclick="fetchDbtCloudModels()" style="width:100%; margin-bottom: 10px;" disabled>
-                            🔍 Fetch Semantic Models
-                        </button>
-                        <div id="dbtCloudRunInfo" style="display:none; margin-bottom: 10px;"></div>
-                        <div id="dbtCloudPreview" style="display:none;"></div>
-                    </div>
-                </div>
-
-                <!-- ── dbt Core ── -->
-                <div id="dbtImportPane_core" style="display:none;">
-                    <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.6;">
-                        Upload your dbt artifact files. Run <code style="background:var(--bg-tertiary); padding: 1px 6px; border-radius:4px; font-size: 12px;">dbt parse</code> or <code style="background:var(--bg-tertiary); padding: 1px 6px; border-radius:4px; font-size: 12px;">dbt compile</code> first to generate them.
-                    </p>
-
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
-                        <!-- Manifest upload -->
-                        <div onclick="document.getElementById('dbtManifestUpload').click()"
-                             class="dbt-upload-zone"
-                             >
-                            <div style="font-size: 26px; margin-bottom: 8px;">📄</div>
-                            <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px; font-family: 'JetBrains Mono', monospace;">semantic_manifest.json</div>
-                            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">target/ after dbt parse / compile</div>
-                            <div style="font-size: 11px; color: var(--accent);">Click to select file</div>
-                            <input type="file" id="dbtManifestUpload" accept=".json" style="display:none;" onchange="handleDbtManifestUpload(event)">
-                            <div id="dbtManifestStatus" style="font-size: 11px; color: var(--success); margin-top: 8px; min-height: 16px;"></div>
-                        </div>
-
-                        <!-- YAML upload -->
-                        <div onclick="document.getElementById('dbtYamlUpload').click()"
-                             class="dbt-upload-zone"
-                             >
-                            <div style="font-size: 26px; margin-bottom: 8px;">📁</div>
-                            <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">Semantic Model YAMLs</div>
-                            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">Select one or more .yml files</div>
-                            <div style="font-size: 11px; color: var(--accent);">Click to select files</div>
-                            <input type="file" id="dbtYamlUpload" accept=".yml,.yaml" multiple style="display:none;" onchange="handleDbtYamlUpload(event)">
-                            <div id="dbtYamlStatus" style="font-size: 11px; color: var(--success); margin-top: 8px; min-height: 16px;"></div>
-                        </div>
-                    </div>
-
-                    <div id="dbtCorePreview" style="display:none; margin-bottom: 4px;"></div>
-                </div>
-
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeDbtImportModal()">Cancel</button>
-                <button class="btn btn-primary" id="dbtImportConfirmBtn" onclick="importDbtModels()" disabled>
-                    📥 Import & Convert
-                </button>
-            </div>
-        </div>
-    </div>
     <!-- Save Location Modal (used by converters) -->
     <div class="modal-overlay" id="saveLocationModal">
         <div class="modal" style="max-width: 480px;">
