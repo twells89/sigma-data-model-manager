@@ -1815,6 +1815,7 @@
                     <div class="editor-tab" id="tabDbt" onclick="switchEditorTab('dbt')">🔄 dbt Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
                     <div class="editor-tab" id="tabSnow" onclick="switchEditorTab('snow')">❄️ Snowflake Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
                     <div class="editor-tab" id="tabLook" onclick="switchEditorTab('look')">🔍 LookML Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
+                    <div class="editor-tab" id="tabTableau" onclick="switchEditorTab('tableau')">📊 Tableau Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
                 </div>
                 <div class="json-editor" id="panelJson">
                     <div class="editor-wrap" id="editorWrap">
@@ -2160,6 +2161,110 @@ How it works:
                         </button>
                     </div>
                 </div>
+                </div><!-- /panelLook -->
+
+                <!-- ── Tableau Converter Panel ──────────────────────────────── -->
+                <div class="dbt-converter" id="panelTableau">
+
+                    <!-- Left: File Upload + Config -->
+                    <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Tableau Workbook</span>
+                            <button class="btn-example" onclick="loadTableauExample()">Load example</button>
+                        </div>
+
+                        <div id="tableauDropZone" class="lookml-drop-zone"
+                             onclick="document.getElementById('tableauFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleTableauDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">📊</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop .twb or .twbx file here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">.twbx = packaged workbook (zip) · .twb = XML workbook</div>
+                            <input type="file" id="tableauFileInput" accept=".twb,.twbx" style="display:none" onchange="handleTableauFileInput(event)">
+                        </div>
+
+                        <!-- Loaded file badge — shown after upload, styled like LookML file list -->
+                        <div id="tableauFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                        <!-- Data source selector — shown after upload -->
+                        <div id="tableauDatasourceSection" class="form-group" style="flex-shrink: 0; margin-bottom: 0; display: none;">
+                            <label style="font-size: 11px;">Data Source</label>
+                            <select id="tableauDatasourceSelect" class="form-input" style="font-size: 12px;" onchange="onTableauDatasourceChange()">
+                            </select>
+                            <div id="tableauDatasourceInfo" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Connection</label>
+                            <select id="tableauConnectionId" class="form-input" style="font-size: 12px;">
+                                <option value="">— Connect to Sigma to load —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="tableauDatabase" placeholder="auto-detected" style="font-size: 12px;">
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Schema override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="tableauSchema" placeholder="auto-detected" style="font-size: 12px;">
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Join Strategy</label>
+                            <select class="form-input" id="tableauJoinStrategy" style="font-size: 12px;">
+                                <option value="auto">Auto (many_to_one → relationships)</option>
+                                <option value="relationships">Force Relationships</option>
+                                <option value="joins">Force Physical Joins</option>
+                            </select>
+                            <div class="form-hint">Relationships are lazy (join on demand). Physical joins are eager (always joined).</div>
+                        </div>
+
+                        <div class="dbt-badge-row" id="tableauInputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" id="tableauConvertBtn" onclick="runTableauConversion()" disabled>
+                                📊 Convert to Sigma JSON
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Right: Output (warnings here, above textarea — same as LookML) -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copyTableauOutput()" id="tableauCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadTableauOutputToEditor()" id="tableauLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="tableauWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="tableauJsonOutput" readonly placeholder="Convert a Tableau data source to see the Sigma JSON here...
+
+How it works:
+• Drop a .twb or .twbx Tableau workbook file
+• Select which data source to convert
+• Joins → Sigma relationships (lazy) or physical joins
+• Calculated fields → metrics (aggregate) or calculated columns
+• Parameters → Sigma controls (date-range, list, text)
+• LOD expressions and table calcs are flagged for manual review"></textarea>
+
+                        <div class="dbt-badge-row" id="tableauOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="loadAndSaveTableauModel()" id="tableauSaveBtn" disabled>
+                                💾 Load & Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+                <!-- ── End Tableau Panel ────────────────────────────────────── -->
+
             </div>
             </div>
 
@@ -4117,11 +4222,36 @@ PRODUCT_NAME
             btn.disabled = true;
             btn.innerHTML = '<div class="spinner"></div><span>Saving...</span>';
 
-            // Helper: strip internal _ fields
+            // Helper: strip internal _ fields, fix control placement, strip comment-only metrics
             function cleanPages(pages) {
-                return JSON.parse(JSON.stringify(pages, (key, value) =>
+                const stripped = JSON.parse(JSON.stringify(pages, (key, value) =>
                     (typeof key === 'string' && key.startsWith('_')) ? undefined : value
                 ));
+                for (const page of (stripped || [])) {
+                    // Controls belong inside a table element's "elements" array, not at page level
+                    // Move any page-level controls into the first table element
+                    const pageControls = (page.elements || []).filter(el => el.kind === 'control');
+                    const tablEls = (page.elements || []).filter(el => el.kind !== 'control');
+                    if (pageControls.length > 0) {
+                        page.elements = tablEls;
+                        // Find the first table element to attach controls to
+                        const firstTable = page.elements[0];
+                        if (firstTable) {
+                            if (!firstTable.elements) firstTable.elements = [];
+                            firstTable.elements.push(...pageControls);
+                        }
+                    }
+                    // Strip metrics with comment-only formulas (LOD placeholders)
+                    for (const el of (page.elements || [])) {
+                        if (el.metrics) {
+                            el.metrics = el.metrics.filter(m => {
+                                const f = (m.formula || '').trim();
+                                return !(f.startsWith('/*') && f.endsWith('*/') && !f.replace(/\/\*[\s\S]*?\*\//g, '').trim());
+                            });
+                        }
+                    }
+                }
+                return stripped;
             }
 
             // Helper: does this spec have any relationships?
@@ -4411,7 +4541,7 @@ PRODUCT_NAME
         async function populateConverterConnections() {
             if (!state.accessToken) return;
             const connections = await fetchConnectionsList();
-            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId'];
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId'];
             targetIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (!sel) return;
@@ -5595,6 +5725,8 @@ CRITICAL RULES:
 - Only use column IDs that exist in the model context above.
 - ELEMENT TARGETING: The model may have MULTIPLE elements (tables). When adding columns, metrics, RLS, CLS, or filters, you MUST target the correct element — the one that contains the columns referenced in your formulas. Check which element has the relevant columns before generating. Use that element's "id" in your output. For example, if adding RLS based on [Region] and Region only exists on the Customers element, target the Customers element — NOT the first/default element.
 - When outputting JSON for multi-element models, wrap in pages structure: {"pages": [{"elements": [{"id": "CORRECT_ELEMENT_ID", ...}]}]}
+- METRICS RULE: Metrics MUST always go on the element that already has a "metrics" array. Check the existing tables context above — find which element has "metrics" and use that element's "id". NEVER put metrics on a dimension table.
+- When adding multiple metrics, put all of them in a single element object in a single pages wrapper — do NOT output one metric at a time or split across multiple code blocks.
 - FOLDERS AND ORDER: When adding folders, the folder ID must REPLACE the individual column IDs in the order array (not be appended). Columns inside a folder should NOT also appear at the top level of order. The order array should contain: [folderID, any-ungrouped-colIds...]. Do NOT put column IDs in both a folder.items and at the top level of order.`;
 
                 let response;
@@ -6040,13 +6172,30 @@ CRITICAL RULES:
 
                 // ── Element-fragment mode: auto-wrap bare columns/metrics/order into pages-insert ──
                 if (detectSuggestionType(suggestionObj) === 'element-fragment') {
-                    // Find the first table element to get its ID for targeting
+                    // Smart targeting: for metrics, prefer element that already has metrics.
+                    // Otherwise prefer element with most columns (fact table).
+                    // Never just blindly pick the first table (which is usually a dim after sorting).
                     let targetElId = null;
+                    const allTableEls = [];
                     for (const page of (currentJson.pages || [])) {
                         for (const el of (page.elements || [])) {
-                            if (el.kind === 'table') { targetElId = el.id; break; }
+                            if (el.kind === 'table') allTableEls.push(el);
                         }
-                        if (targetElId) break;
+                    }
+                    if (allTableEls.length > 0) {
+                        const hasMetrics = suggestionObj.metrics && suggestionObj.metrics.length > 0;
+                        if (hasMetrics) {
+                            // Prefer the element that already has metrics
+                            const withMetrics = allTableEls.find(e => e.metrics && e.metrics.length > 0);
+                            targetElId = (withMetrics || allTableEls.reduce((a, b) =>
+                                (a.columns||[]).length >= (b.columns||[]).length ? a : b
+                            )).id;
+                        } else {
+                            // For columns/filters, prefer element with most columns
+                            targetElId = allTableEls.reduce((a, b) =>
+                                (a.columns||[]).length >= (b.columns||[]).length ? a : b
+                            ).id;
+                        }
                     }
                     // Wrap into pages-insert structure
                     const wrappedEl = { id: targetElId || 'auto' };
@@ -6194,14 +6343,28 @@ CRITICAL RULES:
 
             for (const sugPage of (suggestion.pages || [])) {
                 for (const sugEl of (sugPage.elements || [])) {
-                    // Find matching element by id, or first table
+                    // Find matching element by id, or smart fallback
                     let targetEl = null;
+                    const allEls = [];
                     for (const page of (currentModel.pages || [])) {
                         for (const el of (page.elements || [])) {
                             if (el.id === sugEl.id) { targetEl = el; break; }
-                            if (!targetEl && el.kind === 'table') targetEl = el;
+                            if (el.kind === 'table') allEls.push(el);
                         }
-                        if (targetEl && targetEl.id === sugEl.id) break;
+                        if (targetEl) break;
+                    }
+                    // If no exact ID match, pick smartly: prefer element with metrics
+                    // when inserting metrics, otherwise pick the largest element (fact table)
+                    if (!targetEl && allEls.length > 0) {
+                        const hasNewMetrics = sugEl.metrics && sugEl.metrics.length > 0;
+                        if (hasNewMetrics) {
+                            const withMetrics = allEls.find(e => e.metrics && e.metrics.length > 0);
+                            targetEl = withMetrics || allEls.reduce((a, b) =>
+                                (a.columns||[]).length >= (b.columns||[]).length ? a : b);
+                        } else {
+                            targetEl = allEls.reduce((a, b) =>
+                                (a.columns||[]).length >= (b.columns||[]).length ? a : b);
+                        }
                     }
                     if (!targetEl) continue;
 
@@ -6711,8 +6874,8 @@ CRITICAL RULES:
 
         // ── Editor Tab Switching ────────────────────────────────────────────
         function switchEditorTab(tab) {
-            const tabs = { json: 'tabJson', dbt: 'tabDbt', snow: 'tabSnow', look: 'tabLook' };
-            const panels = { json: 'panelJson', dbt: 'panelDbt', snow: 'panelSnow', look: 'panelLook' };
+            const tabs = { json: 'tabJson', dbt: 'tabDbt', snow: 'tabSnow', look: 'tabLook', tableau: 'tabTableau' };
+            const panels = { json: 'panelJson', dbt: 'panelDbt', snow: 'panelSnow', look: 'panelLook', tableau: 'panelTableau' };
             Object.keys(tabs).forEach(k => {
                 document.getElementById(tabs[k]).classList.toggle('active', k === tab);
             });
@@ -6725,7 +6888,7 @@ CRITICAL RULES:
                 }
             });
             // Auto-populate connection dropdowns when opening a converter tab
-            if ((tab === 'dbt' || tab === 'snow' || tab === 'look') && state.accessToken) {
+            if ((tab === 'dbt' || tab === 'snow' || tab === 'look' || tab === 'tableau') && state.accessToken) {
                 populateConverterConnections();
             }
         }
@@ -9205,6 +9368,630 @@ ${cleanedSql}`;
             return elementResult.colIdMap[upper] || null;
         }
 
+
+        // ═══════════════════════════════════════════════════════════════════
+        // ── Tableau Converter ─────────────────────────────────────────────
+        // ═══════════════════════════════════════════════════════════════════
+
+        let _tableauParsed = null;
+
+        function handleTableauFileInput(event) {
+            const file = event.target.files[0];
+            if (file) processTableauFile(file);
+            event.target.value = '';
+        }
+
+        function handleTableauDrop(event) {
+            event.preventDefault();
+            document.getElementById('tableauDropZone').classList.remove('drag-over');
+            const file = event.dataTransfer.files[0];
+            if (file) processTableauFile(file);
+        }
+
+        async function processTableauFile(file) {
+            const name = file.name.toLowerCase();
+            let xmlText = '';
+            try {
+                if (name.endsWith('.twbx')) {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const zip = await JSZip.loadAsync(arrayBuffer);
+                    const twbFile = Object.values(zip.files).find(f => f.name.endsWith('.twb'));
+                    if (!twbFile) throw new Error('No .twb file found inside .twbx');
+                    xmlText = await twbFile.async('string');
+                } else if (name.endsWith('.twb')) {
+                    xmlText = await file.text();
+                } else {
+                    showToast('Upload a .twb or .twbx file', 'warning'); return;
+                }
+            } catch(e) {
+                showToast('Could not read file: ' + e.message, 'error'); return;
+            }
+            ingestTableauXml(xmlText, file.name);
+        }
+
+        function ingestTableauXml(xmlText, filename) {
+            let doc;
+            try { doc = new DOMParser().parseFromString(xmlText, 'text/xml'); }
+            catch(e) { showToast('XML parse error: ' + e.message, 'error'); return; }
+            if (doc.querySelector('parsererror')) { showToast('Malformed XML in workbook', 'error'); return; }
+
+            const allDs = Array.from(doc.querySelectorAll('workbook > datasources > datasource'));
+            const parameters = [];
+            const datasources = [];
+
+            for (const ds of allDs) {
+                if (ds.getAttribute('hasconnection') === 'false' || ds.getAttribute('name') === 'Parameters') {
+                    for (const col of ds.querySelectorAll(':scope > column')) {
+                        const colName = col.getAttribute('caption') || col.getAttribute('name') || '';
+                        const colType = col.getAttribute('datatype') || 'string';
+                        const domainType = col.getAttribute('param-domain-type') || 'all';
+                        const members = Array.from(col.querySelectorAll('member')).map(m => m.getAttribute('value')).filter(Boolean);
+                        const calcEl = col.querySelector('calculation');
+                        parameters.push({ name: colName.replace(/^\[|\]$/g,''), type: colType, domainType, members, defaultVal: calcEl ? calcEl.getAttribute('formula') : '' });
+                    }
+                    continue;
+                }
+                const name = ds.getAttribute('caption') || ds.getAttribute('name') || 'Unnamed';
+                const connection = ds.querySelector(':scope > connection');
+                const connClass = connection ? (connection.getAttribute('class') || '') : '';
+                const dbname = connection ? (connection.getAttribute('dbname') || connection.getAttribute('database') || '') : '';
+                const schema = connection ? (connection.getAttribute('schema') || '') : '';
+                datasources.push({ name, element: ds, connection, connClass, dbname, schema });
+            }
+
+            _tableauParsed = { datasources, parameters, filename };
+            document.getElementById('tableauFileList').innerHTML = '';
+            document.getElementById('tableauInputStats').innerHTML = '';
+
+            const sel = document.getElementById('tableauDatasourceSelect');
+            sel.innerHTML = datasources.map((ds, i) =>
+                `<option value="${i}">${escapeHtml(ds.name)}${ds.connClass ? ' (' + ds.connClass + ')' : ''}</option>`
+            ).join('');
+            document.getElementById('tableauDatasourceSection').style.display = datasources.length > 0 ? '' : 'none';
+            if (datasources.length > 0) onTableauDatasourceChange();
+
+            // Connection dropdown is populated by populateConverterConnections() on login
+
+            // Render file badge (like LookML file list)
+            const fileList = document.getElementById('tableauFileList');
+            fileList.innerHTML = '';
+            const badge = document.createElement('div');
+            badge.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-tertiary);border-radius:6px;font-size:12px;flex-shrink:0;';
+            const ext = filename.toLowerCase().endsWith('.twbx') ? 'TWBX' : 'TWB';
+            badge.innerHTML = `<span style="font-size:14px;">📊</span>
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${filename}">${filename}</span>
+                <span style="font-size:10px;color:var(--text-muted);flex-shrink:0;">${ext}</span>`;
+            fileList.appendChild(badge);
+
+            // Input stats badge row
+            const statsEl = document.getElementById('tableauInputStats');
+            statsEl.innerHTML = [
+                `<span class="dbt-stat-badge">${datasources.length} data source${datasources.length!==1?'s':''}</span>`,
+                parameters.length ? `<span class="dbt-stat-badge">${parameters.length} parameter${parameters.length!==1?'s':''}</span>` : ''
+            ].filter(Boolean).join('');
+
+            document.getElementById('tableauConvertBtn').disabled = datasources.length === 0;
+            showToast(`Loaded ${datasources.length} data source${datasources.length!==1?'s':''}`, 'success');
+        }
+
+        function onTableauDatasourceChange() {
+            if (!_tableauParsed) return;
+            const idx = parseInt(document.getElementById('tableauDatasourceSelect').value) || 0;
+            const ds = _tableauParsed.datasources[idx];
+            if (!ds) return;
+            const dbEl = document.getElementById('tableauDatabase');
+            const schEl = document.getElementById('tableauSchema');
+            if (ds.dbname && !dbEl.value) dbEl.value = ds.dbname;
+            if (ds.schema && !schEl.value) schEl.value = ds.schema;
+            const parts = [ds.connClass, ds.dbname, ds.schema].filter(Boolean);
+            const infoEl = document.getElementById('tableauDatasourceInfo');
+            if (parts.length) {
+                infoEl.textContent = parts.join(' · ');
+                infoEl.style.display = '';
+            } else {
+                infoEl.style.display = 'none';
+            }
+        }
+
+        // ── Tableau → Sigma formula conversion ───────────────────────────
+        const TABLEAU_FUNC_MAP = {
+            'AVG': 'Avg', 'MAX': 'Max', 'MIN': 'Min', 'MEDIAN': 'Median',
+            'SUM': 'Sum', 'ABS': 'Abs', 'CEILING': 'Ceiling', 'FLOOR': 'Floor',
+            'ROUND': 'Round', 'SQRT': 'Sqrt', 'POWER': 'Power',
+            'STR': 'Text', 'INT': 'Int', 'FLOAT': 'Number',
+            'LEN': 'Len', 'UPPER': 'Upper', 'LOWER': 'Lower',
+            'TRIM': 'Trim', 'LTRIM': 'Ltrim', 'RTRIM': 'Rtrim',
+            'LEFT': 'Left', 'RIGHT': 'Right', 'MID': 'Mid',
+            'REPLACE': 'Replace', 'CONTAINS': 'Contains',
+            'STARTSWITH': 'StartsWith', 'ENDSWITH': 'EndsWith', 'FIND': 'Find',
+            'TODAY': 'Today', 'NOW': 'Now',
+            'YEAR': 'Year', 'MONTH': 'Month', 'DAY': 'Day',
+            'HOUR': 'Hour', 'MINUTE': 'Minute', 'SECOND': 'Second',
+            'WEEK': 'Week', 'QUARTER': 'Quarter',
+            'DATE': 'Date', 'DATETIME': 'Datetime',
+        };
+
+        function tableauFormulaToSigma(formula, warnings) {
+            if (!formula || !formula.trim()) return '';
+            let f = formula.trim();
+
+            // LOD expressions
+            if (/^\s*\{/.test(f)) {
+                if (warnings) warnings.push('⚠ LOD expression not converted: ' + f.slice(0,60));
+                return '/* LOD: ' + f.replace(/\/\*/g,'').replace(/\*\//g,'') + ' */';
+            }
+            // Table calcs
+            if (/^(WINDOW_|RUNNING_|FIRST\(|LAST\(|INDEX\(|RANK\b|RANK_|LOOKUP\(|PREVIOUS_VALUE\()/i.test(f)) {
+                if (warnings) warnings.push('⚠ Table calculation not converted: ' + f.slice(0,60));
+                return '/* table calc: ' + f.replace(/\/\*/g,'').replace(/\*\//g,'') + ' */';
+            }
+
+            // ZN([x]) → Coalesce([x], 0)
+            f = f.replace(/\bZN\s*\(([^)]+)\)/gi, 'Coalesce($1, 0)');
+            // IFNULL/IFERROR → Coalesce
+            f = f.replace(/\bIFNULL\s*\(/gi, 'Coalesce(').replace(/\bIFERROR\s*\(/gi, 'Coalesce(');
+            // ISNULL
+            f = f.replace(/\bISNULL\s*\(/gi, 'IsNull(');
+            // COUNT([x]) → CountIf(IsNotNull([x]))
+            f = f.replace(/\bCOUNT\s*\(([^)]+)\)/gi, function(m, arg) { return 'CountIf(IsNotNull(' + arg.trim() + '))'; });
+            // COUNTD
+            f = f.replace(/\bCOUNTD\s*\(/gi, 'CountDistinct(');
+            // ATTR([x]) → just [x]
+            f = f.replace(/\bATTR\s*\(([^)]+)\)/gi, '$1');
+
+            // IF...THEN...ELSE...END
+            f = tableauIfToSigma(f);
+            // IIF
+            f = f.replace(/\bIIF\s*\(/gi, 'If(');
+            // CASE...END
+            f = tableauCaseToSigma(f);
+
+            // DATEPART('year', [Date]) → Year([Date])
+            f = f.replace(/\bDATEPART\s*\(\s*'(\w+)'\s*,\s*([^)]+)\)/gi, function(m, part, dateArg) {
+                const partMap = { year:'Year', month:'Month', day:'Day', hour:'Hour', minute:'Minute', second:'Second', week:'Week', quarter:'Quarter', dayofweek:'DayOfWeek', weekday:'DayOfWeek' };
+                const fn = partMap[part.toLowerCase()];
+                return fn ? fn + '(' + dateArg.trim() + ')' : m;
+            });
+            // DATETRUNC/DATEADD/DATEDIFF single-quote → double-quote
+            f = f.replace(/\bDATETRUNC\s*\(\s*'([^']+)'\s*,/gi, 'DateTrunc("$1",');
+            f = f.replace(/\bDATEADD\s*\(\s*'([^']+)'\s*,/gi, 'DateAdd("$1",');
+            f = f.replace(/\bDATEDIFF\s*\(\s*'([^']+)'\s*,/gi, 'DateDiff("$1",');
+
+            // Map remaining functions
+            for (const [tab, sig] of Object.entries(TABLEAU_FUNC_MAP)) {
+                f = f.replace(new RegExp('\\b' + tab + '\\s*\\(', 'gi'), sig + '(');
+            }
+
+            // Single-quote strings → double-quote (skip already-converted)
+            f = f.replace(/'([^']*)'/g, '"$1"');
+            // NOT/AND/OR
+            f = f.replace(/\bNOT\b/g, 'Not').replace(/\bAND\b/g, 'and').replace(/\bOR\b/g, 'or');
+            // Booleans and null
+            f = f.replace(/\bTRUE\b/gi, 'True').replace(/\bFALSE\b/gi, 'False').replace(/\bNULL\b/gi, 'null');
+
+            // Convert physical column name references to display names
+            // e.g. [GROSS_REVENUE] → [Gross Revenue], [ORDER_CHANNEL] → [Order Channel]
+            // Only convert ALL_CAPS_UNDERSCORE style references (physical names)
+            f = f.replace(/\[([A-Z][A-Z0-9_]{2,})\]/g, function(match, colName) {
+                // Skip if it looks like a Sigma built-in or already a display name
+                if (colName === colName.toLowerCase() || colName.includes(' ')) return match;
+                return '[' + sigmaDisplayName(colName) + ']';
+            });
+
+            return f.trim();
+        }
+
+        function tableauIfToSigma(f) {
+            return f.replace(/\bIF\b([\s\S]+?)\bEND\b/gi, function(match) {
+                let inner = match.replace(/^\s*IF\s*/i, '').replace(/\s*END\s*$/i, '');
+                const elseIdx = inner.search(/\bELSE\b(?!\s*IF\b)/i);
+                let elseVal = 'null';
+                if (elseIdx >= 0) {
+                    elseVal = tableauFormulaToSigma(inner.slice(elseIdx).replace(/^\s*ELSE\s*/i,'').trim(), null);
+                    inner = inner.slice(0, elseIdx);
+                }
+                const parts = inner.split(/\bELSEIF\b/i);
+                let result = elseVal;
+                for (let i = parts.length - 1; i >= 0; i--) {
+                    const thenParts = parts[i].split(/\bTHEN\b/i);
+                    if (thenParts.length < 2) continue;
+                    const cond = tableauFormulaToSigma(thenParts[0].trim(), null);
+                    const val  = tableauFormulaToSigma(thenParts[1].trim(), null);
+                    result = 'If(' + cond + ', ' + val + ', ' + result + ')';
+                }
+                return result;
+            });
+        }
+
+        function tableauCaseToSigma(f) {
+            return f.replace(/\bCASE\b([\s\S]+?)\bEND\b/gi, function(match, body) {
+                const elseIdx = body.search(/\bELSE\b/i);
+                let elseVal = 'null';
+                let whenBody = body;
+                if (elseIdx >= 0) {
+                    elseVal = tableauFormulaToSigma(body.slice(elseIdx).replace(/^\s*ELSE\s*/i,'').trim(), null);
+                    whenBody = body.slice(0, elseIdx);
+                }
+                const fieldMatch = whenBody.match(/^([\s\S]*?)\bWHEN\b/i);
+                const field = fieldMatch ? tableauFormulaToSigma(fieldMatch[1].trim(), null) : '[?]';
+                const pairs = whenBody.replace(/^[\s\S]*?\bWHEN\b/i,'').split(/\bWHEN\b/i).filter(Boolean);
+                let result = elseVal;
+                for (let i = pairs.length - 1; i >= 0; i--) {
+                    const thenParts = pairs[i].split(/\bTHEN\b/i);
+                    if (thenParts.length < 2) continue;
+                    result = 'If(' + field + ' = ' + tableauFormulaToSigma(thenParts[0].trim(), null) + ', ' + tableauFormulaToSigma(thenParts[1].trim(), null) + ', ' + result + ')';
+                }
+                return result;
+            });
+        }
+
+        function tableauIsAggregate(formula) {
+            return /\b(SUM|AVG|COUNT|COUNTD|MAX|MIN|MEDIAN|STDEV|VAR|ATTR)\s*\(/i.test(formula);
+        }
+
+        function tableauExtractPath(rel, dbOverride, schOverride) {
+            const tableAttr = rel.getAttribute('table') || rel.getAttribute('name') || '';
+            const clean = tableAttr.replace(/\[([^\]]+)\]/g, '$1');
+            const parts = clean.split('.').map(p => p.replace(/"/g,'').toUpperCase().trim()).filter(Boolean);
+            const tableName = parts[parts.length - 1];
+            const schema = schOverride || (parts.length >= 2 ? parts[parts.length - 2] : '');
+            const db = dbOverride || (parts.length >= 3 ? parts[0] : '');
+            return [db, schema, tableName].filter(Boolean);
+        }
+
+        // ── Build elements from Tableau relation tree ─────────────────────
+        function tableauBuildElements(rootRel, connection, connectionId, dbOverride, schOverride, strategy, elements, warnings) {
+            const relType = rootRel.getAttribute('type') || 'table';
+
+            if (relType === 'text') {
+                // Custom SQL
+                const sql = rootRel.textContent.trim();
+                elements.push({ id: sigmaShortId(), kind: 'table',
+                    source: { connectionId, kind: 'custom-sql', sql },
+                    columns: [], metrics: [], order: [] });
+                warnings.push('ℹ Custom SQL data source — SQL extracted as-is');
+                return;
+            }
+
+            if (relType === 'table') {
+                const path = tableauExtractPath(rootRel, dbOverride, schOverride);
+                const tableName = path[path.length - 1] || '';
+                const columns = [], order = [];
+                for (const col of rootRel.querySelectorAll(':scope > columns > column')) {
+                    const key = (col.getAttribute('name') || '').toUpperCase();
+                    if (!key) continue;
+                    const id = sigmaInodeId(key);
+                    columns.push({ id, formula: '[' + tableName + '/' + sigmaDisplayName(key) + ']' });
+                    order.push(id);
+                }
+                elements.push({ id: sigmaShortId(), kind: 'table',
+                    source: { connectionId, kind: 'warehouse-table', path },
+                    columns, metrics: [], order });
+                return;
+            }
+
+            if (relType === 'join') {
+                // Flatten join tree
+                const tables = [];
+                tableauCollectTables(rootRel, tables);
+                if (tables.length === 0) { warnings.push('⚠ Could not parse join structure'); return; }
+
+                // Build one element per physical table
+                const elementMap = {};  // tableName → { element, colIdMap }
+                for (const t of tables) {
+                    const path = tableauExtractPath(t.rel, dbOverride, schOverride);
+                    const tableName = path[path.length - 1] || t.rel.getAttribute('name') || '';
+                    if (elementMap[tableName]) continue;  // dedup
+                    const columns = [], order = [];
+                    for (const col of t.rel.querySelectorAll(':scope > columns > column')) {
+                        const key = (col.getAttribute('name') || '').toUpperCase();
+                        if (!key) continue;
+                        const id = sigmaInodeId(key);
+                        columns.push({ id, formula: '[' + tableName + '/' + sigmaDisplayName(key) + ']' });
+                        order.push(id);
+                    }
+                    const elemId = sigmaShortId();
+                    const el = { id: elemId, kind: 'table',
+                        source: { connectionId, kind: 'warehouse-table', path },
+                        columns, metrics: [], order };
+                    elementMap[tableName] = { element: el, colIdMap: {} };
+                    (columns).forEach(c => {
+                        const m = c.formula.match(/\/([^\]]+)\]$/);
+                        if (m) {
+                            const displayKey = m[1].toUpperCase();        // "CUSTOMER KEY"
+                            const physKey    = displayKey.replace(/\s+/g, '_'); // "CUSTOMER_KEY"
+                            elementMap[tableName].colIdMap[displayKey] = c.id;
+                            elementMap[tableName].colIdMap[physKey]    = c.id;
+                        }
+                    });
+                    elements.push(el);
+                }
+
+                // Wire relationships from join keys
+                const primaryTableName = tableauExtractPath(tables[0].rel, dbOverride, schOverride).pop();
+                const primaryEntry = elementMap[primaryTableName];
+
+                for (let i = 1; i < tables.length; i++) {
+                    const t = tables[i];
+                    if (!t.leftKey || !t.rightKey) continue;
+                    const leftKey  = t.leftKey.replace(/^\[|\]$/g,'').split(/[\.\]]\[?/).pop().replace(/\]$/,'').toUpperCase();
+                    const rightKey = t.rightKey.replace(/^\[|\]$/g,'').split(/[\.\]]\[?/).pop().replace(/\]$/,'').toUpperCase();
+                    const tgtName  = tableauExtractPath(t.rel, dbOverride, schOverride).pop();
+                    const tgtEntry = elementMap[tgtName];
+                    if (!primaryEntry || !tgtEntry) continue;
+
+                    // Ensure join key columns exist (check by ID to prevent duplicates)
+                    let srcColId = primaryEntry.colIdMap[leftKey];
+                    if (!srcColId) {
+                        srcColId = sigmaInodeId(leftKey);
+                        if (!primaryEntry.element.columns.find(c => c.id === srcColId)) {
+                            primaryEntry.element.columns.push({ id: srcColId, formula: '[' + primaryTableName + '/' + sigmaDisplayName(leftKey) + ']' });
+                            primaryEntry.element.order.push(srcColId);
+                        }
+                        primaryEntry.colIdMap[leftKey] = srcColId;
+                    }
+                    let tgtColId = tgtEntry.colIdMap[rightKey];
+                    if (!tgtColId) {
+                        tgtColId = sigmaInodeId(rightKey);
+                        if (!tgtEntry.element.columns.find(c => c.id === tgtColId)) {
+                            tgtEntry.element.columns.push({ id: tgtColId, formula: '[' + tgtName + '/' + sigmaDisplayName(rightKey) + ']' });
+                            tgtEntry.element.order.push(tgtColId);
+                        }
+                        tgtEntry.colIdMap[rightKey] = tgtColId;
+                    }
+
+                    if (strategy !== 'joins') {
+                        if (!primaryEntry.element.relationships) primaryEntry.element.relationships = [];
+                        primaryEntry.element.relationships.push({
+                            id: sigmaShortId(),
+                            targetElementId: tgtEntry.element.id,
+                            keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
+                            name: tgtName
+                        });
+                    }
+                    warnings.push('ℹ Join ' + primaryTableName + ' → ' + tgtName + ' (' + (t.joinType || 'left') + ') on ' + leftKey + ' = ' + rightKey);
+                }
+
+                // Sort: dims first, fact last
+                elements.sort((a, b) => {
+                    const aR = !!(a.relationships && a.relationships.length);
+                    const bR = !!(b.relationships && b.relationships.length);
+                    return aR === bR ? 0 : aR ? 1 : -1;
+                });
+            }
+        }
+
+        function tableauCollectTables(rel, tables) {
+            const type = rel.getAttribute('type') || 'table';
+            if (type === 'table') {
+                tables.push({ rel, leftKey: '', rightKey: '', joinType: '' });
+                return;
+            }
+            if (type === 'join') {
+                const joinType = rel.getAttribute('join') || 'left';
+
+                // Extract join keys from this level's clause
+                let leftKey = '', rightKey = '';
+                const clause = rel.querySelector(':scope > clause');
+                if (clause) {
+                    const exprs = clause.querySelectorAll('expression > expression');
+                    if (exprs.length >= 2) {
+                        leftKey  = exprs[0].getAttribute('op') || '';
+                        rightKey = exprs[1].getAttribute('op') || '';
+                    }
+                }
+
+                // In Tableau join trees: LEFT child = already-joined side (recurse into it),
+                // RIGHT child = the new table being added at this level.
+                // We must specifically attach join keys to the RIGHT child only.
+                const childRels = Array.from(rel.children).filter(c =>
+                    c.tagName.toLowerCase() === 'relation'
+                );
+
+                if (childRels.length === 2) {
+                    const leftChild  = childRels[0];  // already-built side
+                    const rightChild = childRels[1];  // new table being joined in
+
+                    // Recurse into the left side (adds the primary table + any prior joins)
+                    tableauCollectTables(leftChild, tables);
+
+                    // The right child should be a leaf table — collect it and tag with keys
+                    const beforeRight = tables.length;
+                    tableauCollectTables(rightChild, tables);
+                    // Apply this level's join keys to every table added by the right child
+                    // (normally just one, but handle nested right joins defensively)
+                    for (let i = beforeRight; i < tables.length; i++) {
+                        if (!tables[i].leftKey) {
+                            tables[i].joinType = joinType;
+                            tables[i].leftKey  = leftKey;
+                            tables[i].rightKey = rightKey;
+                        }
+                    }
+                } else {
+                    // Fallback: single child or unexpected structure
+                    for (const child of childRels) {
+                        tableauCollectTables(child, tables);
+                    }
+                }
+            }
+        }
+
+        // ── Main conversion function ──────────────────────────────────────
+        function runTableauConversion() {
+            if (!_tableauParsed || _tableauParsed.datasources.length === 0) {
+                showToast('Upload a .twb or .twbx file first', 'warning'); return;
+            }
+            const btn = document.getElementById('tableauConvertBtn');
+            btn.disabled = true; btn.textContent = '⏳ Converting…';
+
+            try {
+                const idx = parseInt(document.getElementById('tableauDatasourceSelect').value) || 0;
+                const ds  = _tableauParsed.datasources[idx];
+                const connectionId = document.getElementById('tableauConnectionId').value.trim() || '<CONNECTION_ID>';
+                const dbOverride   = document.getElementById('tableauDatabase').value.trim().toUpperCase();
+                const schOverride  = document.getElementById('tableauSchema').value.trim().toUpperCase();
+                const strategy     = document.getElementById('tableauJoinStrategy').value;
+                const warnings = [], elements = [];
+
+                const connection   = ds.connection;
+                const rootRelation = connection ? connection.querySelector(':scope > relation') : null;
+
+                if (!rootRelation) {
+                    warnings.push('⚠ No relation found — cannot determine table structure');
+                } else {
+                    tableauBuildElements(rootRelation, connection, connectionId, dbOverride, schOverride, strategy, elements, warnings);
+                }
+
+                // Add calculated fields to the fact element (the one with most columns,
+                // or the one with relationships — determined before the sort).
+                // Build a combined colIdMap across ALL elements for formula reference checking.
+                const allColIdMap = {};
+                elements.forEach(el => {
+                    (el.columns || []).forEach(c => {
+                        const m = c.formula.match(/\/([^\]]+)\]$/);
+                        if (m) allColIdMap[m[1].toUpperCase()] = { colId: c.id, el };
+                    });
+                });
+
+                // Target element for calcs: prefer the element with relationships (fact),
+                // fall back to the largest element (most columns)
+                const factEl = elements.find(e => e.relationships && e.relationships.length > 0)
+                    || elements.reduce((best, e) =>
+                        (e.columns||[]).length > (best.columns||[]).length ? e : best
+                    , elements[0]);
+
+                if (factEl) {
+                    const factColIdMap = {};
+                    (factEl.columns || []).forEach(c => {
+                        const m = c.formula.match(/\/([^\]]+)\]$/);
+                        if (m) factColIdMap[m[1].toUpperCase()] = c.id;
+                    });
+
+                    for (const col of ds.element.querySelectorAll(':scope > column')) {
+                        const rawName  = col.getAttribute('name') || '';
+                        const caption  = col.getAttribute('caption') || rawName.replace(/^\[|\]$/g,'');
+                        const hidden   = col.getAttribute('hidden') === 'true';
+                        const calcEl   = col.querySelector('calculation');
+                        const formula  = calcEl ? (calcEl.getAttribute('formula') || '') : '';
+                        const fieldKey = rawName.replace(/^\[|\]$/g,'');
+
+                        if (hidden || !fieldKey || fieldKey.startsWith('Number of Records')) continue;
+
+                        if (formula) {
+                            const sigmaFormula = tableauFormulaToSigma(formula, warnings);
+                            if (!sigmaFormula) continue;
+                            if (tableauIsAggregate(formula)) {
+                                if (!factEl.metrics) factEl.metrics = [];
+                                // Skip comment-only formulas (LOD placeholders) — API rejects them
+                                const isCommentOnly = sigmaFormula.trim().startsWith('/*') && sigmaFormula.trim().endsWith('*/');
+                                if (!isCommentOnly) {
+                                    factEl.metrics.push({ id: sigmaShortId(), formula: sigmaFormula, name: caption });
+                                } else {
+                                    warnings.push('⛔ "' + caption + '" skipped — LOD expressions cannot be saved as metrics. Add manually in Sigma workbook.');
+                                }
+                            } else {
+                                // Only add if not already present
+                                if (!factColIdMap[fieldKey.toUpperCase()]) {
+                                    const id = sigmaShortId();
+                                    factColIdMap[fieldKey.toUpperCase()] = id;
+                                    factEl.columns.push({ id, formula: sigmaFormula, name: caption });
+                                    factEl.order.push(id);
+                                    warnings.push('ℹ "' + caption + '" → calculated column. Review: ' + sigmaFormula.slice(0,60));
+                                }
+                            }
+                        } else if (caption !== fieldKey) {
+                            // Rename: find and update in any element
+                            const found = allColIdMap[fieldKey.toUpperCase()];
+                            if (found) {
+                                const existingCol = found.el.columns.find(c => c.id === found.colId);
+                                if (existingCol && !existingCol.name) existingCol.name = caption;
+                            }
+                        }
+                    }
+                }
+
+                // Parameters → controls
+                const controls = [];
+                for (const p of _tableauParsed.parameters) {
+                    const controlId = sigmaDisplayName(p.name).replace(/\s+/g,'-');
+                    if (p.domainType === 'list' && p.members.length > 0) {
+                        controls.push({ kind:'control', controlId, id: sigmaShortId()+'con',
+                            controlType:'list', mode:'include', selectionMode:'single', values:[],
+                            source: { kind:'manual', valueType:'text', values: p.members } });
+                        warnings.push('ℹ Parameter "' + p.name + '" → list control (' + p.members.length + ' values)');
+                    } else if (p.type === 'date' || p.type === 'datetime') {
+                        controls.push({ kind:'control', controlId, id: sigmaShortId()+'con',
+                            controlType:'date-range', mode:'between', includeNulls:'when-no-value-is-selected' });
+                        warnings.push('ℹ Parameter "' + p.name + '" → date-range control');
+                    } else {
+                        controls.push({ kind:'control', controlId, id: sigmaShortId()+'con',
+                            controlType:'text', mode:'include', values:[] });
+                        warnings.push('ℹ Parameter "' + p.name + '" → text control');
+                    }
+                }
+
+                const outputJson = {
+                    name: ds.name,
+                    pages: [{ id: sigmaShortId(), name: 'Page 1', elements: [...controls, ...elements] }]
+                };
+
+                document.getElementById('tableauJsonOutput').value = JSON.stringify(outputJson, null, 2);
+
+                const warnBox = document.getElementById('tableauWarningBox');
+                if (warnings.length) { warnBox.style.display=''; warnBox.innerHTML = warnings.map(w=>'<div>'+w+'</div>').join(''); }
+                else { warnBox.style.display='none'; }
+
+                const ec = elements.length, cc = controls.length, wc = warnings.length;
+                document.getElementById('tableauOutputStats').innerHTML = [
+                    '<span class="dbt-stat-badge">' + ec + ' element' + (ec!==1?'s':'') + '</span>',
+                    cc ? '<span class="dbt-stat-badge" style="color:var(--accent);">' + cc + ' control' + (cc!==1?'s':'') + '</span>' : '',
+                    wc ? '<span class="dbt-stat-badge" style="color:var(--warning);">' + wc + ' warning' + (wc!==1?'s':'') + '</span>' : ''
+                ].filter(Boolean).join('');
+
+                ['tableauCopyBtn','tableauLoadBtn','tableauSaveBtn'].forEach(id => document.getElementById(id).disabled = false);
+                showToast('Converted "' + ds.name + '" → ' + ec + ' element' + (ec!==1?'s':''), 'success');
+
+            } catch(e) {
+                showToast('Conversion error: ' + e.message, 'error');
+                if (_isDevMode()) console.error(e);
+            } finally {
+                btn.disabled = false; btn.textContent = '📊 Convert to Sigma JSON';
+            }
+        }
+
+        function copyTableauOutput() {
+            const val = document.getElementById('tableauJsonOutput').value;
+            if (!val) return;
+            navigator.clipboard.writeText(val).then(() => showToast('Copied', 'success'));
+        }
+
+        function loadTableauOutputToEditor() {
+            const val = document.getElementById('tableauJsonOutput').value;
+            if (!val) return;
+            try { const obj = JSON.parse(val); document.getElementById('jsonEditor').value = JSON.stringify(obj, null, 2); }
+            catch(e) { document.getElementById('jsonEditor').value = val; }
+            state.isNewModel = true; state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from Tableau (unsaved)';
+            ['formatBtn','copyBtn','saveBtn'].forEach(id => document.getElementById(id).disabled = false);
+            enableEditorModeToggle();
+            switchEditorTab('json');
+            showToast('Loaded into editor', 'success');
+        }
+
+        async function loadAndSaveTableauModel() {
+            const rawVal = document.getElementById('tableauJsonOutput').value;
+            if (!rawVal) { showToast('Convert a data source first', 'warning'); return; }
+            loadTableauOutputToEditor();
+            if (!state.accessToken) { showToast('Loaded into editor. Connect to Sigma, then click Save to Sigma.', 'warning'); return; }
+            openSaveLocationModal();
+        }
+
+        function loadTableauExample() {
+            const xml = `<?xml version='1.0' encoding='utf-8' ?><workbook version='18.1' xmlns:user='http://www.tableausoftware.com/xml/user'><datasources><datasource hasconnection='false' inline='true' name='Parameters' version='18.1'><column caption='Region Filter' datatype='string' name='[Region Filter]' param-domain-type='list' role='dimension' type='nominal'><calculation class='tableau' formula='&quot;East&quot;' /><members><member value='East' /><member value='West' /><member value='Central' /><member value='South' /></members></column><column caption='Date Range Start' datatype='date' name='[Date Range Start]' param-domain-type='all' role='measure' type='quantitative'><calculation class='tableau' formula='#2025-01-01#' /></column></datasource><datasource caption='Order Analysis' inline='true' name='federated.abc123' version='18.1'><connection class='snowflake' dbname='CSA' schema='TJ' server='xy12345.snowflakecomputing.com'><relation join='left' type='join'><clause type='join'><expression op='='><expression op='[Order Fact].[CUSTOMER_KEY]' /><expression op='[Customer Dim].[CUSTOMER_KEY]' /></expression></clause><relation name='Order Fact' table='[TJ].[ORDER_FACT]' type='table'><columns header='yes' outcome='6'><column datatype='integer' name='ORDER_ID' ordinal='0' /><column datatype='integer' name='CUSTOMER_KEY' ordinal='1' /><column datatype='real' name='GROSS_REVENUE' ordinal='2' /><column datatype='real' name='NET_REVENUE' ordinal='3' /><column datatype='real' name='GROSS_PROFIT' ordinal='4' /><column datatype='date' name='ORDER_DATE_KEY' ordinal='5' /></columns></relation><relation name='Customer Dim' table='[TJ].[CUSTOMER_DIM]' type='table'><columns header='yes' outcome='4'><column datatype='integer' name='CUSTOMER_KEY' ordinal='0' /><column datatype='string' name='CUSTOMER_SEGMENT' ordinal='1' /><column datatype='string' name='REGION' ordinal='2' /><column datatype='string' name='LOYALTY_TIER' ordinal='3' /></columns></relation></relation></connection><column caption='Gross Margin %' datatype='real' name='[Gross Margin Pct]' role='measure' type='quantitative'><calculation class='tableau' formula='SUM([GROSS_PROFIT]) / SUM([GROSS_REVENUE])' /></column><column caption='Revenue Band' datatype='string' name='[Revenue Band]' role='dimension' type='nominal'><calculation class='tableau' formula='IF [GROSS_REVENUE] &gt; 1000 THEN &apos;High&apos; ELSEIF [GROSS_REVENUE] &gt; 500 THEN &apos;Mid&apos; ELSE &apos;Low&apos; END' /></column><column caption='Days Since Order' datatype='integer' name='[Days Since Order]' role='measure' type='quantitative'><calculation class='tableau' formula='DATEDIFF(&apos;day&apos;, [ORDER_DATE_KEY], TODAY())' /></column></datasource></datasources></workbook>`;
+            ingestTableauXml(xml, 'example_workbook.twb');
+        }
+
+
         // ── Output helpers ────────────────────────────────────────────────────
         function copyLookOutput() {
             const val = document.getElementById('lookJsonOutput').value;
@@ -9269,14 +10056,27 @@ ${cleanedSql}`;
                 // ── Step 1: POST without relationships ────────────────────────
                 updateStatus('loading', 'Creating model (step 1/2)…');
 
-                // Deep-clone pages, strip relationships from all elements
-                const pagesNoRels = JSON.parse(JSON.stringify(fullSpec.pages)).map(page => ({
-                    ...page,
-                    elements: (page.elements || []).map(el => {
+                // Deep-clone pages, strip relationships + comment-only metrics
+                // Also move page-level controls into the first table's elements array
+                const pagesNoRels = JSON.parse(JSON.stringify(fullSpec.pages)).map(page => {
+                    const pageControls = (page.elements || []).filter(el => el.kind === 'control');
+                    const tableEls = (page.elements || []).filter(el => el.kind !== 'control');
+                    const mappedEls = tableEls.map(el => {
                         const { relationships, ...rest } = el;
+                        if (rest.metrics) {
+                            rest.metrics = rest.metrics.filter(m => {
+                                const f = (m.formula || '').trim();
+                                return !(f.startsWith('/*') && f.endsWith('*/') && !f.replace(/\/\*[\s\S]*?\*\//g, '').trim());
+                            });
+                        }
                         return rest;
-                    })
-                }));
+                    });
+                    if (pageControls.length > 0 && mappedEls.length > 0) {
+                        if (!mappedEls[0].elements) mappedEls[0].elements = [];
+                        mappedEls[0].elements.push(...pageControls);
+                    }
+                    return { ...page, elements: mappedEls };
+                });
 
                 const postResp = await sigmaFetch(`/v2/dataModels/spec`, {
                     method: 'POST',
