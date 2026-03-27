@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sigma Data Model Manager (Standalone)</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js" integrity="sha512-CSBhVREyzHAjAFfBlIBakjoRUKp5h7VSweP0InR/pAJyptH7peuhCsqAI/snV+TwZmXZqoUklpXp6R6wMnYf5Q==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js" integrity="sha512-78KH17QLT5e55GJqP76vutp1D2iAoy06WcYBXB6iBCsmO6wWzx0Qdg8EDpm8mKXv68BcvHOyeeP4wxAL0twJGQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
         
@@ -2549,7 +2550,7 @@ PRODUCT_NAME
         // ── API helper ─────────────────────────────────────────────────────────
         // API call counter for DevTools
         let _sigmaCallSeq = 0;
-        function _isDevMode() { return localStorage.getItem('sigma_standalone_dev_mode') === 'true'; }
+        function _isDevMode() { return sessionStorage.getItem('sigma_standalone_dev_mode') === 'true'; }
 
         function _applyDevModeClass() {
             const sidebar = document.querySelector('.sidebar');
@@ -2643,7 +2644,7 @@ PRODUCT_NAME
         }
 
         async function _doRefreshToken() {
-            const saved = localStorage.getItem('sigma_standalone_credentials');
+            const saved = sessionStorage.getItem('sigma_standalone_credentials');
             if (!saved) throw new Error('Token expired and no saved credentials to refresh');
             const { clientId, clientSecret, apiUrl } = JSON.parse(saved);
             if (!clientId || !clientSecret) throw new Error('Token expired and credentials incomplete');
@@ -2868,8 +2869,8 @@ PRODUCT_NAME
                 state.accessToken = tokenData.access_token;
                 state.tokenExpiry = Date.now() + (tokenData.expires_in * 1000);
                 
-                // Save credentials to localStorage
-                localStorage.setItem('sigma_standalone_credentials', JSON.stringify({
+                // Save credentials to sessionStorage
+                sessionStorage.setItem('sigma_standalone_credentials', JSON.stringify({
                     clientId,
                     clientSecret,
                     apiUrl: state.baseUrl
@@ -2884,7 +2885,7 @@ PRODUCT_NAME
                 document.getElementById('downloadAllBtn').disabled = false;
                 document.getElementById('uploadBtn').disabled = false;
                 // Enable dev-mode-only buttons if dev mode is active
-                if (localStorage.getItem(DEV_MODE_KEY) === 'true') {
+                if (sessionStorage.getItem(DEV_MODE_KEY) === 'true') {
                     document.getElementById('fetchByIdBtn').disabled = false;
                 }
                 
@@ -5238,7 +5239,7 @@ LIMITATIONS — what you CANNOT do via JSON
 
         function loadAIConfig() {
             try {
-                const saved = localStorage.getItem(AI_STORAGE_KEY);
+                const saved = sessionStorage.getItem(AI_STORAGE_KEY);
                 if (saved) {
                     return JSON.parse(saved);
                 }
@@ -5250,7 +5251,7 @@ LIMITATIONS — what you CANNOT do via JSON
         
         function saveAIConfig(config) {
             try {
-                localStorage.setItem(AI_STORAGE_KEY, JSON.stringify(config));
+                sessionStorage.setItem(AI_STORAGE_KEY, JSON.stringify(config));
             } catch (e) {
                 console.error('Failed to save AI config:', e);
             }
@@ -5591,8 +5592,13 @@ LIMITATIONS — what you CANNOT do via JSON
                     return;
                 }
                 
-                // Extract full table and column info for AI context
-                const elements = currentModel.pages?.[0]?.elements || [];
+                // Extract full table and column info for AI context (ALL pages, not just page 0)
+                const elements = [];
+                for (const page of (currentModel.pages || [])) {
+                    for (const el of (page.elements || [])) {
+                        elements.push(el);
+                    }
+                }
                 const existingTables = elements.filter(e => e.kind === 'table' || e.type === 'table').map(t => ({
                     name: t.name,
                     id: t.id,
@@ -5701,6 +5707,14 @@ ${contextInfo}
 2. If a request is about modifying existing columns (e.g. adding descriptions, renaming), output an array of objects each containing the column's exact "id" plus only the changed fields.
 3. If a request is about adding new elements (columns, metrics, relationships), generate them with unique IDs using pattern: sigmaId_${Date.now()}_N where N increments.
 4. Use proper Sigma formula syntax: reference columns as [Column Name] — never include the table name.
+   SIGMA CONDITIONAL AGGREGATE SYNTAX (pay close attention to argument order):
+   - CountIf(condition) — e.g. CountIf([Is Returned] = True) — condition only, NO field argument
+   - SumIf(field, condition) — FIELD FIRST, condition second — e.g. SumIf([Net Revenue], [Is First Order] = True)
+   - AvgIf(field, condition) — FIELD FIRST — e.g. AvgIf([Sale], [State] = "TX")
+   - MaxIf(field, condition) — FIELD FIRST — e.g. MaxIf([Sales], [Region] = "East")
+   - MinIf(field, condition) — FIELD FIRST — e.g. MinIf([Price], [Category] = "Electronics")
+   - CountDistinctIf(field, condition) — FIELD FIRST — e.g. CountDistinctIf([Customer Id], [Is Active] = True)
+   IMPORTANT: For boolean columns, ALWAYS use explicit comparison: [Column] = True — never pass a bare boolean column as a condition. This ensures compatibility regardless of the underlying data type.
 5. If a request is about REMOVING or DELETING columns, metrics, filters, folders, or columnSecurities, output a removal instruction in this format:
 {"_remove": {"elementId": "TARGET_ELEMENT_ID", "columns": ["colId1","colId2"], "metrics": ["metId1"], "filters": ["filtId1"], "columnSecurities": ["clsId1"], "folders": ["folderId1"]}}
 Only include the arrays that have items to remove. Use the exact IDs from the model context. Also remove the IDs from the element's order array.
@@ -5721,11 +5735,18 @@ CRITICAL RULES:
 - For descriptions: infer meaning from column names and formulas — write clear, concise business descriptions (1 sentence each).
 - The JSON must be a targeted patch snippet, not the entire model.
 - Only use column IDs that exist in the model context above.
-- ELEMENT TARGETING: The model may have MULTIPLE elements (tables). When adding columns, metrics, RLS, CLS, or filters, you MUST target the correct element — the one that contains the columns referenced in your formulas. Check which element has the relevant columns before generating. Use that element's "id" in your output. For example, if adding RLS based on [Region] and Region only exists on the Customers element, target the Customers element — NOT the first/default element.
-- When outputting JSON for multi-element models, wrap in pages structure: {"pages": [{"elements": [{"id": "CORRECT_ELEMENT_ID", ...}]}]}
+- OUTPUT FORMAT (MANDATORY): ALWAYS wrap your JSON output in the pages structure with the EXACT element ID from the context above:
+  {"pages": [{"elements": [{"id": "EXACT_ELEMENT_ID_FROM_CONTEXT", "metrics": [...], "columns": [...]}]}]}
+  This applies to ALL operations — whether the model has one element or many. NEVER output bare columns/metrics arrays without the pages wrapper. NEVER omit the element "id".
+- ELEMENT TARGETING: The model may have MULTIPLE elements (tables). When adding columns, metrics, RLS, CLS, or filters, you MUST target the correct element — the one that contains the columns referenced in your formulas. Check which element has the relevant columns before generating. Use that element's exact "id" from the context above. For example, if adding RLS based on [Region] and Region only exists on the Customers element, target the Customers element — NOT the first/default element.
 - METRICS RULE: Metrics MUST always go on the element that already has a "metrics" array. Check the existing tables context above — find which element has "metrics" and use that element's "id". NEVER put metrics on a dimension table.
-- When adding multiple metrics, put all of them in a single element object in a single pages wrapper — do NOT output one metric at a time or split across multiple code blocks.
-- FOLDERS AND ORDER: When adding folders, the folder ID must REPLACE the individual column IDs in the order array (not be appended). Columns inside a folder should NOT also appear at the top level of order. The order array should contain: [folderID, any-ungrouped-colIds...]. Do NOT put column IDs in both a folder.items and at the top level of order.`;
+- When adding multiple items, put ALL of them in a SINGLE element object in a SINGLE pages wrapper — do NOT output one item at a time or split across multiple code blocks.
+- FOLDERS AND ORDER: When adding folders, the folder ID must REPLACE the individual column IDs in the order array (not be appended). Columns inside a folder should NOT also appear at the top level of order. The order array should contain: [folderID, any-ungrouped-colIds...]. Do NOT put column IDs in both a folder.items and at the top level of order.
+
+EXAMPLE — Adding 2 metrics to element "aw_abc123":
+\`\`\`json
+{"pages": [{"elements": [{"id": "aw_abc123", "metrics": [{"id": "sigmaId_1234_1", "name": "Total Revenue", "formula": "Sum([Revenue])"}, {"id": "sigmaId_1234_2", "name": "Order Count", "formula": "CountDistinct([Order Id])"}]}]}]}
+\`\`\``;
 
                 let response;
                 
@@ -6194,6 +6215,8 @@ CRITICAL RULES:
                                 (a.columns||[]).length >= (b.columns||[]).length ? a : b
                             ).id;
                         }
+                        const targetName = allTableEls.find(e => e.id === targetElId)?.name || targetElId;
+                        showToast(`⚠️ AI output missing element ID — auto-targeting "${targetName}". Verify this is correct.`, 'warning');
                     }
                     // Wrap into pages-insert structure
                     const wrappedEl = { id: targetElId || 'auto' };
@@ -6363,6 +6386,10 @@ CRITICAL RULES:
                             targetEl = allEls.reduce((a, b) =>
                                 (a.columns||[]).length >= (b.columns||[]).length ? a : b);
                         }
+                        if (_isDevMode()) {
+                            console.warn(`[Smart Insert] No exact element ID match for "${sugEl.id}" — fell back to "${targetEl.id}" (${targetEl.name})`);
+                        }
+                        showToast(`⚠️ Element ID "${sugEl.id}" not found — inserted into "${targetEl.name || targetEl.id}" instead. Verify this is correct.`, 'warning');
                     }
                     if (!targetEl) continue;
 
@@ -6771,7 +6798,7 @@ CRITICAL RULES:
         
         // Load saved credentials on page load
         function loadSavedCredentials() {
-            const saved = localStorage.getItem('sigma_standalone_credentials');
+            const saved = sessionStorage.getItem('sigma_standalone_credentials');
             if (saved) {
                 try {
                     const creds = JSON.parse(saved);
@@ -6789,7 +6816,7 @@ CRITICAL RULES:
         
         // Clear saved credentials
         function clearCredentials() {
-            localStorage.removeItem('sigma_standalone_credentials');
+            sessionStorage.removeItem('sigma_standalone_credentials');
             document.getElementById('clientId').value = '';
             document.getElementById('clientSecret').value = '';
             showToast('Saved credentials cleared', 'success');
@@ -6801,7 +6828,7 @@ CRITICAL RULES:
         let devModeClickTimeout = null;
         
         function checkDevMode() {
-            const devMode = localStorage.getItem(DEV_MODE_KEY) === 'true';
+            const devMode = sessionStorage.getItem(DEV_MODE_KEY) === 'true';
             if (devMode) {
                 enableDevMode();
             }
@@ -6817,7 +6844,7 @@ CRITICAL RULES:
             if (state.accessToken) {
                 document.getElementById('fetchByIdBtn').disabled = false;
             }
-            localStorage.setItem(DEV_MODE_KEY, 'true');
+            sessionStorage.setItem(DEV_MODE_KEY, 'true');
             showToast('Developer mode enabled — staging environments + API logging + Fetch by ID', 'success');
         }
         
@@ -6827,7 +6854,7 @@ CRITICAL RULES:
             document.getElementById('devModeBadge').style.display = 'none';
             // Hide dev-mode-only elements
             document.querySelectorAll('.dev-mode-only').forEach(el => el.style.display = 'none');
-            localStorage.setItem(DEV_MODE_KEY, 'false');
+            sessionStorage.setItem(DEV_MODE_KEY, 'false');
             showToast('Developer mode disabled', 'success');
         }
         
@@ -6855,7 +6882,7 @@ CRITICAL RULES:
                 
                 // Enable dev mode after 5 clicks
                 if (devModeClickCount === 5) {
-                    const isDevMode = localStorage.getItem(DEV_MODE_KEY) === 'true';
+                    const isDevMode = sessionStorage.getItem(DEV_MODE_KEY) === 'true';
                     if (isDevMode) {
                         disableDevMode();
                     } else {
@@ -7124,6 +7151,10 @@ CRITICAL RULES:
                 var tname = table.name.toUpperCase();
                 (table.relationships || []).forEach(function(rel) {
                     var fks = [].concat(rel.foreign_key || rel.foreignKey || []);
+                    // Also support join_columns / relationship_columns format
+                    (rel.join_columns || rel.relationship_columns || []).forEach(function(jc) {
+                        if (jc.left_column) fks.push(jc.left_column);
+                    });
                     if (!fkColsByTable[tname]) fkColsByTable[tname] = new Set();
                     fks.filter(Boolean).forEach(function(fk) { fkColsByTable[tname].add(fk.toUpperCase()); });
                 });
@@ -7162,6 +7193,16 @@ CRITICAL RULES:
 
                     var fks = [].concat(rel.foreign_key || rel.foreignKey || []);
                     var rks = [].concat(rel.ref_key || rel.refKey || []);
+
+                    // Also support join_columns / relationship_columns format:
+                    // { join_columns: [{ left_column: "FK", right_column: "PK" }] }
+                    var joinCols = rel.join_columns || rel.relationship_columns || [];
+                    if (joinCols.length > 0 && fks.length === 0) {
+                        joinCols.forEach(function(jc) {
+                            if (jc.left_column) fks.push(jc.left_column);
+                            if (jc.right_column) rks.push(jc.right_column);
+                        });
+                    }
 
                     var keys = [];
                     for (var i = 0; i < fks.length; i++) {
@@ -8075,7 +8116,7 @@ metrics:
 
         function openDbtImportModal() {
             document.getElementById('dbtImportModal').classList.add('active');
-            const saved = JSON.parse(localStorage.getItem('dbt_cloud_creds') || '{}');
+            const saved = JSON.parse(sessionStorage.getItem('dbt_cloud_creds') || '{}');
             if (saved.accountId) document.getElementById('dbtAccountId').value = saved.accountId;
             if (saved.token)     document.getElementById('dbtServiceToken').value = saved.token;
             if (saved.host)      document.getElementById('dbtCloudHost').value = saved.host;
@@ -8115,7 +8156,7 @@ metrics:
                 const data = await resp.json();
                 const acctName = data.data?.name || `Account ${accountId}`;
 
-                localStorage.setItem('dbt_cloud_creds', JSON.stringify({ host, accountId, token }));
+                sessionStorage.setItem('dbt_cloud_creds', JSON.stringify({ host, accountId, token }));
                 Object.assign(dbtImportState, { cloudHost: host, cloudAccountId: accountId, cloudToken: token, cloudConnected: true });
 
                 btn.innerHTML = `✓ Connected to ${acctName}`;
@@ -8699,7 +8740,7 @@ metrics:
                 .trim();
 
             // Prefer the LookML tab's own key; fall back to AI assistant key; then saved config
-            const config = JSON.parse(localStorage.getItem('sigma_standalone_credentials') || '{}');
+            const config = JSON.parse(sessionStorage.getItem('sigma_standalone_credentials') || '{}');
             const lookProvider = document.getElementById('lookAiProvider')?.value || null;
             const lookKey     = document.getElementById('lookAiApiKey')?.value?.trim() || null;
             const aiProvider  = document.getElementById('aiProvider')?.value || config.provider || 'anthropic';
