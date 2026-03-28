@@ -1694,14 +1694,14 @@
         }
         .help-tabs {
             display: flex;
+            flex-wrap: wrap;
             gap: 2px;
-            padding: 16px 24px 0;
+            padding: 12px 24px 0;
             border-bottom: 1px solid var(--border);
-            overflow-x: auto;
         }
         .help-tab {
-            padding: 8px 14px;
-            font-size: 12px;
+            padding: 7px 12px;
+            font-size: 11.5px;
             font-weight: 600;
             color: var(--text-muted);
             cursor: pointer;
@@ -11691,7 +11691,6 @@ view: date_dim {
     <li><b>Smart Insert</b> — AI-generated content is merged intelligently into the correct element</li>
     <li><b>Converters</b> — Import from dbt, Snowflake, LookML, Tableau, and Power BI</li>
     <li><b>Bulk Upload</b> — Create multiple elements from warehouse tables at once</li>
-    <li><b>Column Renamer</b> — Batch rename columns with prettification</li>
 </ul>
 
 <h3>General Workflow</h3>
