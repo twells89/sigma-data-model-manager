@@ -1629,6 +1629,166 @@
         .token-estimate .tok-warn {
             color: var(--warning);
         }
+        /* ── Help System ─────────────────────────────────────────── */
+        .help-fab {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
+            border: none;
+            color: #fff;
+            font-size: 22px;
+            font-weight: 700;
+            cursor: pointer;
+            z-index: 999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 16px rgba(88, 101, 242, 0.4);
+            transition: transform 0.2s, box-shadow 0.2s;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+        }
+        .help-fab:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 24px rgba(88, 101, 242, 0.55);
+        }
+        .help-modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(4px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1001;
+        }
+        .help-modal-overlay.active { display: flex; }
+        .help-modal {
+            background: var(--bg-secondary);
+            border-radius: 16px;
+            width: 92%;
+            max-width: 760px;
+            max-height: 82vh;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+        }
+        .help-modal-head {
+            padding: 20px 24px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .help-modal-head h2 {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .help-tabs {
+            display: flex;
+            gap: 2px;
+            padding: 16px 24px 0;
+            border-bottom: 1px solid var(--border);
+            overflow-x: auto;
+        }
+        .help-tab {
+            padding: 8px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            white-space: nowrap;
+            transition: color 0.15s, border-color 0.15s;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: none;
+            border-top: none;
+            border-left: none;
+            border-right: none;
+        }
+        .help-tab:hover { color: var(--text-secondary); }
+        .help-tab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+        .help-content {
+            padding: 20px 24px 24px;
+            overflow-y: auto;
+            flex: 1;
+            font-size: 13px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+        }
+        .help-content h3 {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin: 16px 0 6px;
+        }
+        .help-content h3:first-child { margin-top: 0; }
+        .help-content p { margin: 0 0 8px; }
+        .help-content ul {
+            margin: 0 0 10px 18px;
+            padding: 0;
+        }
+        .help-content li { margin-bottom: 4px; }
+        .help-content code {
+            background: var(--bg-tertiary);
+            padding: 1px 5px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
+            color: var(--json-key);
+        }
+        .help-content a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .help-content a:hover { text-decoration: underline; }
+        .help-links {
+            margin-top: 12px;
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        .help-links-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+        .help-links a {
+            display: block;
+            font-size: 12px;
+            padding: 4px 0;
+            color: var(--accent);
+        }
+        .help-badge {
+            display: inline-block;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: var(--bg-hover);
+            color: var(--text-muted);
+            margin-left: 4px;
+            vertical-align: middle;
+        }
+        .help-badge.api-bug {
+            background: rgba(250, 166, 26, 0.15);
+            color: var(--warning);
+        }
     </style>
 </head>
 <body>
@@ -1818,6 +1978,7 @@
                     <div class="editor-tab" id="tabSnow" onclick="switchEditorTab('snow')">❄️ Snowflake Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
                     <div class="editor-tab" id="tabLook" onclick="switchEditorTab('look')">🔍 LookML Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
                     <div class="editor-tab" id="tabTableau" onclick="switchEditorTab('tableau')">📊 Tableau Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
+                    <div class="editor-tab" id="tabPbi" onclick="switchEditorTab('pbi')">📈 Power BI Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
                 </div>
                 <div class="json-editor" id="panelJson">
                     <div class="editor-wrap" id="editorWrap">
@@ -2263,6 +2424,96 @@ How it works:
 
                 </div>
                 <!-- ── End Tableau Panel ────────────────────────────────────── -->
+
+                <!-- ── Power BI Converter Panel ──────────────────────────────── -->
+                <div class="dbt-converter" id="panelPbi">
+
+                    <!-- Left: File Upload + Config -->
+                    <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Power BI Model</span>
+                        </div>
+
+                        <div id="pbiDropZone" class="lookml-drop-zone"
+                             onclick="document.getElementById('pbiFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handlePbiDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">📈</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop .pbit or model.bim file here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">.pbit = Power BI template (zip) · .bim = TMSL JSON</div>
+                            <input type="file" id="pbiFileInput" accept=".pbit,.bim,.json" style="display:none" onchange="handlePbiFileInput(event)">
+                        </div>
+
+                        <div id="pbiFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Connection</label>
+                            <select id="pbiConnectionId" class="form-input" style="font-size: 12px;">
+                                <option value="">— Connect to Sigma to load —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="pbiDatabase" placeholder="auto-detected from M query" style="font-size: 12px;">
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Schema override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="pbiSchema" placeholder="auto-detected from M query" style="font-size: 12px;">
+                        </div>
+
+                        <div class="dbt-badge-row" id="pbiInputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" id="pbiConvertBtn" onclick="runPbiConversion()" disabled>
+                                📈 Convert to Sigma JSON
+                            </button>
+                        </div>
+
+                        <div style="font-size: 10px; color: var(--text-muted); padding: 0 4px; line-height: 1.4;">
+                            <strong>How to get files:</strong><br>
+                            • <b>.pbit</b>: In Power BI Desktop → File → Save As Template<br>
+                            • <b>model.bim</b>: Save as PBIP project, or export via Tabular Editor<br>
+                            • <b>Paste</b>: Copy DataModelSchema JSON directly into the textarea below
+                        </div>
+                    </div>
+
+                    <!-- Right: Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copyPbiOutput()" id="pbiCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadPbiOutputToEditor()" id="pbiLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="pbiWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="pbiJsonOutput" readonly placeholder="Convert a Power BI model to see the Sigma JSON here...
+
+How it works:
+• Drop a .pbit template or model.bim file (or paste JSON below)
+• Tables → Sigma elements with warehouse-table sources
+• Measures → Sigma metrics (DAX → Sigma formula conversion)
+• Relationships → Sigma relationships
+• Calculated columns → Sigma calculated columns
+• CALCULATE/ALL patterns → flagged with Sigma grouping guidance
+• Measure tables → measures moved to the appropriate fact element"></textarea>
+
+                        <div class="dbt-badge-row" id="pbiOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="loadAndSavePbiModel()" id="pbiSaveBtn" disabled>
+                                💾 Load & Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+                <!-- ── End Power BI Panel ─────────────────────────────────────── -->
 
             </div>
             </div>
@@ -4540,7 +4791,7 @@ PRODUCT_NAME
         async function populateConverterConnections() {
             if (!state.accessToken) return;
             const connections = await fetchConnectionsList();
-            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId'];
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId'];
             targetIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (!sel) return;
@@ -4925,9 +5176,38 @@ Note: only id and formula — NO name field for warehouse columns.
 
 ### Calculated column (formula-only, no warehouse backing)
 { "id": "shortRandomId", "formula": "[Price] - [Cost]", "name": "Profit" }
-CRITICAL: Calculated column formulas reference columns by display name ONLY — NO table prefix.
+CRITICAL: Calculated column formulas reference LOCAL columns by display name ONLY — NO table prefix.
 Correct:   "[Price] - [Cost]"
 WRONG:     "[TABLE/Price] - [TABLE/Cost]"
+
+### Linked column reference (accessing related dimension columns via relationships)
+When a calculated column or metric needs to reference a column from a RELATED element (via a relationship),
+use the "- link/" syntax:
+  [SOURCE_TABLE/FK_COLUMN - link/Column Display Name]
+
+Where:
+- SOURCE_TABLE = the source element's warehouse table name (e.g. ORDER_FACT)
+- FK_COLUMN = the foreign key column's PHYSICAL name (ALL_CAPS, e.g. PROMO_KEY, ORDER_DATE_KEY)
+- Column Display Name = the display name of the column on the related dimension table (e.g. "Start Date")
+
+Example: ORDER_FACT has a relationship to PROMO_DIM via Promo Key → Promo Key.
+To reference PROMO_DIM's Start Date and End Date columns from ORDER_FACT:
+  { "formula": "DateDiff(\"day\", [ORDER_FACT/PROMO_KEY - link/Start Date], [ORDER_FACT/PROMO_KEY - link/End Date])", "name": "Promo Duration Days" }
+
+Example: ORDER_FACT has a relationship to DATE_DIM via Order Date Key → Date Key.
+To reference DATE_DIM's Full Date column from ORDER_FACT:
+  { "formula": "Year([ORDER_FACT/ORDER_DATE_KEY - link/Full Date])", "name": "Order Year" }
+
+⚠ KNOWN SIGMA API LIMITATION: The Sigma API does not currently round-trip linked column formulas
+correctly on PUT. The "- link/" format is what the GET API returns and matches Sigma's internal
+representation. Until this is fixed, linked columns saved via API may need to be re-added in the UI.
+
+CRITICAL RULES FOR LINKED COLUMNS:
+- ONLY use linked column syntax when the column does NOT exist on the current element
+- The FK_COLUMN must be the PHYSICAL warehouse column name (ALL_CAPS with underscores)
+- The target column uses the DISPLAY NAME as it appears in the dimension's column formula
+- The relationship MUST already exist on the element for this to work
+- If the column EXISTS on the current element, reference it by display name directly: [Column Name]
 
 ### Optional fields on any column
 "name": "Display Name"      // override display name
@@ -4938,9 +5218,11 @@ WRONG:     "[TABLE/Price] - [TABLE/Cost]"
 METRICS (inside element.metrics array)
 ═══════════════════════════════════════════════════
 { "id": "shortRandomId", "formula": "CountDistinct([Sku Number])", "name": "Unique Products" }
-CRITICAL: Metric formulas reference columns by display name ONLY — NO table prefix.
+CRITICAL: Metric formulas reference LOCAL columns by display name ONLY — NO table prefix.
 Correct:   "Sum([Revenue])"
 WRONG:     "Sum([TABLE/Revenue])"
+For related columns in metrics, use the same "- link/" syntax:
+  { "formula": "Sum([ORDER_FACT/PROMO_KEY - link/Promo Cost])", "name": "Total Promo Cost" }
 
 ═══════════════════════════════════════════════════
 RELATIONSHIPS (inside element.relationships array)
@@ -4964,7 +5246,41 @@ When a folder exists, put the FOLDER ID in element.order (not the individual col
 ═══════════════════════════════════════════════════
 GROUPINGS (inside element.groupings array)
 ═══════════════════════════════════════════════════
-{ "id": "shortRandomId", "groupBy": ["inode-xxx/AIRLINE"] }
+Groupings define hierarchical aggregation levels on a table element. They are the Sigma equivalent of
+Tableau LOD expressions, Power BI CALCULATE/ALL patterns, and SQL GROUP BY with different grain levels.
+
+### Structure
+{
+  "id": "shortRandomId",
+  "groupBy": ["colId1", "colId2"],   // column IDs to group by at this level
+  "calculations": ["calcColId1"]      // column IDs of aggregate columns computed at this level
+}
+
+### Nesting
+Array order = nesting hierarchy: index 0 is the OUTERMOST grouping, last index is INNERMOST.
+Row-level data sits beneath all groupings.
+Example: groupBy Region → groupBy State → row-level data
+
+### Multiple columns in groupBy
+Multiple column IDs in a single groupBy array are at the SAME level (like GROUP BY a, b in SQL).
+
+### Calculations
+The "calculations" array references column IDs of aggregate columns that are computed at that grouping level.
+These calculation columns MUST also exist in the element's "columns" array with their aggregate formula.
+The calculation column formula uses standard Sigma aggregates: Sum(), Count(), CountDistinct(), Avg(), etc.
+
+### Example: Two-level grouping with calculations at each level
+"columns": [
+  { "id": "regionCol", "formula": "[TABLE/Region]" },
+  { "id": "stateCol", "formula": "[TABLE/State]" },
+  { "id": "calcRegion", "formula": "CountDistinct([Order Number])" },
+  { "id": "calcState", "formula": "CountDistinct([Order Number])" }
+],
+"groupings": [
+  { "id": "g1", "groupBy": ["regionCol"], "calculations": ["calcRegion"] },
+  { "id": "g2", "groupBy": ["stateCol"], "calculations": ["calcState"] }
+]
+This produces: Region (with order count) → State (with order count) → row-level data.
 
 ═══════════════════════════════════════════════════
 SORT (inside element.sort array)
@@ -5615,18 +5931,28 @@ LIMITATIONS — what you CANNOT do via JSON
                         name: m.name,
                         formula: m.formula || null,
                         description: m.description || null
+                    })),
+                    relationships: (t.relationships || []).map(r => ({
+                        id: r.id,
+                        name: r.name,
+                        targetElementId: r.targetElementId,
+                        keys: r.keys
                     }))
                 }));
 
                 contextInfo = `
-## Existing Tables, Columns and Metrics in This Model
+## Existing Tables, Columns, Metrics and Relationships in This Model
 ${JSON.stringify(existingTables, null, 2)}
 
 RULES FOR MODIFYING EXISTING COLUMNS:
 - To add or update a field on an existing column, output an object with the column's exact "id" plus only the fields being changed.
 - Example to add descriptions: { "columns": [ { "id": "abc123", "description": "What this column means" }, ... ] }
 - Do NOT invent new column IDs. Use only the IDs listed above.
-- When referencing columns in formulas use just [Column Name], never include the table name.`;
+- When referencing LOCAL columns in formulas use just [Column Name], never include the table name.
+- LINKED COLUMNS: When a formula needs a column from a RELATED element, use "- link/" syntax:
+  [TABLE_NAME/FK_PHYSICAL_COL - link/Column Display Name]
+  Check the element's relationships array → find the sourceColumnId → look up its formula to get the physical FK name.
+  Example: If sourceColumnId points to a column with formula "[ORDER_FACT/Order Date Key]", the FK physical name is ORDER_DATE_KEY, so use [ORDER_FACT/ORDER_DATE_KEY - link/Full Date].`;
                 
             } else if (aiCurrentMode === 'addtable') {
                 const connectionId = document.getElementById('aiConnection').value;
@@ -5706,7 +6032,7 @@ ${contextInfo}
 1. Be self-sufficient. If the user asks to add descriptions, generate them yourself based on the column names, formulas, and table context — do NOT ask the user to supply them.
 2. If a request is about modifying existing columns (e.g. adding descriptions, renaming), output an array of objects each containing the column's exact "id" plus only the changed fields.
 3. If a request is about adding new elements (columns, metrics, relationships), generate them with unique IDs using pattern: sigmaId_${Date.now()}_N where N increments.
-4. Use proper Sigma formula syntax: reference columns as [Column Name] — never include the table name.
+4. Use proper Sigma formula syntax: reference LOCAL columns as [Column Name] — never include the table name.
    SIGMA CONDITIONAL AGGREGATE SYNTAX (pay close attention to argument order):
    - CountIf(condition) — e.g. CountIf([Is Returned] = True) — condition only, NO field argument
    - SumIf(field, condition) — FIELD FIRST, condition second — e.g. SumIf([Net Revenue], [Is First Order] = True)
@@ -5715,6 +6041,19 @@ ${contextInfo}
    - MinIf(field, condition) — FIELD FIRST — e.g. MinIf([Price], [Category] = "Electronics")
    - CountDistinctIf(field, condition) — FIELD FIRST — e.g. CountDistinctIf([Customer Id], [Is Active] = True)
    IMPORTANT: For boolean columns, ALWAYS use explicit comparison: [Column] = True — never pass a bare boolean column as a condition. This ensures compatibility regardless of the underlying data type.
+   LINKED COLUMN SYNTAX (referencing columns from RELATED elements via relationships):
+   When a formula needs a column that lives on a RELATED element (not the current element), use:
+     [SOURCE_TABLE/FK_COLUMN - link/Column Display Name]
+   Where FK_COLUMN is the PHYSICAL warehouse column name (ALL_CAPS) of the foreign key.
+   - Check the element's "relationships" array to find the foreign key column
+   - Look at the relationship's sourceColumnId → find that column's formula → extract the physical name
+   - The target column uses the DISPLAY NAME from the dimension element
+   Example: If ORDER_FACT has FK "Order Date Key" (physical: ORDER_DATE_KEY) to DATE_DIM:
+     Year([ORDER_FACT/ORDER_DATE_KEY - link/Full Date])
+   Example: If ORDER_FACT has FK "Promo Key" (physical: PROMO_KEY) to PROMO_DIM:
+     DateDiff("day", [ORDER_FACT/PROMO_KEY - link/Start Date], [ORDER_FACT/PROMO_KEY - link/End Date])
+   ⚠ Known API limitation: Sigma may mangle - link/ on save. Users may need to re-add in UI.
+   NEVER use plain [Column Name] for columns that don't exist on the current element — this will cause "Unknown column" errors.
 5. If a request is about REMOVING or DELETING columns, metrics, filters, folders, or columnSecurities, output a removal instruction in this format:
 {"_remove": {"elementId": "TARGET_ELEMENT_ID", "columns": ["colId1","colId2"], "metrics": ["metId1"], "filters": ["filtId1"], "columnSecurities": ["clsId1"], "folders": ["folderId1"]}}
 Only include the arrays that have items to remove. Use the exact IDs from the model context. Also remove the IDs from the element's order array.
@@ -6899,8 +7238,8 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
 
         // ── Editor Tab Switching ────────────────────────────────────────────
         function switchEditorTab(tab) {
-            const tabs = { json: 'tabJson', dbt: 'tabDbt', snow: 'tabSnow', look: 'tabLook', tableau: 'tabTableau' };
-            const panels = { json: 'panelJson', dbt: 'panelDbt', snow: 'panelSnow', look: 'panelLook', tableau: 'panelTableau' };
+            const tabs = { json: 'tabJson', dbt: 'tabDbt', snow: 'tabSnow', look: 'tabLook', tableau: 'tabTableau', pbi: 'tabPbi' };
+            const panels = { json: 'panelJson', dbt: 'panelDbt', snow: 'panelSnow', look: 'panelLook', tableau: 'panelTableau', pbi: 'panelPbi' };
             Object.keys(tabs).forEach(k => {
                 document.getElementById(tabs[k]).classList.toggle('active', k === tab);
             });
@@ -6913,7 +7252,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 }
             });
             // Auto-populate connection dropdowns when opening a converter tab
-            if ((tab === 'dbt' || tab === 'snow' || tab === 'look' || tab === 'tableau') && state.accessToken) {
+            if ((tab === 'dbt' || tab === 'snow' || tab === 'look' || tab === 'tableau' || tab === 'pbi') && state.accessToken) {
                 populateConverterConnections();
             }
         }
@@ -9455,7 +9794,7 @@ ${cleanedSql}`;
 
                 // ── Unsupported types — skip and warn rather than silently create wrong metric
                 if (UNSUPPORTED_MEASURE_TYPES.has(msType)) {
-                    warnings.push(`⚠ Measure "${ms._name}" (type: ${msType}) cannot be converted — ${msType === 'running_total' ? 'running totals require a window function and cannot be used in Sigma metrics; add as a calculated column manually' : 'percent_of_total has no direct equivalent in Sigma metrics; use a calculated column with CumulativeSum or a ratio metric'}`);
+                    warnings.push(`⚠ Measure "${ms._name}" (type: ${msType}) cannot be converted — ${msType === 'running_total' ? 'running totals require a window function; use CumulativeSum() as a calculated column in Sigma' : 'percent_of_total → in Sigma, place Sum() at the desired grouping level then divide by GrandTotal(Sum()). Add a grouping to the element and compute the ratio at that level.'}`);
                     return;
                 }
 
@@ -9653,12 +9992,60 @@ ${cleanedSql}`;
             'DATE': 'Date', 'DATETIME': 'Datetime',
         };
 
+        // ── Tableau LOD Expression Parser ──────────────────────────────────
+        // Parses: { FIXED [dim1], [dim2] : AGG([field]) }
+        //         { INCLUDE [dim] : AGG([field]) }
+        //         { EXCLUDE [dim] : AGG([field]) }
+        //         { FIXED : AGG([field]) }  (table-scoped, no dimensions)
+        function tableauParseLOD(formula) {
+            const f = formula.trim();
+            // Match: { TYPE [dims...] : aggregate }
+            const lodMatch = f.match(/^\{\s*(FIXED|INCLUDE|EXCLUDE)\s*([\s\S]*?)\s*:\s*([\s\S]+?)\s*\}$/i);
+            if (!lodMatch) return null;
+
+            const lodType = lodMatch[1].toUpperCase();
+            const dimsRaw = lodMatch[2].trim();
+            const aggRaw  = lodMatch[3].trim();
+
+            // Parse dimension references: [Dim1], [Dim2]
+            const dims = [];
+            if (dimsRaw) {
+                const dimMatches = dimsRaw.match(/\[([^\]]+)\]/g);
+                if (dimMatches) {
+                    dimMatches.forEach(d => dims.push(d.replace(/^\[|\]$/g, '')));
+                }
+            }
+
+            // Convert the aggregate expression from Tableau to Sigma
+            // (simple cases: SUM([Sales]), COUNTD([Customer]), AVG([Price]))
+            let sigmaAgg = aggRaw;
+            sigmaAgg = sigmaAgg.replace(/\bCOUNTD\s*\(/gi, 'CountDistinct(');
+            sigmaAgg = sigmaAgg.replace(/\bSUM\s*\(/gi, 'Sum(');
+            sigmaAgg = sigmaAgg.replace(/\bAVG\s*\(/gi, 'Avg(');
+            sigmaAgg = sigmaAgg.replace(/\bMIN\s*\(/gi, 'Min(');
+            sigmaAgg = sigmaAgg.replace(/\bMAX\s*\(/gi, 'Max(');
+            sigmaAgg = sigmaAgg.replace(/\bMEDIAN\s*\(/gi, 'Median(');
+            sigmaAgg = sigmaAgg.replace(/\bCOUNT\s*\(([^)]+)\)/gi, 'CountIf(IsNotNull($1))');
+            // Convert column refs: SNAKE_CASE → Title Case
+            sigmaAgg = sigmaAgg.replace(/\[([A-Z][A-Z0-9_]{2,})\]/g, (m, c) => '[' + sigmaDisplayName(c) + ']');
+            // Single-quote → double-quote
+            sigmaAgg = sigmaAgg.replace(/'([^']*)'/g, '"$1"');
+
+            return { lodType, dims, sigmaAgg };
+        }
+
         function tableauFormulaToSigma(formula, warnings) {
             if (!formula || !formula.trim()) return '';
             let f = formula.trim();
 
-            // LOD expressions
+            // LOD expressions — parse into structured data for groupings conversion
             if (/^\s*\{/.test(f)) {
+                const lodParsed = tableauParseLOD(f);
+                if (lodParsed) {
+                    // Return a tagged LOD object so the caller can generate groupings
+                    return { _isLOD: true, ...lodParsed, raw: f };
+                }
+                // Couldn't parse — fall back to comment
                 if (warnings) warnings.push('⚠ LOD expression not converted: ' + f.slice(0,60));
                 return '/* LOD: ' + f.replace(/\/\*/g,'').replace(/\*\//g,'') + ' */';
             }
@@ -10009,6 +10396,25 @@ ${cleanedSql}`;
                         if (m) factColIdMap[m[1].toUpperCase()] = c.id;
                     });
 
+                    // Also build a display-name → colId map for LOD dimension matching
+                    const displayNameMap = {};
+                    elements.forEach(el => {
+                        (el.columns || []).forEach(c => {
+                            const displayName = c.name || '';
+                            if (displayName) displayNameMap[displayName.toUpperCase()] = { colId: c.id, el };
+                            // Also extract display name from warehouse formula [TABLE/Display Name]
+                            const fm = c.formula.match(/\/([^\]]+)\]$/);
+                            if (fm) displayNameMap[fm[1].toUpperCase()] = { colId: c.id, el };
+                        });
+                    });
+
+                    // Collect LOD child elements as we process calculated fields
+                    const lodChildElements = []; // will be pushed to elements[] after processing
+
+                    // Determine the fact element's table name for child column formulas
+                    const factTableName = factEl.name
+                        || (factEl.source && factEl.source.path ? factEl.source.path[factEl.source.path.length - 1] : 'FACT');
+
                     for (const col of ds.element.querySelectorAll(':scope > column')) {
                         const rawName  = col.getAttribute('name') || '';
                         const caption  = col.getAttribute('caption') || rawName.replace(/^\[|\]$/g,'');
@@ -10022,14 +10428,134 @@ ${cleanedSql}`;
                         if (formula) {
                             const sigmaFormula = tableauFormulaToSigma(formula, warnings);
                             if (!sigmaFormula) continue;
+
+                            // ── LOD expression → child element with grouping ──
+                            if (sigmaFormula && typeof sigmaFormula === 'object' && sigmaFormula._isLOD) {
+                                const lod = sigmaFormula;
+                                if (lod.lodType === 'FIXED' && lod.dims.length > 0) {
+                                    // Resolve dimension display names for column formulas
+                                    let allDimsFound = true;
+                                    const dimInfos = []; // { displayName, colId (in parent) }
+                                    for (const dimName of lod.dims) {
+                                        const found = displayNameMap[dimName.toUpperCase()]
+                                            || displayNameMap[sigmaDisplayName(dimName).toUpperCase()];
+                                        if (found) {
+                                            // Find the display name from the parent column
+                                            const parentCol = (found.el.columns || []).find(c => c.id === found.colId);
+                                            const dispName = parentCol
+                                                ? (parentCol.name || (parentCol.formula.match(/\/([^\]]+)\]$/) || [])[1] || dimName)
+                                                : dimName;
+                                            dimInfos.push({ displayName: dispName, parentColId: found.colId });
+                                        } else {
+                                            allDimsFound = false;
+                                            warnings.push('⚠ LOD "' + caption + '": dimension [' + dimName + '] not found — cannot create child element');
+                                        }
+                                    }
+
+                                    if (allDimsFound && dimInfos.length > 0) {
+                                        // Check if a child element already exists for these exact dims
+                                        const dimKey = dimInfos.map(d => d.displayName).sort().join(',');
+                                        let existingChild = lodChildElements.find(ce =>
+                                            ce._dimKey === dimKey
+                                        );
+
+                                        if (existingChild) {
+                                            // Add referenced columns if not already on the child
+                                            const existingFormulas = new Set(existingChild.columns.map(c => c.formula));
+                                            const aggColRefs = lod.sigmaAgg.match(/\[([^\]]+)\]/g) || [];
+                                            for (const ref of aggColRefs) {
+                                                const colName = ref.replace(/^\[|\]$/g, '');
+                                                const refFormula = '[' + factTableName + '/' + colName + ']';
+                                                if (!existingFormulas.has(refFormula)) {
+                                                    existingFormulas.add(refFormula);
+                                                    const refColId = sigmaShortId();
+                                                    existingChild.columns.push({ id: refColId, formula: refFormula });
+                                                    existingChild.order.push(refColId);
+                                                }
+                                            }
+                                            // Add another calculation to the existing child
+                                            const calcId = sigmaShortId();
+                                            existingChild.columns.push({ id: calcId, formula: lod.sigmaAgg, name: caption });
+                                            existingChild.order.push(calcId);
+                                            existingChild.groupings[0].calculations.push(calcId);
+                                        } else {
+                                            // Create a new lean child element
+                                            const childId = sigmaShortId();
+                                            const childCols = [];
+                                            const childOrder = [];
+                                            const groupByIds = [];
+
+                                            // Add dimension columns referencing parent
+                                            for (const di of dimInfos) {
+                                                const colId = sigmaShortId();
+                                                childCols.push({ id: colId, formula: '[' + factTableName + '/' + di.displayName + ']' });
+                                                childOrder.push(colId);
+                                                groupByIds.push(colId);
+                                            }
+
+                                            // Add columns referenced in the aggregate formula
+                                            // e.g. Sum([Net Revenue]) needs [Net Revenue] on the child
+                                            const aggColRefs = lod.sigmaAgg.match(/\[([^\]]+)\]/g) || [];
+                                            const addedColNames = new Set(dimInfos.map(d => d.displayName.toUpperCase()));
+                                            for (const ref of aggColRefs) {
+                                                const colName = ref.replace(/^\[|\]$/g, '');
+                                                if (addedColNames.has(colName.toUpperCase())) continue;
+                                                addedColNames.add(colName.toUpperCase());
+                                                const refColId = sigmaShortId();
+                                                childCols.push({ id: refColId, formula: '[' + factTableName + '/' + colName + ']' });
+                                                childOrder.push(refColId);
+                                            }
+
+                                            // Add calculation column
+                                            const calcId = sigmaShortId();
+                                            childCols.push({ id: calcId, formula: lod.sigmaAgg, name: caption });
+                                            childOrder.push(calcId);
+
+                                            const childEl = {
+                                                id: childId,
+                                                kind: 'table',
+                                                name: factTableName + ' by ' + dimInfos.map(d => d.displayName).join(', '),
+                                                source: { elementId: factEl.id, kind: 'table' },
+                                                columns: childCols,
+                                                groupings: [{
+                                                    id: sigmaShortId(),
+                                                    groupBy: groupByIds,
+                                                    calculations: [calcId]
+                                                }],
+                                                order: childOrder,
+                                                _dimKey: dimKey // internal, stripped before output
+                                            };
+                                            lodChildElements.push(childEl);
+                                        }
+
+                                        warnings.push('✅ LOD "' + caption + '" → child element "' + factTableName + ' by ' + dimInfos.map(d => d.displayName).join(', ') + '" with grouping + calculation: ' + lod.sigmaAgg);
+                                        continue;
+                                    }
+                                } else if (lod.lodType === 'FIXED' && lod.dims.length === 0) {
+                                    // {FIXED : AGG()} = table-scoped aggregate → becomes a metric
+                                    if (!factEl.metrics) factEl.metrics = [];
+                                    factEl.metrics.push({ id: sigmaShortId(), formula: lod.sigmaAgg, name: caption });
+                                    warnings.push('✅ LOD "' + caption + '" (table-scoped FIXED) → metric: ' + lod.sigmaAgg);
+                                    continue;
+                                }
+                                // INCLUDE/EXCLUDE — warn with guidance
+                                if (lod.lodType === 'INCLUDE') {
+                                    warnings.push('⚠ LOD "' + caption + '" (INCLUDE) → In Sigma, add [' + lod.dims.join(', ') + '] as a grouping level and place ' + lod.sigmaAgg + ' at that level. See: community.sigmacomputing.com/t/tableau-level-of-detail-or-lod-calculations-in-sigma/6427');
+                                } else if (lod.lodType === 'EXCLUDE') {
+                                    warnings.push('⚠ LOD "' + caption + '" (EXCLUDE) → In Sigma, place ' + lod.sigmaAgg + ' at a grouping level that does not include [' + lod.dims.join(', ') + ']. See: community.sigmacomputing.com/t/tableau-level-of-detail-or-lod-calculations-in-sigma/6427');
+                                }
+                                warnings.push('⛔ "' + caption + '" LOD not auto-converted — add grouping manually in Sigma workbook.');
+                                continue;
+                            }
+
+                            // ── Regular aggregate → metric ──
                             if (tableauIsAggregate(formula)) {
                                 if (!factEl.metrics) factEl.metrics = [];
-                                // Skip comment-only formulas (LOD placeholders) — API rejects them
-                                const isCommentOnly = sigmaFormula.trim().startsWith('/*') && sigmaFormula.trim().endsWith('*/');
+                                const isCommentOnly = typeof sigmaFormula === 'string' && sigmaFormula.trim().startsWith('/*') && sigmaFormula.trim().endsWith('*/');
                                 if (!isCommentOnly) {
                                     factEl.metrics.push({ id: sigmaShortId(), formula: sigmaFormula, name: caption });
                                 } else {
-                                    warnings.push('⛔ "' + caption + '" skipped — LOD expressions cannot be saved as metrics. Add manually in Sigma workbook.');
+                                    warnings.push('⛔ "' + caption + '" skipped — table calc cannot be saved as metrics. Add manually in Sigma workbook.');
                                 }
                             } else {
                                 // Only add if not already present
@@ -10048,6 +10574,81 @@ ${cleanedSql}`;
                                 const existingCol = found.el.columns.find(c => c.id === found.colId);
                                 if (existingCol && !existingCol.name) existingCol.name = caption;
                             }
+                        }
+                    }
+
+                    // ── Add LOD child elements to the elements array ──
+                    if (lodChildElements.length > 0) {
+                        for (const child of lodChildElements) {
+                            delete child._dimKey; // strip internal key before output
+                            elements.push(child);
+                        }
+                        warnings.push('ℹ ' + lodChildElements.length + ' child element' + (lodChildElements.length !== 1 ? 's' : '') + ' created from LOD expressions (grouped views of ' + factTableName + ')');
+                    }
+                }
+
+                // ── Auto-fix cross-element column references with - link/ syntax ──
+                // NOTE: Sigma API currently mangles - link/ on PUT. These formulas are generated
+                // assuming Sigma will fix this. Until then, users may need to re-add in UI.
+                const globalColMap = {};
+                for (const el of elements) {
+                    for (const c of (el.columns || [])) {
+                        const fm = c.formula.match(/\[([^\/\]]+)\/([^\]]+)\]$/);
+                        if (fm) globalColMap[fm[2].toUpperCase()] = { elId: el.id, displayName: fm[2] };
+                    }
+                }
+
+                for (const el of elements) {
+                    const localNames = new Set();
+                    for (const c of (el.columns || [])) {
+                        if (c.name) localNames.add(c.name.toUpperCase());
+                        const fm = c.formula.match(/\/([^\]]+)\]$/);
+                        if (fm) localNames.add(fm[1].toUpperCase());
+                    }
+
+                    // Build FK physical name lookup: targetElementId → FK_PHYSICAL_NAME
+                    const relFkLookup = {};
+                    const elTableName = el.source && el.source.path
+                        ? el.source.path[el.source.path.length - 1] : (el.name || 'UNKNOWN');
+                    for (const rel of (el.relationships || [])) {
+                        const fkCol = (el.columns || []).find(c => c.id === rel.keys[0]?.sourceColumnId);
+                        if (fkCol) {
+                            const fkMatch = fkCol.formula.match(/\/([^\]]+)\]$/);
+                            if (fkMatch) {
+                                relFkLookup[rel.targetElementId] = fkMatch[1].replace(/\s+/g, '_').toUpperCase();
+                            }
+                        }
+                    }
+
+                    for (const c of (el.columns || [])) {
+                        if (!c.name || !c.formula) continue;
+                        if (c.formula.match(/^\[[\w_]+\//)) continue;
+                        if (c.formula.includes('- link/')) continue;
+
+                        const refs = c.formula.match(/\[([^\]\/]+)\]/g) || [];
+                        let fixedFormula = c.formula;
+                        let wasFixed = false;
+
+                        for (const ref of refs) {
+                            const refName = ref.replace(/^\[|\]$/g, '');
+                            const refUpper = refName.toUpperCase();
+                            if (localNames.has(refUpper) || refUpper === 'TRUE' || refUpper === 'FALSE') continue;
+
+                            const ge = globalColMap[refUpper];
+                            if (ge && relFkLookup[ge.elId]) {
+                                // [TABLE/FK_COL - link/Display Name]
+                                const linkRef = `[${elTableName}/${relFkLookup[ge.elId]} - link/${ge.displayName}]`;
+                                fixedFormula = fixedFormula.replace(ref, linkRef);
+                                wasFixed = true;
+                            } else {
+                                warnings.push(`⚠ "${c.name}" references [${refName}] — no matching relationship found. Fix manually in Sigma UI.`);
+                            }
+                        }
+
+                        if (wasFixed) {
+                            c.formula = fixedFormula;
+                            warnings.push(`✅ "${c.name}" → linked column: ${fixedFormula.slice(0, 100)}`);
+                            warnings.push(`   ⚠ Note: Sigma API may not round-trip linked columns correctly yet. If this column errors after save, re-add it manually in the Sigma UI.`);
                         }
                     }
                 }
@@ -10137,6 +10738,595 @@ ${cleanedSql}`;
         function loadTableauExample() {
             const xml = `<?xml version='1.0' encoding='utf-8' ?><workbook version='18.1' xmlns:user='http://www.tableausoftware.com/xml/user'><datasources><datasource hasconnection='false' inline='true' name='Parameters' version='18.1'><column caption='Region Filter' datatype='string' name='[Region Filter]' param-domain-type='list' role='dimension' type='nominal'><calculation class='tableau' formula='&quot;East&quot;' /><members><member value='East' /><member value='West' /><member value='Central' /><member value='South' /></members></column><column caption='Date Range Start' datatype='date' name='[Date Range Start]' param-domain-type='all' role='measure' type='quantitative'><calculation class='tableau' formula='#2025-01-01#' /></column></datasource><datasource caption='Order Analysis' inline='true' name='federated.abc123' version='18.1'><connection class='snowflake' dbname='CSA' schema='TJ' server='xy12345.snowflakecomputing.com'><relation join='left' type='join'><clause type='join'><expression op='='><expression op='[Order Fact].[CUSTOMER_KEY]' /><expression op='[Customer Dim].[CUSTOMER_KEY]' /></expression></clause><relation name='Order Fact' table='[TJ].[ORDER_FACT]' type='table'><columns header='yes' outcome='6'><column datatype='integer' name='ORDER_ID' ordinal='0' /><column datatype='integer' name='CUSTOMER_KEY' ordinal='1' /><column datatype='real' name='GROSS_REVENUE' ordinal='2' /><column datatype='real' name='NET_REVENUE' ordinal='3' /><column datatype='real' name='GROSS_PROFIT' ordinal='4' /><column datatype='date' name='ORDER_DATE_KEY' ordinal='5' /></columns></relation><relation name='Customer Dim' table='[TJ].[CUSTOMER_DIM]' type='table'><columns header='yes' outcome='4'><column datatype='integer' name='CUSTOMER_KEY' ordinal='0' /><column datatype='string' name='CUSTOMER_SEGMENT' ordinal='1' /><column datatype='string' name='REGION' ordinal='2' /><column datatype='string' name='LOYALTY_TIER' ordinal='3' /></columns></relation></relation></connection><column caption='Gross Margin %' datatype='real' name='[Gross Margin Pct]' role='measure' type='quantitative'><calculation class='tableau' formula='SUM([GROSS_PROFIT]) / SUM([GROSS_REVENUE])' /></column><column caption='Revenue Band' datatype='string' name='[Revenue Band]' role='dimension' type='nominal'><calculation class='tableau' formula='IF [GROSS_REVENUE] &gt; 1000 THEN &apos;High&apos; ELSEIF [GROSS_REVENUE] &gt; 500 THEN &apos;Mid&apos; ELSE &apos;Low&apos; END' /></column><column caption='Days Since Order' datatype='integer' name='[Days Since Order]' role='measure' type='quantitative'><calculation class='tableau' formula='DATEDIFF(&apos;day&apos;, [ORDER_DATE_KEY], TODAY())' /></column></datasource></datasources></workbook>`;
             ingestTableauXml(xml, 'example_workbook.twb');
+        }
+
+
+        // ═══════════════════════════════════════════════════════════════════
+        // ── Power BI Converter ────────────────────────────────────────────
+        // ═══════════════════════════════════════════════════════════════════
+
+        let _pbiModel = null; // parsed TOM JSON
+
+        function handlePbiFileInput(event) {
+            const files = event.target.files;
+            if (files.length > 0) processPbiFile(files[0]);
+        }
+
+        function handlePbiDrop(event) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('drag-over');
+            const files = event.dataTransfer.files;
+            if (files.length > 0) processPbiFile(files[0]);
+        }
+
+        async function processPbiFile(file) {
+            const fileName = file.name.toLowerCase();
+            try {
+                if (fileName.endsWith('.pbit')) {
+                    // .pbit is a ZIP containing DataModelSchema
+                    const arrayBuffer = await file.arrayBuffer();
+                    const zip = await JSZip.loadAsync(arrayBuffer);
+                    const schemaFile = zip.file('DataModelSchema');
+                    if (!schemaFile) {
+                        showToast('❌ No DataModelSchema found in .pbit file', 'error');
+                        return;
+                    }
+                    // DataModelSchema may have BOM or UTF-16 encoding
+                    let text = await schemaFile.async('string');
+                    // Strip BOM if present
+                    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+                    // Try to parse — sometimes it's UTF-16LE encoded
+                    try {
+                        _pbiModel = JSON.parse(text);
+                    } catch (e) {
+                        // Try as arraybuffer → UTF-16LE decode
+                        const ab = await schemaFile.async('arraybuffer');
+                        const decoded = new TextDecoder('utf-16le').decode(ab);
+                        _pbiModel = JSON.parse(decoded.replace(/^\uFEFF/, ''));
+                    }
+                } else if (fileName.endsWith('.bim') || fileName.endsWith('.json')) {
+                    const text = await file.text();
+                    _pbiModel = JSON.parse(text);
+                } else {
+                    showToast('❌ Unsupported file type. Use .pbit, .bim, or .json', 'error');
+                    return;
+                }
+
+                // Validate structure
+                const model = _pbiModel.model || _pbiModel;
+                if (!model.tables || !Array.isArray(model.tables)) {
+                    showToast('❌ Invalid model — no "tables" array found', 'error');
+                    _pbiModel = null;
+                    return;
+                }
+
+                // Show file badge
+                const tables = model.tables || [];
+                const measures = tables.reduce((n, t) => n + (t.measures || []).length, 0);
+                const rels = (model.relationships || []).length;
+                document.getElementById('pbiFileList').innerHTML =
+                    `<div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--bg-secondary);border-radius:6px;font-size:12px;">
+                        <span>📈</span><span style="font-weight:600;">${file.name}</span>
+                        <span style="color:var(--text-muted);margin-left:auto;">${tables.length} tables · ${measures} measures · ${rels} relationships</span>
+                    </div>`;
+
+                document.getElementById('pbiInputStats').innerHTML = [
+                    `<span class="dbt-stat-badge dimensions">${tables.length} tables</span>`,
+                    `<span class="dbt-stat-badge measures">${measures} measures</span>`,
+                    rels ? `<span class="dbt-stat-badge entities">${rels} relationships</span>` : ''
+                ].filter(Boolean).join('');
+
+                document.getElementById('pbiConvertBtn').disabled = false;
+                showToast(`Loaded Power BI model: ${tables.length} tables, ${measures} measures`, 'success');
+
+            } catch (e) {
+                showToast('❌ Failed to parse file: ' + e.message, 'error');
+                if (_isDevMode()) console.error(e);
+            }
+        }
+
+        // ── DAX → Sigma Formula Converter ─────────────────────────────────
+        const PBI_COMMUNITY_LINKS = {
+            lod: 'community.sigmacomputing.com/t/tableau-level-of-detail-or-lod-calculations-in-sigma/6427',
+            groupings: 'community.sigmacomputing.com/t/how-to-use-groupings-aggregate-calculations/2003',
+            rollup: 'community.sigmacomputing.com/t/rollup-perform-aggregate-calculations-across-a-group-of-values-without-using-a-group-by/4367',
+            biDiffs: 'community.sigmacomputing.com/t/sigma-differences-from-other-bi-tools-overview-for-new-sigma-creators/3285',
+            leveled: 'community.sigmacomputing.com/t/how-to-implement-complex-leveled-aggregations-in-sigma-lods-dax/5203',
+            pop: 'community.sigmacomputing.com/t/which-logic-to-use-for-period-over-period-comparisons/3206',
+        };
+
+        function pbiDaxToSigma(dax, warnings, measureName) {
+            if (!dax || !dax.trim()) return null;
+            let f = dax.trim();
+
+            // ── Tier 4: Structural patterns → warnings only ──────────────────
+            // CALCULATE with ALL/ALLEXCEPT/REMOVEFILTERS → grouping pattern
+            if (/\bCALCULATE\s*\(/i.test(f) && /\b(ALL|ALLEXCEPT|REMOVEFILTERS|ALLSELECTED)\s*\(/i.test(f)) {
+                if (warnings) warnings.push(`⚠ "${measureName}": uses CALCULATE with filter context manipulation. In Sigma, use groupings to compute aggregates at different levels. See: ${PBI_COMMUNITY_LINKS.leveled}`);
+                return null;
+            }
+            // Iterator functions (SUMX, AVERAGEX, COUNTROWS+FILTER)
+            if (/\b(SUMX|AVERAGEX|MINX|MAXX|COUNTAX|CONCATENATEX)\s*\(/i.test(f)) {
+                if (warnings) warnings.push(`⚠ "${measureName}": uses DAX iterator (${f.match(/\b(SUMX|AVERAGEX|MINX|MAXX|COUNTAX|CONCATENATEX)/i)[1]}). No direct Sigma equivalent — use groupings or calculated columns. See: ${PBI_COMMUNITY_LINKS.groupings}`);
+                return null;
+            }
+            // Time intelligence
+            if (/\b(TOTALYTD|TOTALQTD|TOTALMTD|SAMEPERIODLASTYEAR|DATEADD|DATESYTD|PARALLELPERIOD|PREVIOUSMONTH|PREVIOUSQUARTER|PREVIOUSYEAR)\s*\(/i.test(f)) {
+                const fn = f.match(/\b(TOTALYTD|TOTALQTD|TOTALMTD|SAMEPERIODLASTYEAR|DATEADD|DATESYTD|PARALLELPERIOD|PREVIOUSMONTH|PREVIOUSQUARTER|PREVIOUSYEAR)/i)[1];
+                if (warnings) warnings.push(`⚠ "${measureName}": uses DAX time intelligence (${fn}). In Sigma, use the Period over Period feature or DateAdd/DateDiff functions. See: ${PBI_COMMUNITY_LINKS.pop}`);
+                return null;
+            }
+            // CALCULATE without ALL (simple filter) — try to convert
+            if (/\bCALCULATE\s*\(/i.test(f)) {
+                // Try simple: CALCULATE(SUM([Col]), [Dim] = "Value")
+                const simpleCalc = f.match(/\bCALCULATE\s*\(\s*(SUM|COUNT|COUNTROWS|AVERAGE|MIN|MAX|DISTINCTCOUNT)\s*\(\s*(\[[^\]]+\])\s*\)\s*,\s*(\[[^\]]+\])\s*=\s*"([^"]+)"\s*\)/i);
+                if (simpleCalc) {
+                    const aggMap = { 'SUM': 'SumIf', 'AVERAGE': 'AvgIf', 'COUNT': 'CountIf', 'MIN': 'MinIf', 'MAX': 'MaxIf', 'DISTINCTCOUNT': 'CountDistinctIf' };
+                    const sigmaFn = aggMap[simpleCalc[1].toUpperCase()] || 'SumIf';
+                    const col = simpleCalc[2];
+                    const dimCol = simpleCalc[3];
+                    const val = simpleCalc[4];
+                    if (sigmaFn === 'CountIf') {
+                        return `CountIf(${dimCol} = "${val}")`;
+                    }
+                    return `${sigmaFn}(${col}, ${dimCol} = "${val}")`;
+                }
+                // Complex CALCULATE — skip
+                if (warnings) warnings.push(`⚠ "${measureName}": complex CALCULATE expression. In Sigma, use groupings to change aggregation context. See: ${PBI_COMMUNITY_LINKS.leveled}`);
+                return null;
+            }
+            // VAR/RETURN blocks
+            if (/\bVAR\b/i.test(f) && /\bRETURN\b/i.test(f)) {
+                if (warnings) warnings.push(`⚠ "${measureName}": uses DAX VAR/RETURN variables. Break into multiple Sigma calculated columns. See: ${PBI_COMMUNITY_LINKS.biDiffs}`);
+                return null;
+            }
+
+            // ── Tier 1: Direct mappings ───────────────────────────────────────
+            // DIVIDE(a, b, alt) → a / b or If(b = 0, alt, a / b)
+            // Must handle nested functions: DIVIDE(SUM([col]), SUM([col]), 0)
+            const divideMatch = f.match(/\bDIVIDE\s*\(/i);
+            if (divideMatch) {
+                const startIdx = divideMatch.index + divideMatch[0].length;
+                // Parse args respecting nested parens
+                const divArgs = [];
+                let depth = 1, argStart = startIdx;
+                for (let i = startIdx; i < f.length && depth > 0; i++) {
+                    if (f[i] === '(') depth++;
+                    else if (f[i] === ')') { depth--; if (depth === 0) { divArgs.push(f.slice(argStart, i).trim()); break; } }
+                    else if (f[i] === ',' && depth === 1) { divArgs.push(f.slice(argStart, i).trim()); argStart = i + 1; }
+                }
+                if (divArgs.length >= 2) {
+                    const num = divArgs[0], den = divArgs[1], alt = divArgs[2];
+                    const endIdx = startIdx + f.slice(startIdx).indexOf(')' + '') + 1; // find closing paren
+                    let replacement;
+                    if (alt && alt.trim()) {
+                        replacement = `If(${den} = 0, ${alt.trim()}, ${num} / ${den})`;
+                    } else {
+                        replacement = `${num} / ${den}`;
+                    }
+                    // Find the actual end position (after the closing paren of DIVIDE)
+                    let d2 = 1, endPos = startIdx;
+                    for (; endPos < f.length && d2 > 0; endPos++) {
+                        if (f[endPos] === '(') d2++;
+                        else if (f[endPos] === ')') d2--;
+                    }
+                    f = f.slice(0, divideMatch.index) + replacement + f.slice(endPos);
+                }
+            }
+            // Simple aggregates
+            f = f.replace(/\bDISTINCTCOUNT\s*\(/gi, 'CountDistinct(');
+            f = f.replace(/\bCOUNTROWS\s*\(\s*'?[^)]*'?\s*\)/gi, 'Count()');
+            f = f.replace(/\bCOUNTA\s*\(/gi, 'CountIf(IsNotNull(');
+            f = f.replace(/\bSUM\s*\(/gi, 'Sum(');
+            f = f.replace(/\bAVERAGE\s*\(/gi, 'Avg(');
+            f = f.replace(/\bMIN\s*\(/gi, 'Min(');
+            f = f.replace(/\bMAX\s*\(/gi, 'Max(');
+            f = f.replace(/\bCOUNT\s*\(/gi, 'Count(');
+            // RELATED([Col]) → just [Col] (Sigma resolves via relationships)
+            f = f.replace(/\bRELATED\s*\(\s*(\[[^\]]+\])\s*\)/gi, '$1');
+            f = f.replace(/\bRELATEDTABLE\s*\([^)]*\)/gi, '/* RELATEDTABLE - use relationship */');
+            // Logical
+            f = f.replace(/\bIF\s*\(/gi, 'If(');
+            f = f.replace(/\bSWITCH\s*\(\s*TRUE\s*\(\s*\)\s*,/gi, 'If(');
+            f = f.replace(/\bSWITCH\s*\(/gi, 'Switch(');
+            f = f.replace(/\bISBLANK\s*\(/gi, 'IsNull(');
+            f = f.replace(/\bCOALESCE\s*\(/gi, 'Coalesce(');
+            f = f.replace(/\bBLANK\s*\(\s*\)/gi, 'null');
+            f = f.replace(/\bNOT\s*\(/gi, 'Not(');
+            f = f.replace(/\bTRUE\s*\(\s*\)/gi, 'True');
+            f = f.replace(/\bFALSE\s*\(\s*\)/gi, 'False');
+            f = f.replace(/\b&&\b/g, ' and ');
+            f = f.replace(/\b\|\|\b/g, ' or ');
+            // Text
+            f = f.replace(/\bCONCATENATE\s*\(/gi, 'Concat(');
+            f = f.replace(/\bLEN\s*\(/gi, 'Len(');
+            f = f.replace(/\bUPPER\s*\(/gi, 'Upper(');
+            f = f.replace(/\bLOWER\s*\(/gi, 'Lower(');
+            f = f.replace(/\bTRIM\s*\(/gi, 'Trim(');
+            f = f.replace(/\bLEFT\s*\(/gi, 'Left(');
+            f = f.replace(/\bRIGHT\s*\(/gi, 'Right(');
+            f = f.replace(/\bMID\s*\(/gi, 'Mid(');
+            f = f.replace(/\bSUBSTITUTE\s*\(/gi, 'Replace(');
+            f = f.replace(/\bFORMAT\s*\(/gi, 'DateFormat(');
+            // Math
+            f = f.replace(/\bABS\s*\(/gi, 'Abs(');
+            f = f.replace(/\bROUND\s*\(/gi, 'Round(');
+            f = f.replace(/\bINT\s*\(/gi, 'Int(');
+            f = f.replace(/\bSQRT\s*\(/gi, 'Sqrt(');
+            f = f.replace(/\bPOWER\s*\(/gi, 'Power(');
+            // Date
+            f = f.replace(/\bYEAR\s*\(/gi, 'Year(');
+            f = f.replace(/\bMONTH\s*\(/gi, 'Month(');
+            f = f.replace(/\bDAY\s*\(/gi, 'Day(');
+            f = f.replace(/\bHOUR\s*\(/gi, 'Hour(');
+            f = f.replace(/\bMINUTE\s*\(/gi, 'Minute(');
+            f = f.replace(/\bSECOND\s*\(/gi, 'Second(');
+            f = f.replace(/\bTODAY\s*\(\s*\)/gi, 'Today()');
+            f = f.replace(/\bNOW\s*\(\s*\)/gi, 'Now()');
+            f = f.replace(/\bDATE\s*\(/gi, 'MakeDate(');
+            f = f.replace(/\bDATEDIFF\s*\(/gi, 'DateDiff(');
+            // Clean up 'table'[column] → [column] (remove DAX table qualifier)
+            f = f.replace(/'[^']+'\[([^\]]+)\]/g, '[$1]');
+            // Also handle unquoted: Table[Column] → [Column]
+            f = f.replace(/\b[A-Za-z_]\w*\[([^\]]+)\]/g, '[$1]');
+            // Double-quote strings are fine in Sigma
+            return f.trim();
+        }
+
+        // ── Extract table path from Power Query M expression ──────────────
+        function pbiExtractPathFromM(mExpr) {
+            if (!mExpr) return null;
+            // Match Sql.Database("server", "database") patterns
+            const dbMatch = mExpr.match(/Sql\.Database\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"/i)
+                || mExpr.match(/Snowflake\.Databases\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"/i);
+            const schemaMatch = mExpr.match(/\{[^}]*\[Schema\s*=\s*"([^"]+)"\]/i)
+                || mExpr.match(/\{[^}]*\[Name\s*=\s*"([^"]+)"\s*,\s*\[Kind\s*=\s*"Schema"\]/i);
+            const tableMatch = mExpr.match(/\{[^}]*\[Name\s*=\s*"([^"]+)"\s*,\s*\[Kind\s*=\s*"Table"\]/i)
+                || mExpr.match(/\{[^}]*\[Name\s*=\s*"([^"]+)"\]\s*\}\s*\[\s*Data\s*\]/i);
+            const db = dbMatch ? dbMatch[1] : null;
+            const schema = schemaMatch ? schemaMatch[1] : null;
+            const table = tableMatch ? tableMatch[1] : null;
+            if (db && schema && table) return [db.toUpperCase(), schema.toUpperCase(), table.toUpperCase()];
+            if (schema && table) return [schema.toUpperCase(), table.toUpperCase()];
+            return null;
+        }
+
+        // ── Main conversion ───────────────────────────────────────────────
+        function runPbiConversion() {
+            if (!_pbiModel) { showToast('Upload a Power BI file first', 'warning'); return; }
+            const btn = document.getElementById('pbiConvertBtn');
+            btn.disabled = true; btn.textContent = '⏳ Converting…';
+
+            try {
+                const model = _pbiModel.model || _pbiModel;
+                const connectionId = document.getElementById('pbiConnectionId').value.trim() || '<CONNECTION_ID>';
+                const dbOverride = document.getElementById('pbiDatabase').value.trim().toUpperCase();
+                const schOverride = document.getElementById('pbiSchema').value.trim().toUpperCase();
+                const warnings = [];
+                const elements = [];
+                const tableIdMap = {}; // PBI table name → Sigma element ID
+                const tableColMap = {}; // PBI table name → { pbiColName → sigmaColId }
+                const allPbiToSigmaNames = {}; // global PBI column name → Sigma display name
+
+                // ── Detect "measures only" tables (no real columns, just measures) ──
+                const measureOnlyTables = new Set();
+                for (const t of (model.tables || [])) {
+                    const dataCols = (t.columns || []).filter(c => c.type !== 'rowNumber' && !c.isGenerated);
+                    if (dataCols.length === 0 && (t.measures || []).length > 0) {
+                        measureOnlyTables.add(t.name);
+                    }
+                }
+
+                // ── Convert tables to Sigma elements ─────────────────────────────
+                for (const t of (model.tables || [])) {
+                    if (measureOnlyTables.has(t.name)) continue; // skip, measures moved later
+                    // Skip internal PBI tables
+                    if (t.name.startsWith('LocalDateTable_') || t.name.startsWith('DateTableTemplate_')) continue;
+
+                    const elementId = sigmaShortId();
+                    const tableName = t.name;
+                    tableIdMap[tableName] = elementId;
+                    tableColMap[tableName] = {};
+
+                    // Determine source path
+                    let path = null;
+                    const partition = (t.partitions || [])[0];
+                    if (partition && partition.source) {
+                        if (partition.source.expression) {
+                            path = pbiExtractPathFromM(
+                                Array.isArray(partition.source.expression)
+                                    ? partition.source.expression.join('\n')
+                                    : partition.source.expression
+                            );
+                        }
+                        if (!path && partition.source.query) {
+                            // Legacy data source with SQL query
+                            const tblMatch = partition.source.query.match(/FROM\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?\.\[?(\w+)\]?/i);
+                            if (tblMatch) {
+                                path = [tblMatch[1] || '', tblMatch[2], tblMatch[3]].filter(Boolean).map(s => s.toUpperCase());
+                            }
+                        }
+                    }
+                    // Apply overrides
+                    if (path) {
+                        if (dbOverride && path.length >= 3) path[0] = dbOverride;
+                        if (schOverride && path.length >= 3) path[1] = schOverride;
+                        else if (schOverride && path.length === 2) path[0] = schOverride;
+                    } else {
+                        path = [dbOverride || 'DATABASE', schOverride || 'SCHEMA', tableName.toUpperCase()];
+                        warnings.push(`⚠ Table "${tableName}": could not extract source path from M expression — using default. Update the path manually.`);
+                    }
+
+                    // Columns
+                    const columns = [];
+                    const order = [];
+                    const pbiToSigmaName = {}; // PBI column name → Sigma display name (for formula rewriting)
+                    for (const c of (t.columns || [])) {
+                        if (c.type === 'rowNumber' || c.isGenerated) continue;
+                        const sourceCol = c.sourceColumn || c.name;
+                        const displayName = sigmaDisplayName(sourceCol);
+                        const colId = sigmaShortId();
+                        tableColMap[tableName][c.name] = colId;
+                        pbiToSigmaName[c.name] = displayName;
+                        allPbiToSigmaNames[c.name] = displayName;
+
+                        const col = { id: colId, formula: `[${tableName.toUpperCase()}/${displayName}]` };
+                        // Don't add name override for warehouse columns — Sigma uses the display name from the formula
+                        if (c.isHidden) col.hidden = true;
+                        if (c.description) col.description = c.description;
+                        columns.push(col);
+                        order.push(colId);
+                    }
+
+                    // Calculated columns
+                    for (const c of (t.columns || [])) {
+                        if (!c.expression && !c.type) continue;
+                        if (c.type === 'calculated') {
+                            let sigmaFormula = pbiDaxToSigma(c.expression, warnings, c.name);
+                            if (sigmaFormula) {
+                                // Rewrite PBI column names → Sigma display names
+                                sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m, colName) => {
+                                    return pbiToSigmaName[colName] ? `[${pbiToSigmaName[colName]}]` : m;
+                                });
+                                const colId = sigmaShortId();
+                                tableColMap[tableName][c.name] = colId;
+                                pbiToSigmaName[c.name] = c.name; // calc cols keep their name
+                                columns.push({ id: colId, formula: sigmaFormula, name: c.name });
+                                order.push(colId);
+                                warnings.push(`ℹ "${c.name}" → calculated column. Review: ${sigmaFormula.slice(0, 60)}`);
+                            } else if (!warnings.some(w => w.includes(c.name))) {
+                                warnings.push(`⛔ "${c.name}": DAX expression could not be converted. Add manually.`);
+                            }
+                        }
+                    }
+
+                    // Measures → metrics
+                    const metrics = [];
+                    for (const m of (t.measures || [])) {
+                        let sigmaFormula = pbiDaxToSigma(m.expression, warnings, m.name);
+                        if (sigmaFormula) {
+                            // Rewrite PBI column names → Sigma display names
+                            sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m2, colName) => {
+                                return pbiToSigmaName[colName] ? `[${pbiToSigmaName[colName]}]` : m2;
+                            });
+                            const metric = { id: sigmaShortId(), formula: sigmaFormula, name: m.name };
+                            if (m.description) metric.description = m.description;
+                            metrics.push(metric);
+                        } else if (!warnings.some(w => w.includes(`"${m.name}"`))) {
+                            warnings.push(`⛔ "${m.name}": DAX measure could not be auto-converted. Add manually in Sigma.`);
+                        }
+                    }
+
+                    // Display folders
+                    const folders = [];
+                    const folderMap = {};
+                    for (const c of [...(t.columns || []), ...(t.measures || [])]) {
+                        if (c.displayFolder) {
+                            if (!folderMap[c.displayFolder]) {
+                                const folderId = sigmaShortId();
+                                folderMap[c.displayFolder] = { id: folderId, name: c.displayFolder, items: [] };
+                            }
+                            const colId = tableColMap[tableName][c.name];
+                            if (colId) folderMap[c.displayFolder].items.push(colId);
+                        }
+                    }
+                    if (Object.keys(folderMap).length > 0) {
+                        for (const folder of Object.values(folderMap)) {
+                            if (folder.items.length > 0) folders.push(folder);
+                        }
+                    }
+
+                    const element = { id: elementId, kind: 'table', source: { connectionId, kind: 'warehouse-table', path }, columns, order };
+                    if (metrics.length > 0) element.metrics = metrics;
+                    if (folders.length > 0) element.folders = folders;
+                    if (t.isHidden) element.visibleAsSource = false;
+                    elements.push(element);
+                }
+
+                // ── Move measures from "measures only" tables to fact element ────
+                if (measureOnlyTables.size > 0) {
+                    // Find the best fact element (most columns or has relationships)
+                    const factEl = elements.reduce((best, e) =>
+                        (e.columns || []).length > (best.columns || []).length ? e : best, elements[0]);
+                    if (factEl) {
+                        for (const tName of measureOnlyTables) {
+                            const t = model.tables.find(tb => tb.name === tName);
+                            if (!t) continue;
+                            for (const m of (t.measures || [])) {
+                                let sigmaFormula = pbiDaxToSigma(m.expression, warnings, m.name);
+                                if (sigmaFormula) {
+                                    // Rewrite PBI column names → Sigma display names
+                                    sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m2, colName) => {
+                                        return allPbiToSigmaNames[colName] ? `[${allPbiToSigmaNames[colName]}]` : m2;
+                                    });
+                                    if (!factEl.metrics) factEl.metrics = [];
+                                    const metric = { id: sigmaShortId(), formula: sigmaFormula, name: m.name };
+                                    if (m.description) metric.description = m.description;
+                                    factEl.metrics.push(metric);
+                                }
+                            }
+                            warnings.push(`ℹ Measures table "${tName}" → measures moved to "${factEl.source.path[factEl.source.path.length - 1]}"`);
+                        }
+                    }
+                }
+
+                // ── Relationships ─────────────────────────────────────────────────
+                for (const rel of (model.relationships || [])) {
+                    const fromTable = rel.fromTable;
+                    const toTable = rel.toTable;
+                    const fromCol = rel.fromColumn;
+                    const toCol = rel.toColumn;
+
+                    const fromElId = tableIdMap[fromTable];
+                    const toElId = tableIdMap[toTable];
+                    if (!fromElId || !toElId) continue;
+
+                    const fromColId = tableColMap[fromTable]?.[fromCol];
+                    const toColId = tableColMap[toTable]?.[toCol];
+                    if (!fromColId || !toColId) {
+                        warnings.push(`⚠ Relationship ${fromTable}[${fromCol}] → ${toTable}[${toCol}]: columns not found`);
+                        continue;
+                    }
+
+                    // In Power BI, fromTable is the "many" side (fact), toTable is the "one" side (dim)
+                    const fromElement = elements.find(e => e.id === fromElId);
+                    if (fromElement) {
+                        if (!fromElement.relationships) fromElement.relationships = [];
+                        fromElement.relationships.push({
+                            id: sigmaShortId(),
+                            targetElementId: toElId,
+                            keys: [{ sourceColumnId: fromColId, targetColumnId: toColId }],
+                            name: toTable
+                        });
+                    }
+                }
+
+                // ── Auto-fix cross-element column references with - link/ syntax ──
+                // NOTE: Sigma API currently mangles - link/ on PUT. Generated assuming fix.
+                const pbiGlobalColMap = {};
+                for (const el of elements) {
+                    for (const c of (el.columns || [])) {
+                        const fm = c.formula.match(/\[([^\/\]]+)\/([^\]]+)\]$/);
+                        if (fm) pbiGlobalColMap[fm[2].toUpperCase()] = { elId: el.id, displayName: fm[2] };
+                    }
+                }
+                for (const el of elements) {
+                    const localNames = new Set();
+                    for (const c of (el.columns || [])) {
+                        if (c.name) localNames.add(c.name.toUpperCase());
+                        const fm = c.formula.match(/\/([^\]]+)\]$/);
+                        if (fm) localNames.add(fm[1].toUpperCase());
+                    }
+                    const relFkLookup = {};
+                    const elTbl = el.source && el.source.path
+                        ? el.source.path[el.source.path.length - 1] : (el.name || 'UNKNOWN');
+                    for (const rel of (el.relationships || [])) {
+                        const fkCol = (el.columns || []).find(c => c.id === rel.keys[0]?.sourceColumnId);
+                        if (fkCol) {
+                            const fkM = fkCol.formula.match(/\/([^\]]+)\]$/);
+                            if (fkM) relFkLookup[rel.targetElementId] = fkM[1].replace(/\s+/g, '_').toUpperCase();
+                        }
+                    }
+                    for (const c of (el.columns || [])) {
+                        if (!c.name || !c.formula) continue;
+                        if (c.formula.match(/^\[[\w_]+\//)) continue;
+                        if (c.formula.includes('- link/')) continue;
+                        const refs = c.formula.match(/\[([^\]\/]+)\]/g) || [];
+                        let fixedFormula = c.formula;
+                        let wasFixed = false;
+                        for (const ref of refs) {
+                            const rn = ref.replace(/^\[|\]$/g, '');
+                            if (localNames.has(rn.toUpperCase()) || rn.toUpperCase() === 'TRUE' || rn.toUpperCase() === 'FALSE') continue;
+                            const ge = pbiGlobalColMap[rn.toUpperCase()];
+                            if (ge && relFkLookup[ge.elId]) {
+                                fixedFormula = fixedFormula.replace(ref, `[${elTbl}/${relFkLookup[ge.elId]} - link/${ge.displayName}]`);
+                                wasFixed = true;
+                            } else {
+                                warnings.push(`⚠ "${c.name}" references [${rn}] — no matching relationship found. Fix manually in Sigma UI.`);
+                            }
+                        }
+                        if (wasFixed) {
+                            c.formula = fixedFormula;
+                            warnings.push(`✅ "${c.name}" → linked column: ${fixedFormula.slice(0, 100)}`);
+                            warnings.push(`   ⚠ Note: Sigma API may not round-trip linked columns correctly yet. If this column errors after save, re-add it manually in the Sigma UI.`);
+                        }
+                    }
+                }
+
+                // ── Build output ──────────────────────────────────────────────────
+                const modelName = _pbiModel.name || model.name || 'Power BI Import';
+                const outputJson = {
+                    name: modelName,
+                    pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
+                };
+
+                document.getElementById('pbiJsonOutput').value = JSON.stringify(outputJson, null, 2);
+
+                // Warnings
+                const warnBox = document.getElementById('pbiWarningBox');
+                if (warnings.length) {
+                    warnBox.style.display = '';
+                    warnBox.innerHTML = warnings.map(w => {
+                        // Auto-link community URLs
+                        return '<div>' + w.replace(/(community\.sigmacomputing\.com\/t\/[^\s]+)/g, '<a href="https://$1" target="_blank" style="color:var(--accent);">$1</a>') + '</div>';
+                    }).join('');
+                } else { warnBox.style.display = 'none'; }
+
+                // Stats
+                const ec = elements.length;
+                const mc = elements.reduce((n, e) => n + (e.metrics || []).length, 0);
+                const rc = elements.reduce((n, e) => n + (e.relationships || []).length, 0);
+                const wc = warnings.length;
+                document.getElementById('pbiOutputStats').innerHTML = [
+                    `<span class="dbt-stat-badge">${ec} element${ec !== 1 ? 's' : ''}</span>`,
+                    mc ? `<span class="dbt-stat-badge measures">${mc} metric${mc !== 1 ? 's' : ''}</span>` : '',
+                    rc ? `<span class="dbt-stat-badge entities">${rc} relationship${rc !== 1 ? 's' : ''}</span>` : '',
+                    wc ? `<span class="dbt-stat-badge" style="color:var(--warning);">${wc} warning${wc !== 1 ? 's' : ''}</span>` : ''
+                ].filter(Boolean).join('');
+
+                ['pbiCopyBtn', 'pbiLoadBtn', 'pbiSaveBtn'].forEach(id => document.getElementById(id).disabled = false);
+                showToast(`Converted "${modelName}" → ${ec} element${ec !== 1 ? 's' : ''}, ${mc} metric${mc !== 1 ? 's' : ''}`, 'success');
+
+            } catch (e) {
+                showToast('Conversion error: ' + e.message, 'error');
+                if (_isDevMode()) console.error(e);
+            } finally {
+                btn.disabled = false; btn.textContent = '📈 Convert to Sigma JSON';
+            }
+        }
+
+        function copyPbiOutput() {
+            const val = document.getElementById('pbiJsonOutput').value;
+            if (!val) return;
+            navigator.clipboard.writeText(val).then(() => showToast('Copied to clipboard', 'success'));
+        }
+
+        function loadPbiOutputToEditor() {
+            const val = document.getElementById('pbiJsonOutput').value;
+            if (!val) return;
+            try {
+                const obj = JSON.parse(val);
+                editorMode = 'json';
+                _updateModeToggleUI();
+                setEditorContent(obj);
+            } catch (e) {
+                document.getElementById('jsonEditor').value = val;
+            }
+            state.isNewModel = true;
+            state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from Power BI (unsaved)';
+            ['formatBtn', 'copyBtn', 'saveBtn'].forEach(id => document.getElementById(id).disabled = false);
+            enableEditorModeToggle();
+            switchEditorTab('json');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
+        }
+
+        async function loadAndSavePbiModel() {
+            const rawVal = document.getElementById('pbiJsonOutput').value;
+            if (!rawVal) { showToast('Convert a Power BI file first', 'warning'); return; }
+            loadPbiOutputToEditor();
+            if (!state.accessToken) { showToast('Loaded into editor. Connect to Sigma, then click Save to Sigma.', 'warning'); return; }
+            openSaveLocationModal();
         }
 
 
@@ -10487,6 +11677,258 @@ view: date_dim {
             showToast('Example LookML project loaded — click Convert', 'success');
         }
 
+        // ── Help System ───────────────────────────────────────────────────
+        const HELP_CONTENT = {
+            overview: `
+<h3>What is the Data Model Manager?</h3>
+<p>A single-file HTML tool for managing Sigma data models via the <b>Sigma REST API</b>. It lets you create, edit, import, and manage data models without leaving your browser.</p>
+
+<h3>Key Capabilities</h3>
+<ul>
+    <li><b>JSON Editor</b> — View and edit data model JSON directly, with syntax highlighting and formatting</li>
+    <li><b>File Explorer</b> — Navigate elements, columns, metrics, and relationships visually</li>
+    <li><b>AI Assistant</b> — Generate columns, metrics, descriptions, RLS, CLS, and more using natural language</li>
+    <li><b>Smart Insert</b> — AI-generated content is merged intelligently into the correct element</li>
+    <li><b>Converters</b> — Import from dbt, Snowflake, LookML, Tableau, and Power BI</li>
+    <li><b>Bulk Upload</b> — Create multiple elements from warehouse tables at once</li>
+    <li><b>Column Renamer</b> — Batch rename columns with prettification</li>
+</ul>
+
+<h3>General Workflow</h3>
+<p>Connect to the Sigma API with your credentials → select or create a data model → edit in JSON or File Explorer → save back to Sigma. Converters let you import from other BI tools, generating Sigma-compatible JSON that you review and save.</p>
+
+<div class="help-links">
+    <div class="help-links-title">📚 Essential Community Articles</div>
+    <a href="https://community.sigmacomputing.com/t/sigma-differences-from-other-bi-tools-overview-for-new-sigma-creators/3285" target="_blank">Sigma Differences from Other BI Tools</a>
+    <a href="https://community.sigmacomputing.com/t/how-to-use-groupings-aggregate-calculations/2003" target="_blank">Groupings & Aggregate Calculations</a>
+    <a href="https://community.sigmacomputing.com/t/data-model-faqs/3481" target="_blank">Data Model FAQs</a>
+</div>`,
+
+            tableau: `
+<h3>Tableau Converter</h3>
+<p>Converts Tableau workbooks (<code>.twb</code>) to Sigma data model JSON. Parses data sources, calculated fields, parameters, relationships, and LOD expressions.</p>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>Data sources</b> → Sigma elements with warehouse table paths</li>
+    <li><b>Joins/Relationships</b> → Sigma relationships on the fact element</li>
+    <li><b>Calculated fields</b> → Sigma calculated columns with formula conversion</li>
+    <li><b>Simple aggregates</b> → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)</li>
+    <li><b>Parameters</b> → Sigma controls (list, date-range, text)</li>
+    <li><b>LOD FIXED expressions</b> → Child elements with groupings</li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li><b>LOD INCLUDE/EXCLUDE</b> — Cannot be auto-converted; generates a warning with guidance</li>
+    <li><b>Table calculations</b> — RUNNING_SUM, RANK, WINDOW_AVG etc. are flagged, not converted</li>
+    <li><b>Linked columns</b> — Formulas referencing related dimension columns use <code>- link/</code> syntax which has a known API round-trip bug <span class="help-badge api-bug">API Bug</span></li>
+    <li><b>Role-playing dimensions</b> — Only one relationship per dimension table is supported</li>
+    <li><b>Bins &amp; sets</b> — Not directly converted; generates warnings</li>
+</ul>
+
+<div class="help-links">
+    <div class="help-links-title">📚 Community Articles</div>
+    <a href="https://community.sigmacomputing.com/t/tableau-level-of-detail-or-lod-calculations-in-sigma/6427" target="_blank">Tableau LOD Calculations in Sigma</a>
+    <a href="https://community.sigmacomputing.com/t/how-to-use-groupings-aggregate-calculations/2003" target="_blank">Groupings & Aggregate Calculations</a>
+    <a href="https://community.sigmacomputing.com/t/rollup-perform-aggregate-calculations-across-a-group-of-values-without-using-a-group-by/4367" target="_blank">Rollup Function (Grand Total without Group By)</a>
+    <a href="https://community.sigmacomputing.com/t/which-logic-to-use-for-period-over-period-comparisons/3206" target="_blank">Period over Period Comparisons</a>
+</div>`,
+
+            pbi: `
+<h3>Power BI Converter</h3>
+<p>Converts Power BI models (<code>.pbit</code>, <code>.bim</code>, or <code>.json</code>) to Sigma data model JSON. Parses tables, columns, DAX measures, calculated columns, and relationships.</p>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>Tables</b> → Sigma elements with source paths extracted from M expressions</li>
+    <li><b>Columns</b> → Sigma columns with display names</li>
+    <li><b>Relationships</b> → Sigma relationships (fromTable = many side, toTable = one side)</li>
+    <li><b>DAX measures</b> → Sigma metrics with formula conversion</li>
+    <li><b>Calculated columns</b> → Sigma calculated columns</li>
+    <li><b>Display folders</b> → Sigma folders</li>
+    <li><b>Measures-only tables</b> → Measures moved to the fact element</li>
+    <li><b>Simple CALCULATE</b> → <code>SumIf</code> / <code>CountIf</code> with correct argument order</li>
+    <li><b>DIVIDE</b> → Null-safe division with <code>If(den = 0, alt, num / den)</code></li>
+</ul>
+
+<h3>DAX Patterns That Generate Warnings</h3>
+<ul>
+    <li><b>CALCULATE + ALL/ALLEXCEPT</b> → Use groupings for different aggregation contexts</li>
+    <li><b>Iterators (SUMX, AVERAGEX)</b> → Use groupings or calculated columns</li>
+    <li><b>Time intelligence (TOTALYTD, SAMEPERIODLASTYEAR)</b> → Use Period over Period feature</li>
+    <li><b>VAR/RETURN blocks</b> → Break into multiple calculated columns</li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li><b>M expression parsing</b> — Works for SQL Server, Snowflake, and simple patterns. Complex Power Query may not extract paths correctly.</li>
+    <li><b>Linked columns</b> — Same API round-trip limitation as Tableau <span class="help-badge api-bug">API Bug</span></li>
+</ul>
+
+<div class="help-links">
+    <div class="help-links-title">📚 Community Articles</div>
+    <a href="https://community.sigmacomputing.com/t/how-to-implement-complex-leveled-aggregations-in-sigma-lods-dax/5203" target="_blank">Complex Leveled Aggregations (LODs / DAX)</a>
+    <a href="https://community.sigmacomputing.com/t/sigma-differences-from-other-bi-tools-overview-for-new-sigma-creators/3285" target="_blank">Sigma Differences from Other BI Tools</a>
+    <a href="https://community.sigmacomputing.com/t/which-logic-to-use-for-period-over-period-comparisons/3206" target="_blank">Period over Period Comparisons</a>
+</div>`,
+
+            lookml: `
+<h3>LookML Converter</h3>
+<p>Converts LookML projects (multiple <code>.lkml</code> files) to Sigma data model JSON. Parses views, explores, joins, dimensions, and measures.</p>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>Views with sql_table_name</b> → Sigma elements with warehouse paths</li>
+    <li><b>Derived tables (SQL)</b> → Sigma custom SQL elements</li>
+    <li><b>Dimensions</b> → Sigma columns with formula conversion</li>
+    <li><b>Measures</b> → Sigma metrics (sum, count, count_distinct, average, min, max)</li>
+    <li><b>Explore joins</b> → Sigma relationships</li>
+    <li><b>Dimension groups (time)</b> → Expanded into individual columns per timeframe</li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li><b>percent_of_total measures</b> → Requires groupings; generates a warning pointing to <code>GrandTotal(Sum())</code></li>
+    <li><b>running_total measures</b> → Requires groupings; generates a warning pointing to <code>CumulativeSum()</code></li>
+    <li><b>Filtered measures</b> — <code>filters:</code> blocks are flagged, not auto-converted</li>
+    <li><b>Liquid templating</b> — <code>{% %}</code> and <code>{{ }}</code> blocks are stripped with warnings</li>
+    <li><b>PDT materializations</b> — Recognized but the materialization strategy doesn't carry over</li>
+</ul>
+
+<div class="help-links">
+    <div class="help-links-title">📚 Community Articles</div>
+    <a href="https://community.sigmacomputing.com/t/how-to-use-groupings-aggregate-calculations/2003" target="_blank">Groupings & Aggregate Calculations</a>
+    <a href="https://community.sigmacomputing.com/t/how-to-create-a-running-total-cumulative-sum/1753" target="_blank">Running Total / CumulativeSum</a>
+    <a href="https://community.sigmacomputing.com/t/sigma-differences-from-other-bi-tools-overview-for-new-sigma-creators/3285" target="_blank">Sigma Differences from Other BI Tools</a>
+</div>`,
+
+            dbt: `
+<h3>dbt Converter</h3>
+<p>Converts dbt project files (<code>schema.yml</code>, <code>sources.yml</code>) to Sigma data model JSON. Maps models, sources, columns, descriptions, and relationships.</p>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>Models with columns</b> → Sigma elements with warehouse paths</li>
+    <li><b>Sources</b> → Sigma elements with database/schema/table paths</li>
+    <li><b>Column descriptions</b> → Sigma column descriptions</li>
+    <li><b>Relationships</b> → Auto-detected from column names or <code>ref_table</code> / <code>ref_column</code> meta</li>
+    <li><b>Column tests</b> → Used to infer column properties</li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li><b>No SQL parsing</b> — Calculated columns from dbt SQL are not converted (dbt handles transformation in SQL, Sigma handles it in its own formula language)</li>
+    <li><b>Metric definitions</b> — dbt metrics (<code>metrics:</code> blocks) are not converted to Sigma metrics</li>
+    <li><b>Jinja templating</b> — <code>{{ ref() }}</code> and <code>{{ source() }}</code> are not resolved</li>
+</ul>`,
+
+            snow: `
+<h3>Snowflake Converter</h3>
+<p>Paste Snowflake DDL (<code>CREATE TABLE</code>, <code>CREATE VIEW</code>) or <code>DESCRIBE TABLE</code> output to generate Sigma elements.</p>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>CREATE TABLE/VIEW</b> → Sigma elements with database/schema/table paths</li>
+    <li><b>Column definitions</b> → Sigma columns with display names</li>
+    <li><b>Foreign key constraints</b> → Sigma relationships</li>
+    <li><b>Column comments</b> → Sigma column descriptions</li>
+    <li><b>DESCRIBE TABLE output</b> → Parsed into columns with types</li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li><b>Complex views</b> — Only the column names from the DDL are used; the underlying SQL logic is not parsed</li>
+    <li><b>Materialized views / streams</b> — Treated as regular tables</li>
+</ul>`,
+
+            ai: `
+<h3>AI Assistant</h3>
+<p>Uses the Claude API to generate data model content from natural language. Works in two modes: <b>modify existing</b> (add columns, metrics, descriptions to loaded models) and <b>add new table</b> (generate a complete element from scratch).</p>
+
+<h3>Capabilities</h3>
+<ul>
+    <li><b>Add calculated columns</b> — "Add a Gross Margin % column"</li>
+    <li><b>Add metrics</b> — "Create metrics for total revenue, order count, and AOV"</li>
+    <li><b>Add descriptions</b> — "Add descriptions to all columns"</li>
+    <li><b>Add RLS / CLS</b> — "Add row-level security filtering by region"</li>
+    <li><b>Add relationships</b> — "Add a relationship to the customer dim"</li>
+    <li><b>Create new elements</b> — "Create an ORDER_FACT table with these columns"</li>
+    <li><b>Smart Insert</b> — AI output is auto-targeted to the correct element</li>
+</ul>
+
+<h3>Formula Syntax Rules</h3>
+<ul>
+    <li>Local columns: <code>[Column Name]</code> — no table prefix</li>
+    <li>Related columns: <code>[TABLE/FK_COL - link/Display Name]</code></li>
+    <li>Conditional aggregates: <code>SumIf(field, condition)</code> — field FIRST</li>
+    <li><code>CountIf(condition)</code> — condition only, NO field argument</li>
+    <li>Booleans: always use <code>[Col] = True</code>, never bare <code>[Col]</code></li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li>Requires a Sigma model to be loaded (for modify mode) or connection details (for add table mode)</li>
+    <li>Complex multi-step transformations may need to be broken into smaller requests</li>
+    <li>AI-generated formulas should always be reviewed before saving</li>
+</ul>`,
+
+            api: `
+<h3>Sigma API Notes & Known Issues</h3>
+
+<h3>Linked Column Round-Trip Bug <span class="help-badge api-bug">Known Bug</span></h3>
+<p>Calculated columns that reference related dimension columns via relationships cannot be reliably saved through the API. The API returns linked column formulas in <code>- link/</code> format on GET, but this format gets mangled when sent back via PUT. The <code>[TABLE/RELATIONSHIP_NAME/Col]</code> format also doesn't round-trip correctly.</p>
+<p><b>Workaround:</b> After saving a converted model, re-add any linked columns manually in the Sigma UI. The converters generate these formulas with <code>- link/</code> syntax and include warnings about this limitation.</p>
+
+<h3>Column ID Formats</h3>
+<p>Sigma uses two column ID formats:</p>
+<ul>
+    <li><b>Warehouse columns:</b> <code>inode-HASH/PHYSICAL_NAME</code> — assigned by Sigma on save</li>
+    <li><b>Calculated columns:</b> Short random IDs — generated by the tool, Sigma keeps them</li>
+</ul>
+<p>When saving a new model, Sigma replaces all column IDs with its own inode-based IDs. References in formulas, relationships, and groupings are automatically remapped.</p>
+
+<h3>API Endpoints Used</h3>
+<ul>
+    <li><code>GET /v2/datamodels</code> — List data models</li>
+    <li><code>GET /v2/datamodels/{id}</code> — Retrieve model JSON</li>
+    <li><code>POST /v2/datamodels</code> — Create new model</li>
+    <li><code>PUT /v2/datamodels/{id}</code> — Update existing model</li>
+    <li><code>GET /v2/connections</code> — List available connections</li>
+    <li><code>GET /v2/connections/{id}/paths</code> — Browse warehouse schemas/tables</li>
+</ul>
+
+<h3>Rate Limits</h3>
+<p>The Sigma API has rate limits. If you get 429 errors, wait a few seconds and retry. Bulk operations (like bulk upload) include built-in delays between requests.</p>`
+        };
+
+        function toggleHelpModal() {
+            const overlay = document.getElementById('helpOverlay');
+            const isActive = overlay.classList.contains('active');
+            if (isActive) {
+                overlay.classList.remove('active');
+                document.removeEventListener('keydown', _helpEscHandler);
+            } else {
+                overlay.classList.add('active');
+                if (!document.getElementById('helpContent').innerHTML) {
+                    switchHelpTab('overview');
+                }
+                document.addEventListener('keydown', _helpEscHandler);
+            }
+        }
+
+        function _helpEscHandler(e) {
+            if (e.key === 'Escape') toggleHelpModal();
+        }
+
+        function switchHelpTab(tab) {
+            document.querySelectorAll('#helpTabs .help-tab').forEach((t, i) => {
+                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'ai', 'api'];
+                t.classList.toggle('active', tabs[i] === tab);
+            });
+            document.getElementById('helpContent').innerHTML = HELP_CONTENT[tab] || '';
+        }
+
     </script>
 
     <!-- Bulk Upload Options Modal -->
@@ -10580,6 +12022,27 @@ view: date_dim {
                     💾 Save to Sigma
                 </button>
             </div>
+        </div>
+    </div>
+    <!-- ── Help System ──────────────────────────────────────────── -->
+    <button class="help-fab" onclick="toggleHelpModal()" title="Help & Documentation">?</button>
+    <div class="help-modal-overlay" id="helpOverlay" onclick="if(event.target===this)toggleHelpModal()">
+        <div class="help-modal">
+            <div class="help-modal-head">
+                <h2>📖 Data Model Manager — Help</h2>
+                <button class="modal-close" onclick="toggleHelpModal()">×</button>
+            </div>
+            <div class="help-tabs" id="helpTabs">
+                <button class="help-tab active" onclick="switchHelpTab('overview')">Overview</button>
+                <button class="help-tab" onclick="switchHelpTab('tableau')">📊 Tableau</button>
+                <button class="help-tab" onclick="switchHelpTab('pbi')">📈 Power BI</button>
+                <button class="help-tab" onclick="switchHelpTab('lookml')">🔍 LookML</button>
+                <button class="help-tab" onclick="switchHelpTab('dbt')">🔄 dbt</button>
+                <button class="help-tab" onclick="switchHelpTab('snow')">❄️ Snowflake</button>
+                <button class="help-tab" onclick="switchHelpTab('ai')">🤖 AI Assistant</button>
+                <button class="help-tab" onclick="switchHelpTab('api')">⚙️ API Notes</button>
+            </div>
+            <div class="help-content" id="helpContent"></div>
         </div>
     </div>
 </body>
