@@ -11702,6 +11702,13 @@ view: date_dim {
     <a href="https://community.sigmacomputing.com/t/sigma-differences-from-other-bi-tools-overview-for-new-sigma-creators/3285" target="_blank">Sigma Differences from Other BI Tools</a>
     <a href="https://community.sigmacomputing.com/t/how-to-use-groupings-aggregate-calculations/2003" target="_blank">Groupings & Aggregate Calculations</a>
     <a href="https://community.sigmacomputing.com/t/data-model-faqs/3481" target="_blank">Data Model FAQs</a>
+</div>
+
+<div class="help-links" style="margin-top:12px;border-color:rgba(88,101,242,0.3);background:rgba(88,101,242,0.06);">
+    <div class="help-links-title" style="color:var(--accent);">🔌 MCP Server — Use These Converters with AI Agents</div>
+    <p style="font-size:12px;color:var(--text-secondary);margin:4px 0 8px;">The same conversion logic from this tool is available as an <b>MCP server</b> for Claude Code, Claude Desktop, Claude.ai, Cursor, and any MCP-compatible client. Convert dbt, Snowflake, LookML, Tableau, and Power BI models to Sigma using natural language.</p>
+    <a href="https://sigma-data-model-mcp.onrender.com/mcp" target="_blank">sigma-data-model-mcp.onrender.com/mcp</a>
+    <a href="https://github.com/twells89/sigma-data-model-mcp" target="_blank">GitHub Repository</a>
 </div>`,
 
             tableau: `
@@ -11899,7 +11906,38 @@ view: date_dim {
 </ul>
 
 <h3>Rate Limits</h3>
-<p>The Sigma API has rate limits. If you get 429 errors, wait a few seconds and retry. Bulk operations (like bulk upload) include built-in delays between requests.</p>`
+<p>The Sigma API has rate limits. If you get 429 errors, wait a few seconds and retry. Bulk operations (like bulk upload) include built-in delays between requests.</p>`,
+
+            mcp: `
+<h3>MCP Server — AI-Powered Conversions</h3>
+<p>The same converter logic from this tool is available as a hosted <b>Model Context Protocol (MCP) server</b>. This lets AI agents — like Claude Code, Claude Desktop, Claude.ai, and Cursor — convert data models to Sigma using natural language.</p>
+
+<h3>Connect in One Step</h3>
+<p>No installation required. Just point your MCP client at the hosted URL:</p>
+<p><code style="font-size:12px;display:block;padding:8px;background:var(--bg-primary);border-radius:6px;margin:6px 0;">https://sigma-data-model-mcp.onrender.com/mcp</code></p>
+
+<h3>Available Tools</h3>
+<ul>
+    <li><code>convert_dbt_to_sigma</code> — dbt semantic model YAML → Sigma JSON</li>
+    <li><code>convert_snowflake_to_sigma</code> — Snowflake Cortex Analyst YAML → Sigma JSON</li>
+    <li><code>convert_lookml_to_sigma</code> — LookML project files → Sigma JSON</li>
+    <li><code>convert_powerbi_to_sigma</code> — Power BI model (.bim / TOM JSON) → Sigma JSON</li>
+    <li><code>convert_sql_to_sigma_formula</code> — SQL expression → Sigma formula</li>
+    <li><code>convert_tableau_formula_to_sigma</code> — Tableau formula → Sigma formula</li>
+    <li><code>get_sigma_data_model_schema</code> — Sigma data model JSON schema reference</li>
+</ul>
+
+<h3>Client Setup</h3>
+<p><b>Claude Code:</b></p>
+<p><code style="font-size:11px;display:block;padding:6px 8px;background:var(--bg-primary);border-radius:6px;margin:4px 0;">claude mcp add sigma-data-model --transport http https://sigma-data-model-mcp.onrender.com/mcp</code></p>
+<p><b>Claude.ai:</b> Add as a connector in Settings → Connected MCP Servers</p>
+<p><b>Claude Desktop:</b> Add to <code>claude_desktop_config.json</code> using <code>npx mcp-remote</code></p>
+
+<div class="help-links">
+    <div class="help-links-title">🔗 Links</div>
+    <a href="https://sigma-data-model-mcp.onrender.com/mcp" target="_blank">MCP Server Endpoint</a>
+    <a href="https://github.com/twells89/sigma-data-model-mcp" target="_blank">GitHub Repository</a>
+</div>`
         };
 
         function toggleHelpModal() {
@@ -11923,7 +11961,7 @@ view: date_dim {
 
         function switchHelpTab(tab) {
             document.querySelectorAll('#helpTabs .help-tab').forEach((t, i) => {
-                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'ai', 'api'];
+                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'ai', 'api', 'mcp'];
                 t.classList.toggle('active', tabs[i] === tab);
             });
             document.getElementById('helpContent').innerHTML = HELP_CONTENT[tab] || '';
@@ -12041,6 +12079,7 @@ view: date_dim {
                 <button class="help-tab" onclick="switchHelpTab('snow')">❄️ Snowflake</button>
                 <button class="help-tab" onclick="switchHelpTab('ai')">🤖 AI Assistant</button>
                 <button class="help-tab" onclick="switchHelpTab('api')">⚙️ API Notes</button>
+                <button class="help-tab" onclick="switchHelpTab('mcp')">🔌 MCP Server</button>
             </div>
             <div class="help-content" id="helpContent"></div>
         </div>
