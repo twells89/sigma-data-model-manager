@@ -11940,13 +11940,14 @@ view: date_dim {
 </div>`
         };
 
-        function toggleHelpModal() {
+        function toggleHelpModal(forceOpen) {
             const overlay = document.getElementById('helpOverlay');
             const isActive = overlay.classList.contains('active');
-            if (isActive) {
+            if (isActive && !forceOpen) {
                 overlay.classList.remove('active');
                 document.removeEventListener('keydown', _helpEscHandler);
-            } else {
+                history.replaceState(null, '', location.pathname + location.search);
+            } else if (!isActive) {
                 overlay.classList.add('active');
                 if (!document.getElementById('helpContent').innerHTML) {
                     switchHelpTab('overview');
@@ -11965,7 +11966,21 @@ view: date_dim {
                 t.classList.toggle('active', tabs[i] === tab);
             });
             document.getElementById('helpContent').innerHTML = HELP_CONTENT[tab] || '';
+            history.replaceState(null, '', '#help-' + tab);
         }
+
+        // Deep link: open help modal to specific tab via URL hash (e.g. #help-mcp)
+        window.addEventListener('load', () => {
+            const hash = location.hash;
+            if (hash && hash.startsWith('#help-')) {
+                const tab = hash.replace('#help-', '');
+                const validTabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'ai', 'api', 'mcp'];
+                if (validTabs.includes(tab)) {
+                    toggleHelpModal();
+                    switchHelpTab(tab);
+                }
+            }
+        });
 
     </script>
 
