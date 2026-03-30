@@ -2339,9 +2339,9 @@ How it works:
                              ondragleave="this.classList.remove('drag-over')"
                              ondrop="handleTableauDrop(event)">
                             <div style="font-size: 28px; margin-bottom: 8px;">📊</div>
-                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop .twb or .twbx file here</div>
-                            <div style="font-size: 11px; color: var(--text-muted);">.twbx = packaged workbook (zip) · .twb = XML workbook</div>
-                            <input type="file" id="tableauFileInput" accept=".twb,.twbx" style="display:none" onchange="handleTableauFileInput(event)">
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop .twb, .twbx, .tds, or .tdsx file here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">.twb/.twbx = workbook · .tds/.tdsx = data source · x = packaged (zip)</div>
+                            <input type="file" id="tableauFileInput" accept=".twb,.twbx,.tds,.tdsx" style="display:none" onchange="handleTableauFileInput(event)">
                         </div>
 
                         <!-- Loaded file badge — shown after upload, styled like LookML file list -->
@@ -2406,7 +2406,7 @@ How it works:
                         <textarea id="tableauJsonOutput" readonly placeholder="Convert a Tableau data source to see the Sigma JSON here...
 
 How it works:
-• Drop a .twb or .twbx Tableau workbook file
+• Drop a .twb/.twbx workbook or .tds/.tdsx data source file
 • Select which data source to convert
 • Joins → Sigma relationships (lazy) or physical joins
 • Calculated fields → metrics (aggregate) or calculated columns
@@ -9873,16 +9873,17 @@ ${cleanedSql}`;
             const name = file.name.toLowerCase();
             let xmlText = '';
             try {
-                if (name.endsWith('.twbx')) {
+                if (name.endsWith('.twbx') || name.endsWith('.tdsx')) {
                     const arrayBuffer = await file.arrayBuffer();
                     const zip = await JSZip.loadAsync(arrayBuffer);
-                    const twbFile = Object.values(zip.files).find(f => f.name.endsWith('.twb'));
-                    if (!twbFile) throw new Error('No .twb file found inside .twbx');
-                    xmlText = await twbFile.async('string');
-                } else if (name.endsWith('.twb')) {
+                    const innerExt = name.endsWith('.twbx') ? '.twb' : '.tds';
+                    const innerFile = Object.values(zip.files).find(f => f.name.endsWith(innerExt));
+                    if (!innerFile) throw new Error('No ' + innerExt + ' file found inside ' + (name.endsWith('.twbx') ? '.twbx' : '.tdsx'));
+                    xmlText = await innerFile.async('string');
+                } else if (name.endsWith('.twb') || name.endsWith('.tds')) {
                     xmlText = await file.text();
                 } else {
-                    showToast('Upload a .twb or .twbx file', 'warning'); return;
+                    showToast('Upload a .twb, .twbx, .tds, or .tdsx file', 'warning'); return;
                 }
             } catch(e) {
                 showToast('Could not read file: ' + e.message, 'error'); return;
@@ -9894,9 +9895,18 @@ ${cleanedSql}`;
             let doc;
             try { doc = new DOMParser().parseFromString(xmlText, 'text/xml'); }
             catch(e) { showToast('XML parse error: ' + e.message, 'error'); return; }
-            if (doc.querySelector('parsererror')) { showToast('Malformed XML in workbook', 'error'); return; }
+            if (doc.querySelector('parsererror')) { showToast('Malformed XML in file', 'error'); return; }
 
-            const allDs = Array.from(doc.querySelectorAll('workbook > datasources > datasource'));
+            // Support both .twb (root=<workbook>) and .tds (root=<datasource>)
+            let allDs;
+            const root = doc.documentElement.tagName.toLowerCase();
+            if (root === 'workbook') {
+                allDs = Array.from(doc.querySelectorAll('workbook > datasources > datasource'));
+            } else if (root === 'datasource') {
+                allDs = [doc.documentElement];
+            } else {
+                showToast('Unrecognized XML root element: <' + root + '>', 'error'); return;
+            }
             const parameters = [];
             const datasources = [];
 
@@ -10348,7 +10358,7 @@ ${cleanedSql}`;
         // ── Main conversion function ──────────────────────────────────────
         function runTableauConversion() {
             if (!_tableauParsed || _tableauParsed.datasources.length === 0) {
-                showToast('Upload a .twb or .twbx file first', 'warning'); return;
+                showToast('Upload a .twb, .twbx, .tds, or .tdsx file first', 'warning'); return;
             }
             const btn = document.getElementById('tableauConvertBtn');
             btn.disabled = true; btn.textContent = '⏳ Converting…';
@@ -11712,7 +11722,7 @@ view: date_dim {
 
             tableau: `
 <h3>Tableau Converter</h3>
-<p>Converts Tableau workbooks (<code>.twb</code>) to Sigma data model JSON. Parses data sources, calculated fields, parameters, relationships, and LOD expressions.</p>
+<p>Converts Tableau workbooks (<code>.twb</code>, <code>.twbx</code>) and data sources (<code>.tds</code>, <code>.tdsx</code>) to Sigma data model JSON. Parses data sources, calculated fields, parameters, relationships, and LOD expressions.</p>
 
 <h3>What Gets Converted</h3>
 <ul>
