@@ -621,6 +621,28 @@
             display: flex;
             gap: 10px;
         }
+
+        .save-error-banner {
+            background: rgba(220, 38, 38, 0.08);
+            border-bottom: 1px solid rgba(220, 38, 38, 0.25);
+            padding: 10px 24px;
+            animation: slideDown 0.2s ease;
+        }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+        .save-error-content {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .save-error-icon { font-size: 20px; flex-shrink: 0; }
+        .save-error-text { flex: 1; min-width: 0; }
+        .save-error-title { font-size: 13px; font-weight: 600; color: var(--error); }
+        .save-error-msg { font-size: 12px; color: var(--text-secondary); margin-top: 2px; max-width: 700px; }
+        .save-error-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+        .fix-ai-key-row { display: flex; gap: 6px; align-items: center; }
+        .save-error-banner .btn-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; padding: 4px 8px; border-radius: 4px; }
+        .save-error-banner .btn-close:hover { background: rgba(220, 38, 38, 0.12); color: var(--text-primary); }
+        .save-error-banner .btn-ai { white-space: nowrap; }
         
         .editor-container {
             flex: 1;
@@ -1970,6 +1992,31 @@
                     </button>
                 </div>
             </div>
+
+            <!-- Save Error Banner with Fix with AI -->
+            <div id="saveErrorBanner" class="save-error-banner" style="display:none;">
+                <div class="save-error-content">
+                    <div class="save-error-icon">⚠</div>
+                    <div class="save-error-text">
+                        <div class="save-error-title">Save failed</div>
+                        <div class="save-error-msg" id="saveErrorMsg"></div>
+                    </div>
+                    <div class="save-error-actions">
+                        <div id="fixAIKeyRow" class="fix-ai-key-row" style="display:none;">
+                            <select id="fixAIProvider" class="form-input" style="font-size:11px;padding:4px 6px;width:auto;">
+                                <option value="anthropic">Claude</option>
+                                <option value="openai">OpenAI</option>
+                                <option value="gemini">Gemini</option>
+                            </select>
+                            <input type="password" id="fixAIKey" class="form-input" placeholder="Paste API key" style="font-size:11px;padding:4px 8px;width:180px;">
+                        </div>
+                        <button class="btn btn-ai btn-small" onclick="fixWithAI()" id="fixWithAIBtn">
+                            🤖 Fix with AI
+                        </button>
+                        <button class="btn-close" onclick="dismissSaveError()" title="Dismiss">✕</button>
+                    </div>
+                </div>
+            </div>
             
             <div class="editor-container">
                 <div class="editor-tabs">
@@ -1979,16 +2026,17 @@
                     <div class="editor-tab" id="tabLook" onclick="switchEditorTab('look')">🔍 LookML Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
                     <div class="editor-tab" id="tabTableau" onclick="switchEditorTab('tableau')">📊 Tableau Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
                     <div class="editor-tab" id="tabPbi" onclick="switchEditorTab('pbi')">📈 Power BI Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
+                    <div class="editor-tab" id="tabAlteryx" onclick="switchEditorTab('alteryx')">⚙️ Alteryx Converter <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
                 </div>
                 <div class="json-editor" id="panelJson">
                     <div class="editor-wrap" id="editorWrap">
                         <div class="line-numbers" id="lineNumbers" aria-hidden="true"></div>
-                        <textarea id="jsonEditor" placeholder="Select a data model from the sidebar to view and edit its JSON representation...
+                        <textarea id="jsonEditor" oninput="onEditorInput()" placeholder="Select a data model from the sidebar to view and edit its JSON representation...
 
 WORKFLOW:
 1. Connect to Sigma (enter your API credentials)
 2. Select a data model from the sidebar, or click '+ New' to create one
-3. Edit the JSON here
+3. Edit the JSON here, or paste a JSON spec directly
 4. Click 'Save to Sigma' to push changes directly
 
 This is the standalone version - changes are saved directly to Sigma."></textarea>
@@ -2514,6 +2562,90 @@ How it works:
 
                 </div>
                 <!-- ── End Power BI Panel ─────────────────────────────────────── -->
+
+                <!-- ── Alteryx Converter Panel ──────────────────────────────── -->
+                <div class="dbt-converter" id="panelAlteryx">
+
+                    <!-- Left: File Upload + Config -->
+                    <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Alteryx Workflow</span>
+                            <button class="btn-example" onclick="loadAlteryxExample()">Load example</button>
+                        </div>
+
+                        <div id="alteryxDropZone" class="lookml-drop-zone"
+                             onclick="document.getElementById('alteryxFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleAlteryxDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">⚙️</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop .yxmd file here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">.yxmd = Alteryx Workflow (XML)</div>
+                            <input type="file" id="alteryxFileInput" accept=".yxmd,.xml" style="display:none" onchange="handleAlteryxFileInput(event)">
+                        </div>
+
+                        <div id="alteryxFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Connection</label>
+                            <select id="alteryxConnectionId" class="form-input" style="font-size: 12px;">
+                                <option value="">— Connect to Sigma to load —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="alteryxDatabase" placeholder="auto-detected from ODBC" style="font-size: 12px;">
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Schema override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="alteryxSchema" placeholder="auto-detected from ODBC" style="font-size: 12px;">
+                        </div>
+
+                        <div class="dbt-badge-row" id="alteryxInputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" id="alteryxConvertBtn" onclick="runAlteryxConversion()" disabled>
+                                ⚙️ Convert to Sigma JSON
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Right: Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copyAlteryxOutput()" id="alteryxCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadAlteryxOutputToEditor()" id="alteryxLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="alteryxWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="alteryxJsonOutput" readonly placeholder="Convert an Alteryx workflow to see the Sigma JSON here...
+
+How it works:
+• Drop a .yxmd Alteryx Workflow file
+• Input Data tools → Sigma elements with warehouse paths
+• Join tools → Sigma relationships
+• Formula tool → calculated columns (IF/ELSEIF/ENDIF → If())
+• Summarize tool → metrics (Sum, Count, Avg, Min, Max, CountDistinct)
+• Select tool → column renames (flagged for review)
+• Filter tool → noted for potential RLS"></textarea>
+
+                        <div class="dbt-badge-row" id="alteryxOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="alteryxLoadAndSave()" id="alteryxSaveBtn" disabled>
+                                💾 Load & Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+                <!-- ── End Alteryx Panel ────────────────────────────────────────── -->
 
             </div>
             </div>
@@ -4343,6 +4475,14 @@ PRODUCT_NAME
         }
 
         // Format the editor content in current mode
+        function onEditorInput() {
+            const val = document.getElementById('jsonEditor').value.trim();
+            if (val.length > 10) {
+                ['formatBtn', 'copyBtn', 'saveBtn'].forEach(id => document.getElementById(id).disabled = false);
+                enableEditorModeToggle();
+            }
+        }
+
         function formatEditor() {
             try {
                 const obj = getEditorJson();
@@ -4453,7 +4593,8 @@ PRODUCT_NAME
             
             const btn = document.getElementById('saveBtn');
             
-            const isNew = state.isNewModel === true && !jsonData.dataModelId;
+            // Auto-detect: if no dataModelId in JSON and no selected model, treat as new
+            const isNew = (state.isNewModel === true || !jsonData.dataModelId) && !state.selectedModel?.dataModelId;
             
             if (!isNew && !state.selectedModel?.dataModelId) {
                 showToast('No data model selected', 'error');
@@ -4502,13 +4643,6 @@ PRODUCT_NAME
                     }
                 }
                 return stripped;
-            }
-
-            // Helper: does this spec have any relationships?
-            function hasRelationships(pages) {
-                return (pages || []).some(p =>
-                    (p.elements || []).some(e => e.relationships && e.relationships.length > 0)
-                );
             }
 
             try {
@@ -4573,6 +4707,7 @@ PRODUCT_NAME
                 document.getElementById('refreshSigmaBtn').disabled = false;
                 updateStatus('connected', isNew ? 'Data model created!' : 'Changes saved');
                 showToast(isNew ? 'Data model created in Sigma!' : 'Data model saved to Sigma!', 'success');
+                dismissSaveError();
                 await loadDataModels();
             } catch (error) {
                 console.error('Save error:', error);
@@ -4581,6 +4716,7 @@ PRODUCT_NAME
                     : error.message;
                 updateStatus('error', 'Failed to save');
                 showToast(`Save failed: ${msg}`, 'error');
+                showSaveErrorBanner(msg);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = 'Save to Sigma';
@@ -4596,6 +4732,172 @@ PRODUCT_NAME
                 }
             }
         });
+
+        // ============================================
+        // FIX WITH AI — Save Error Recovery
+        // ============================================
+
+        let _lastSaveError = null;
+
+        function showSaveErrorBanner(errorMsg) {
+            _lastSaveError = errorMsg;
+            const banner = document.getElementById('saveErrorBanner');
+            let displayMsg = errorMsg;
+            if (errorMsg.toLowerCase().includes('cycle in dependency order')) {
+                displayMsg = errorMsg + ' — This usually means a column name doesn\'t match your warehouse. Double-check that all column names exist in your tables.';
+            }
+            document.getElementById('saveErrorMsg').textContent = displayMsg;
+            document.getElementById('fixAIKeyRow').style.display = 'none';
+            banner.style.display = '';
+
+            const config = loadAIConfig();
+            const provider = config.provider || 'anthropic';
+            const fixProviderEl = document.getElementById('fixAIProvider');
+            if (fixProviderEl) fixProviderEl.value = provider;
+        }
+
+        function dismissSaveError() {
+            document.getElementById('saveErrorBanner').style.display = 'none';
+            _lastSaveError = null;
+        }
+
+        function _getFixAIKey() {
+            // Check inline banner key first, then AI panel, then saved config
+            const inlineKey = document.getElementById('fixAIKey')?.value;
+            if (inlineKey) return { key: inlineKey, provider: document.getElementById('fixAIProvider')?.value || 'anthropic' };
+            const config = loadAIConfig();
+            const provider = document.getElementById('aiProvider')?.value || config.provider || 'anthropic';
+            const savedKey = document.getElementById('aiApiKey')?.value || config.keys?.[provider] || Object.values(config.keys || {}).find(k => k);
+            if (savedKey) return { key: savedKey, provider };
+            return null;
+        }
+
+        async function fixWithAI() {
+            if (!_lastSaveError) return;
+
+            const creds = _getFixAIKey();
+            if (!creds) {
+                // Show inline key input
+                document.getElementById('fixAIKeyRow').style.display = '';
+                document.getElementById('fixAIKey').focus();
+                showToast('Enter an API key, then click Fix with AI again', 'info');
+                return;
+            }
+
+            const { key: apiKey, provider } = creds;
+
+            // Save the key to AI config for future use
+            const config = loadAIConfig();
+            if (!config.keys) config.keys = {};
+            config.keys[provider] = apiKey;
+            config.provider = provider;
+            saveAIConfig(config);
+
+            let failedJson;
+            try {
+                failedJson = getEditorJson();
+            } catch (e) {
+                showToast('Could not parse editor JSON', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('fixWithAIBtn');
+            const origText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner"></div> Fixing...';
+
+            const systemPrompt = `You are a Sigma Computing data model JSON repair assistant.
+
+The user tried to save a data model via the Sigma REST API and got an error. Analyze the error + JSON, fix what you can, and return ONLY the corrected JSON.
+
+KNOWN SIGMA API ISSUES YOU CAN FIX:
+1. Empty metrics: [] or relationships: [] arrays → REMOVE the key entirely
+2. Cross-element "- link/" formulas → REMOVE the column/metric (links are deprecated)
+3. Sigma Title-Cases ALL words: SNAKE_CASE → "Title Case" (IS_EMAIL_OPT_IN → "Is Email Opt In")
+4. Display name casing mismatches in formulas — fix case to match the warehouse column formula
+5. Calculated columns must reference local columns by display name only: [Column Name], not [TABLE/Column Name]
+6. Metrics use display name only: Sum([Column Name])
+7. Circular references between calculated columns → break the cycle
+8. folderId "00000000-0000-0000-0000-000000000000" → remove it
+
+WHAT YOU CANNOT FIX (flag these):
+- Column formulas referencing warehouse columns that may not exist (e.g. [TABLE/Customer Name] when the real column might be FIRST_NAME + LAST_NAME). You do NOT know the actual warehouse schema. If a column name looks like it could be wrong (doesn't follow standard naming, uses a generic name like "Customer Name" instead of something specific), REMOVE it and add a comment in the name field noting it was removed.
+
+FOR "cycle in dependency order" ERRORS:
+This error almost always means a column formula references a display name that doesn't exist in the warehouse. Since you don't know the actual column names, your best strategy is:
+1. Keep warehouse columns that follow standard patterns (SNAKE_CASE → Title Case, like [ORDER_FACT/Gross Revenue] for GROSS_REVENUE)
+2. REMOVE any warehouse column whose name looks non-standard or made-up (e.g. "Customer Name", "Signup Date", "Order Key", "Store Key" when these don't follow the table's naming convention)
+3. REMOVE any calculated columns or metrics that reference removed columns
+4. REMOVE empty arrays left behind
+5. The user will re-add correct columns in the Sigma UI
+
+Return ONLY the JSON. No explanation, no markdown fences, just the raw JSON starting with { and ending with }.`;
+
+            const userMessage = `SAVE ERROR: ${_lastSaveError}
+
+DATA MODEL JSON THAT FAILED:
+${JSON.stringify(failedJson, null, 2)}`;
+
+            try {
+                let responseText;
+                if (provider === 'openai') {
+                    responseText = await callOpenAI(apiKey, systemPrompt, userMessage);
+                } else if (provider === 'anthropic') {
+                    responseText = await callAnthropic(apiKey, systemPrompt, userMessage);
+                } else if (provider === 'gemini') {
+                    responseText = await callGemini(apiKey, systemPrompt, userMessage);
+                } else {
+                    throw new Error('Unknown AI provider: ' + provider);
+                }
+
+                let cleanJson = responseText.trim();
+                cleanJson = cleanJson.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+
+                const fixedModel = JSON.parse(cleanJson);
+                if (!fixedModel.pages || !Array.isArray(fixedModel.pages)) {
+                    throw new Error('AI response is not a valid data model (missing pages array)');
+                }
+
+                // Diff summary
+                const origElements = (failedJson.pages || []).flatMap(p => p.elements || []);
+                const fixedElements = (fixedModel.pages || []).flatMap(p => p.elements || []);
+                const origCols = origElements.reduce((n, e) => n + (e.columns || []).length, 0);
+                const fixedCols = fixedElements.reduce((n, e) => n + (e.columns || []).length, 0);
+                const origMetrics = origElements.reduce((n, e) => n + (e.metrics || []).length, 0);
+                const fixedMetrics = fixedElements.reduce((n, e) => n + (e.metrics || []).length, 0);
+                const origRels = origElements.reduce((n, e) => n + (e.relationships || []).length, 0);
+                const fixedRels = fixedElements.reduce((n, e) => n + (e.relationships || []).length, 0);
+
+                const changes = [];
+                if (origCols !== fixedCols) changes.push(`columns: ${origCols} → ${fixedCols}`);
+                if (origMetrics !== fixedMetrics) changes.push(`metrics: ${origMetrics} → ${fixedMetrics}`);
+                if (origRels !== fixedRels) changes.push(`relationships: ${origRels} → ${fixedRels}`);
+
+                if (failedJson.dataModelId) fixedModel.dataModelId = failedJson.dataModelId;
+                if (failedJson.folderId && !fixedModel.folderId) fixedModel.folderId = failedJson.folderId;
+
+                setEditorContent(fixedModel);
+                dismissSaveError();
+
+                const changeSummary = changes.length > 0
+                    ? 'Changes: ' + changes.join(', ') + '.'
+                    : 'AI reviewed and adjusted the model.';
+                
+                // Show persistent guidance if columns were removed
+                if (origCols !== fixedCols) {
+                    showToast(`🤖 AI fix applied. ${changeSummary} Some columns were removed — verify that your column names match your warehouse schema, then re-add any missing columns.`, 'warning');
+                } else {
+                    showToast(`🤖 AI fix applied. ${changeSummary} Review and click Save.`, 'success');
+                }
+
+            } catch (err) {
+                console.error('Fix with AI error:', err);
+                showToast('AI fix failed: ' + err.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = origText;
+            }
+        }
         
         // ============================================
         // NEW DATA MODEL WIZARD
@@ -4791,7 +5093,7 @@ PRODUCT_NAME
         async function populateConverterConnections() {
             if (!state.accessToken) return;
             const connections = await fetchConnectionsList();
-            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId'];
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId'];
             targetIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (!sel) return;
@@ -5180,34 +5482,16 @@ CRITICAL: Calculated column formulas reference LOCAL columns by display name ONL
 Correct:   "[Price] - [Cost]"
 WRONG:     "[TABLE/Price] - [TABLE/Cost]"
 
-### Linked column reference (accessing related dimension columns via relationships)
-When a calculated column or metric needs to reference a column from a RELATED element (via a relationship),
-use the "- link/" syntax:
-  [SOURCE_TABLE/FK_COLUMN - link/Column Display Name]
+### Cross-element column references (columns from related dimensions)
+⚠ IMPORTANT: The Sigma API does NOT support creating cross-element column references (formerly "links").
+Links used a "- link/" formula syntax and are being DEPRECATED in favor of relationships.
+The API cannot create links, and likely never will.
 
-Where:
-- SOURCE_TABLE = the source element's warehouse table name (e.g. ORDER_FACT)
-- FK_COLUMN = the foreign key column's PHYSICAL name (ALL_CAPS, e.g. PROMO_KEY, ORDER_DATE_KEY)
-- Column Display Name = the display name of the column on the related dimension table (e.g. "Start Date")
-
-Example: ORDER_FACT has a relationship to PROMO_DIM via Promo Key → Promo Key.
-To reference PROMO_DIM's Start Date and End Date columns from ORDER_FACT:
-  { "formula": "DateDiff(\"day\", [ORDER_FACT/PROMO_KEY - link/Start Date], [ORDER_FACT/PROMO_KEY - link/End Date])", "name": "Promo Duration Days" }
-
-Example: ORDER_FACT has a relationship to DATE_DIM via Order Date Key → Date Key.
-To reference DATE_DIM's Full Date column from ORDER_FACT:
-  { "formula": "Year([ORDER_FACT/ORDER_DATE_KEY - link/Full Date])", "name": "Order Year" }
-
-⚠ KNOWN SIGMA API LIMITATION: The Sigma API does not currently round-trip linked column formulas
-correctly on PUT. The "- link/" format is what the GET API returns and matches Sigma's internal
-representation. Until this is fixed, linked columns saved via API may need to be re-added in the UI.
-
-CRITICAL RULES FOR LINKED COLUMNS:
-- ONLY use linked column syntax when the column does NOT exist on the current element
-- The FK_COLUMN must be the PHYSICAL warehouse column name (ALL_CAPS with underscores)
-- The target column uses the DISPLAY NAME as it appears in the dimension's column formula
-- The relationship MUST already exist on the element for this to work
-- If the column EXISTS on the current element, reference it by display name directly: [Column Name]
+If a user asks to reference a column from a related dimension (e.g. "add Full Date from DATE_DIM to ORDER_FACT"),
+do NOT generate a formula for it. Instead:
+1. Confirm the relationship exists on the element
+2. Explain that cross-element column references must be added manually in the Sigma UI
+3. Provide clear instructions: "In Sigma, open the data model → click on the ORDER_FACT element → add a column referencing Full Date from the DATE_DIM relationship"
 
 ### Optional fields on any column
 "name": "Display Name"      // override display name
@@ -5221,8 +5505,7 @@ METRICS (inside element.metrics array)
 CRITICAL: Metric formulas reference LOCAL columns by display name ONLY — NO table prefix.
 Correct:   "Sum([Revenue])"
 WRONG:     "Sum([TABLE/Revenue])"
-For related columns in metrics, use the same "- link/" syntax:
-  { "formula": "Sum([ORDER_FACT/PROMO_KEY - link/Promo Cost])", "name": "Total Promo Cost" }
+Note: Metrics cannot reference columns from related elements. Only local columns are supported.
 
 ═══════════════════════════════════════════════════
 RELATIONSHIPS (inside element.relationships array)
@@ -5949,10 +6232,7 @@ RULES FOR MODIFYING EXISTING COLUMNS:
 - Example to add descriptions: { "columns": [ { "id": "abc123", "description": "What this column means" }, ... ] }
 - Do NOT invent new column IDs. Use only the IDs listed above.
 - When referencing LOCAL columns in formulas use just [Column Name], never include the table name.
-- LINKED COLUMNS: When a formula needs a column from a RELATED element, use "- link/" syntax:
-  [TABLE_NAME/FK_PHYSICAL_COL - link/Column Display Name]
-  Check the element's relationships array → find the sourceColumnId → look up its formula to get the physical FK name.
-  Example: If sourceColumnId points to a column with formula "[ORDER_FACT/Order Date Key]", the FK physical name is ORDER_DATE_KEY, so use [ORDER_FACT/ORDER_DATE_KEY - link/Full Date].`;
+- CROSS-ELEMENT COLUMNS: The API does NOT support creating cross-element column references (formerly "links" with "- link/" syntax). Links are deprecated. If the user asks to reference a column from a related element, do NOT generate a formula. Instead explain they must add this column manually in the Sigma UI after saving.`;
                 
             } else if (aiCurrentMode === 'addtable') {
                 const connectionId = document.getElementById('aiConnection').value;
@@ -6041,19 +6321,10 @@ ${contextInfo}
    - MinIf(field, condition) — FIELD FIRST — e.g. MinIf([Price], [Category] = "Electronics")
    - CountDistinctIf(field, condition) — FIELD FIRST — e.g. CountDistinctIf([Customer Id], [Is Active] = True)
    IMPORTANT: For boolean columns, ALWAYS use explicit comparison: [Column] = True — never pass a bare boolean column as a condition. This ensures compatibility regardless of the underlying data type.
-   LINKED COLUMN SYNTAX (referencing columns from RELATED elements via relationships):
-   When a formula needs a column that lives on a RELATED element (not the current element), use:
-     [SOURCE_TABLE/FK_COLUMN - link/Column Display Name]
-   Where FK_COLUMN is the PHYSICAL warehouse column name (ALL_CAPS) of the foreign key.
-   - Check the element's "relationships" array to find the foreign key column
-   - Look at the relationship's sourceColumnId → find that column's formula → extract the physical name
-   - The target column uses the DISPLAY NAME from the dimension element
-   Example: If ORDER_FACT has FK "Order Date Key" (physical: ORDER_DATE_KEY) to DATE_DIM:
-     Year([ORDER_FACT/ORDER_DATE_KEY - link/Full Date])
-   Example: If ORDER_FACT has FK "Promo Key" (physical: PROMO_KEY) to PROMO_DIM:
-     DateDiff("day", [ORDER_FACT/PROMO_KEY - link/Start Date], [ORDER_FACT/PROMO_KEY - link/End Date])
-   ⚠ Known API limitation: Sigma may mangle - link/ on save. Users may need to re-add in UI.
-   NEVER use plain [Column Name] for columns that don't exist on the current element — this will cause "Unknown column" errors.
+   CROSS-ELEMENT COLUMNS: The API does NOT support creating cross-element column references (formerly "links").
+   Links used "- link/" syntax and are DEPRECATED. If a formula needs a column from a RELATED element,
+   do NOT generate it. Instead warn the user to add this column manually in the Sigma UI after saving.
+   NEVER use [TABLE/FK_COL - link/Display Name] syntax — the API cannot create links.
 5. If a request is about REMOVING or DELETING columns, metrics, filters, folders, or columnSecurities, output a removal instruction in this format:
 {"_remove": {"elementId": "TARGET_ELEMENT_ID", "columns": ["colId1","colId2"], "metrics": ["metId1"], "filters": ["filtId1"], "columnSecurities": ["clsId1"], "folders": ["folderId1"]}}
 Only include the arrays that have items to remove. Use the exact IDs from the model context. Also remove the IDs from the element's order array.
@@ -7238,8 +7509,8 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
 
         // ── Editor Tab Switching ────────────────────────────────────────────
         function switchEditorTab(tab) {
-            const tabs = { json: 'tabJson', dbt: 'tabDbt', snow: 'tabSnow', look: 'tabLook', tableau: 'tabTableau', pbi: 'tabPbi' };
-            const panels = { json: 'panelJson', dbt: 'panelDbt', snow: 'panelSnow', look: 'panelLook', tableau: 'panelTableau', pbi: 'panelPbi' };
+            const tabs = { json: 'tabJson', dbt: 'tabDbt', snow: 'tabSnow', look: 'tabLook', tableau: 'tabTableau', pbi: 'tabPbi', alteryx: 'tabAlteryx' };
+            const panels = { json: 'panelJson', dbt: 'panelDbt', snow: 'panelSnow', look: 'panelLook', tableau: 'panelTableau', pbi: 'panelPbi', alteryx: 'panelAlteryx' };
             Object.keys(tabs).forEach(k => {
                 document.getElementById(tabs[k]).classList.toggle('active', k === tab);
             });
@@ -7252,7 +7523,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 }
             });
             // Auto-populate connection dropdowns when opening a converter tab
-            if ((tab === 'dbt' || tab === 'snow' || tab === 'look' || tab === 'tableau' || tab === 'pbi') && state.accessToken) {
+            if ((tab === 'dbt' || tab === 'snow' || tab === 'look' || tab === 'tableau' || tab === 'pbi' || tab === 'alteryx') && state.accessToken) {
                 populateConverterConnections();
             }
         }
@@ -7282,17 +7553,10 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         // SNAKE_CASE or snake_case → "Title Case" display name
         // e.g. ORDER_NUMBER → "Order Number", revenue_amount → "Revenue Amount"
         // Small words that Sigma keeps lowercase in display names (unless first word)
-        const SIGMA_LOWERCASE_WORDS = new Set([
-            'a','an','the','and','but','or','for','nor','so','yet',
-            'at','by','in','of','on','to','up','as','into','via','per'
-        ]);
+        // Sigma Title-Cases all words in display names — no lowercase exceptions
         function sigmaDisplayName(s) {
             const words = (s || '').toLowerCase().split('_');
-            return words.map((w, i) =>
-                (i === 0 || !SIGMA_LOWERCASE_WORDS.has(w))
-                    ? w.charAt(0).toUpperCase() + w.slice(1)
-                    : w
-            ).join(' ');
+            return words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
         }
 
         // Column formula: [TABLE_NAME/Display Name]
@@ -8786,8 +9050,8 @@ metrics:
 
             const tokens = [];
             // Tokenize — critically: ${...} must be a single token so braces inside
-            // don't get confused with block delimiters
-            const re = /;;;?|\$\{[^}]*\}|[{}]|"(?:[^"\\]|\\.)*"|[^\s{}:;,"]+|:/g;
+            // don't get confused with block delimiters. [] are separate tokens for array syntax.
+            const re = /;;;?|\$\{[^}]*\}|[\[\]{}]|"(?:[^"\\]|\\.)*"|[^\s\[\]{}:;,"]+|:/g;
             let m;
             while ((m = re.exec(text)) !== null) tokens.push(m[0]);
 
@@ -8856,6 +9120,30 @@ metrics:
                         } else {
                             obj[key] = child;
                         }
+
+                    } else if (a0 === '[') {
+                        // Bracket array: [key: "val", ...] or ["val1", "val2"]
+                        consume(); // eat '['
+                        const items = [];
+                        while (pos < tokens.length && peek() !== ']') {
+                            const t1 = consume();
+                            if (t1 === undefined) break;
+                            if (peek() === ':') {
+                                // Key-value pair: field: "value"
+                                consume(); // eat ':'
+                                let val = consume() || '';
+                                if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+                                items.push({ field: t1.replace(/"/g, ''), value: val });
+                            } else {
+                                // Simple value
+                                let val = t1;
+                                if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+                                items.push(val);
+                            }
+                        }
+                        if (peek() === ']') consume();
+                        if (peek() === ';;' || peek() === ';;;') consume();
+                        obj[key] = items;
 
                     } else if (a0 === ';;' || a0 === ';;;') {
                         consume(); obj[key] = '';
@@ -9667,6 +9955,36 @@ ${cleanedSql}`;
                 if (!d._name) continue;
                 const colName = d._name.toUpperCase();
 
+                // ── Tier dimensions with complex SQL → bucketed calculated column ──
+                if ((d.type || '').toLowerCase() === 'tier' && d.tiers && lookIsComplexSql(d.sql)) {
+                    const rawTiers = typeof d.tiers === 'string' ? d.tiers : String(d.tiers);
+                    const tierValues = rawTiers.replace(/[\[\]]/g, '').split(/[,\s]+/).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
+                    if (tierValues.length > 0) {
+                        // Convert the SQL expression to a Sigma formula for the source
+                        let srcFormula = lookSqlToSigmaRules(d.sql);
+                        if (!srcFormula) srcFormula = (d.sql || '').replace(/\$\{TABLE\}\./gi, '').replace(/\$\{[^.}]+\.([^}]+)\}/g, '[$1]').replace(/NULLIF\(([^,]+),\s*0\)/gi, 'If($1 = 0, null, $1)').trim();
+                        const parts = [];
+                        for (let ti = tierValues.length - 1; ti >= 0; ti--) {
+                            const lo = tierValues[ti];
+                            const hi = ti < tierValues.length - 1 ? tierValues[ti + 1] : null;
+                            const label = hi ? `"${lo} to ${hi - 1}"` : `"${lo} or Above"`;
+                            parts.push(`If(${srcFormula} >= ${lo}, ${label}`);
+                        }
+                        parts.push(`"Below ${tierValues[0]}"`);
+                        const formula = parts.join(', ') + ')'.repeat(tierValues.length);
+                        const calcId = sigmaShortId();
+                        colIdMap[colName] = calcId;
+                        element.columns.push({
+                            id: calcId,
+                            formula,
+                            name: d.label || sigmaDisplayName(d._name)
+                        });
+                        element.order.push(calcId);
+                        warnings.push(`✅ Tier "${d._name}" → bucketed calculated column`);
+                    }
+                    continue;
+                }
+
                 if (lookIsComplexSql(d.sql)) {
                     // ── Special case: COLUMN = value (yesno boolean flag) ────────
                     // The physical column must exist in the element before the
@@ -9694,7 +10012,8 @@ ${cleanedSql}`;
                         // Now add the calculated boolean column referencing the warehouse col
                         const calcId = sigmaShortId();
                         colIdMap[colName] = calcId;
-                        const displayName = d.label || sigmaDisplayName(d._name);
+                        const baseName = d.label || sigmaDisplayName(d._name);
+                        const displayName = baseName + ' (T/F)';
                         const physDisplayName = colLabel(physicalCol);
                         element.columns.push({
                             id: calcId,
@@ -9737,6 +10056,53 @@ ${cleanedSql}`;
 
                 const sqlCol = lookStripSql(d.sql) || colName;
                 const physicalCol = sqlCol.split('.').pop().toUpperCase();
+
+                // ── Tier dimensions → bucketed If() calculated column ──────────
+                if ((d.type || '').toLowerCase() === 'tier' && d.tiers) {
+                    // Ensure the source warehouse column exists
+                    let srcColId = colIdMap[physicalCol];
+                    if (!srcColId) {
+                        srcColId = sigmaShortId();
+                        colIdMap[physicalCol] = srcColId;
+                        element.columns.push({
+                            id: srcColId,
+                            formula: `[${tableName}/${colLabel(physicalCol)}]`
+                        });
+                        element.order.push(srcColId);
+                    }
+                    // Parse tiers into buckets
+                    const rawTiers = typeof d.tiers === 'string' ? d.tiers : String(d.tiers);
+                    const tierValues = rawTiers.replace(/[\[\]]/g, '').split(/[,\s]+/).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
+                    if (tierValues.length > 0) {
+                        const srcDn = colLabel(physicalCol);
+                        const parts = [];
+                        for (let ti = tierValues.length - 1; ti >= 0; ti--) {
+                            const lo = tierValues[ti];
+                            const hi = ti < tierValues.length - 1 ? tierValues[ti + 1] : null;
+                            const label = hi ? `"${lo} to ${hi - 1}"` : `"${lo} or Above"`;
+                            parts.push(`If([${srcDn}] >= ${lo}, ${label}`);
+                        }
+                        parts.push(`"Below ${tierValues[0]}"`);
+                        const formula = parts.join(', ') + ')'.repeat(tierValues.length);
+                        const calcId = sigmaShortId();
+                        colIdMap[colName] = calcId;
+                        element.columns.push({
+                            id: calcId,
+                            formula,
+                            name: d.label || sigmaDisplayName(d._name)
+                        });
+                        element.order.push(calcId);
+                        warnings.push(`✅ Tier "${d._name}" → bucketed calculated column: ${formula.slice(0, 80)}...`);
+                    }
+                    continue;
+                }
+
+                // ── Simple dimensions — dedup by physical column ──────────────
+                if (colIdMap[physicalCol]) {
+                    // Physical column already exists — just map the dimension name to it
+                    colIdMap[colName] = colIdMap[physicalCol];
+                    continue;
+                }
                 const colId = sigmaShortId();
                 colIdMap[colName] = colId;
                 colIdMap[physicalCol] = colId;
@@ -9778,10 +10144,10 @@ ${cleanedSql}`;
                 ? (Array.isArray(view.measure) ? view.measure : [view.measure])
                 : [];
 
-            // Measure types that cannot be cleanly converted to Sigma metrics
-            const UNSUPPORTED_MEASURE_TYPES = new Set([
-                'running_total',    // requires window function — not supported in Sigma metrics
-                'percent_of_total', // requires total context — no equivalent in Sigma metrics
+            // Measure types that need special handling as calculated columns
+            const CALC_COL_MEASURE_TYPES = new Set([
+                'running_total',    // → CumulativeSum() calculated column
+                'percent_of_total', // → Sum()/GrandTotal(Sum()) calculated column
             ]);
 
             measures.forEach(ms => {
@@ -9792,15 +10158,78 @@ ${cleanedSql}`;
                 const msType = (ms.type || 'count').toLowerCase();
                 const msLabel = ms.label || sigmaDisplayName(msName);
 
-                // ── Unsupported types — skip and warn rather than silently create wrong metric
-                if (UNSUPPORTED_MEASURE_TYPES.has(msType)) {
-                    warnings.push(`⚠ Measure "${ms._name}" (type: ${msType}) cannot be converted — ${msType === 'running_total' ? 'running totals require a window function; use CumulativeSum() as a calculated column in Sigma' : 'percent_of_total → in Sigma, place Sum() at the desired grouping level then divide by GrandTotal(Sum()). Add a grouping to the element and compute the ratio at that level.'}`);
+                // ── running_total / percent_of_total → calculated columns (window functions)
+                if (CALC_COL_MEASURE_TYPES.has(msType)) {
+                    // Ensure source column exists
+                    if (!colIdMap[physicalCol]) {
+                        const colId = sigmaShortId();
+                        colIdMap[physicalCol] = colId;
+                        element.columns.push({ id: colId, formula: `[${tableName}/${colLabel(physicalCol)}]` });
+                        element.order.push(colId);
+                    }
+                    const dn = colLabel(physicalCol);
+                    const calcId = sigmaShortId();
+                    if (msType === 'running_total') {
+                        element.columns.push({ id: calcId, formula: `CumulativeSum([${dn}])`, name: msLabel });
+                        warnings.push(`✅ Measure "${ms._name}" (running_total) → calculated column: CumulativeSum([${dn}])`);
+                    } else {
+                        element.columns.push({ id: calcId, formula: `Sum([${dn}]) / GrandTotal(Sum([${dn}]))`, name: msLabel });
+                        warnings.push(`✅ Measure "${ms._name}" (percent_of_total) → calculated column: Sum([${dn}]) / GrandTotal(Sum([${dn}]))`);
+                    }
+                    element.order.push(calcId);
                     return;
                 }
 
-                // ── Filtered measures — convert the base metric but warn the filter is dropped
-                if (ms.filters && ms.filters.length) {
-                    warnings.push(`⚠ Measure "${ms._name}": the filters: block is not converted — Sigma has no equivalent inline filter on a metric. Create a separate calculated column with If() logic or a filtered element instead. The metric will be created without the filter.`);
+                // ── Filtered measures → conditional aggregates (SumIf, CountIf, etc.)
+                if (ms.filters && (Array.isArray(ms.filters) ? ms.filters.length : false)) {
+                    // Build filter condition from LookML filters array
+                    // Parser produces [{field: "col", value: "val"}, ...] from [col: "val"] syntax
+                    const filters = Array.isArray(ms.filters) ? ms.filters : [];
+                    const conditions = [];
+                    for (const f of filters) {
+                        if (typeof f !== 'object' || !f) continue; // skip non-objects
+                        const fField = f.field || f._name;
+                        const fVal = f.value;
+                        if (fField && fVal) {
+                            const cleanField = fField.replace(/^.*\./, '').toUpperCase();
+                            const dn = colLabel(cleanField);
+                            // Ensure filter column exists
+                            if (!colIdMap[cleanField]) {
+                                const colId = sigmaShortId();
+                                colIdMap[cleanField] = colId;
+                                element.columns.push({ id: colId, formula: `[${tableName}/${dn}]` });
+                                element.order.push(colId);
+                            }
+                            if (fVal === 'yes' || fVal === 'true') conditions.push(`[${dn}] = True`);
+                            else if (fVal === 'no' || fVal === 'false') conditions.push(`[${dn}] = False`);
+                            else conditions.push(`[${dn}] = "${fVal}"`);
+                        }
+                    }
+
+                    if (conditions.length > 0) {
+                        const condition = conditions.length === 1 ? conditions[0] : conditions.map(c => `(${c})`).join(' And ');
+                        if (!colIdMap[physicalCol]) {
+                            const colId = sigmaShortId();
+                            colIdMap[physicalCol] = colId;
+                            element.columns.push({ id: colId, formula: `[${tableName}/${colLabel(physicalCol)}]` });
+                            element.order.push(colId);
+                        }
+                        const dn = colLabel(physicalCol);
+                        const condAggMap = {
+                            sum: `SumIf([${dn}], ${condition})`,
+                            count: `CountIf(${condition})`,
+                            count_distinct: `CountDistinctIf([${dn}], ${condition})`,
+                            average: `AvgIf([${dn}], ${condition})`,
+                            max: `MaxIf([${dn}], ${condition})`,
+                            min: `MinIf([${dn}], ${condition})`,
+                        };
+                        const formula = condAggMap[msType] || `SumIf([${dn}], ${condition})`;
+                        element.metrics.push({ id: sigmaShortId(), formula, name: msLabel });
+                        warnings.push(`✅ Filtered measure "${ms._name}" → ${formula.slice(0, 80)}`);
+                        return;
+                    }
+                    // Fall through if filters couldn't be parsed
+                    warnings.push(`⚠ Measure "${ms._name}": filters block could not be fully parsed — metric created without filter`);
                 }
 
                 if (msType === 'count') {
@@ -10059,8 +10488,43 @@ ${cleanedSql}`;
                 if (warnings) warnings.push('⚠ LOD expression not converted: ' + f.slice(0,60));
                 return '/* LOD: ' + f.replace(/\/\*/g,'').replace(/\*\//g,'') + ' */';
             }
-            // Table calcs
+            // Table calcs — convert common patterns to Sigma window functions
             if (/^(WINDOW_|RUNNING_|FIRST\(|LAST\(|INDEX\(|RANK\b|RANK_|LOOKUP\(|PREVIOUS_VALUE\()/i.test(f)) {
+                // RUNNING_SUM(SUM([x])) or RUNNING_SUM([x]) → CumulativeSum([x])
+                let tcMatch = f.match(/^RUNNING_SUM\s*\(\s*(?:SUM\s*\(\s*)?(\[[^\]]+\])\s*\)?\s*\)/i);
+                if (tcMatch) return 'CumulativeSum(' + tcMatch[1] + ')';
+
+                // RUNNING_AVG(SUM([x])) → CumulativeAvg([x])
+                tcMatch = f.match(/^RUNNING_AVG\s*\(\s*(?:SUM\s*\(\s*)?(\[[^\]]+\])\s*\)?\s*\)/i);
+                if (tcMatch) return 'CumulativeAvg(' + tcMatch[1] + ')';
+
+                // RUNNING_MIN/MAX
+                tcMatch = f.match(/^RUNNING_(MIN|MAX)\s*\(\s*(?:(?:SUM|MIN|MAX)\s*\(\s*)?(\[[^\]]+\])\s*\)?\s*\)/i);
+                if (tcMatch) return 'Cumulative' + tcMatch[1].charAt(0) + tcMatch[1].slice(1).toLowerCase() + '(' + tcMatch[2] + ')';
+
+                // RANK(SUM([x])) or RANK([x]) → Rank([x])
+                tcMatch = f.match(/^RANK\s*\(\s*(?:SUM\s*\(\s*)?(\[[^\]]+\])\s*\)?\s*\)/i);
+                if (tcMatch) return 'Rank(' + tcMatch[1] + ')';
+
+                // RANK_DENSE → DenseRank
+                tcMatch = f.match(/^RANK_DENSE\s*\(\s*(?:SUM\s*\(\s*)?(\[[^\]]+\])\s*\)?\s*\)/i);
+                if (tcMatch) return 'DenseRank(' + tcMatch[1] + ')';
+
+                // RANK_UNIQUE → Rank
+                tcMatch = f.match(/^RANK_UNIQUE\s*\(\s*(?:SUM\s*\(\s*)?(\[[^\]]+\])\s*\)?\s*\)/i);
+                if (tcMatch) return 'Rank(' + tcMatch[1] + ')';
+
+                // INDEX() → RowNumber()
+                if (/^INDEX\s*\(\s*\)/i.test(f)) return 'RowNumber()';
+
+                // WINDOW_SUM(SUM([x])) → GrandTotal(Sum([x]))
+                tcMatch = f.match(/^WINDOW_SUM\s*\(\s*(SUM|COUNT|AVG|MIN|MAX)\s*\(\s*(\[[^\]]+\])\s*\)\s*\)/i);
+                if (tcMatch) {
+                    const aggMap = { SUM: 'Sum', COUNT: 'Count', AVG: 'Avg', MIN: 'Min', MAX: 'Max' };
+                    return 'GrandTotal(' + (aggMap[tcMatch[1].toUpperCase()] || tcMatch[1]) + '(' + tcMatch[2] + '))';
+                }
+
+                // Couldn't parse — fall back to comment
                 if (warnings) warnings.push('⚠ Table calculation not converted: ' + f.slice(0,60));
                 return '/* table calc: ' + f.replace(/\/\*/g,'').replace(/\*\//g,'') + ' */';
             }
@@ -10597,9 +11061,9 @@ ${cleanedSql}`;
                     }
                 }
 
-                // ── Auto-fix cross-element column references with - link/ syntax ──
-                // NOTE: Sigma API currently mangles - link/ on PUT. These formulas are generated
-                // assuming Sigma will fix this. Until then, users may need to re-add in UI.
+                // ── Drop cross-element column references (links are deprecated) ──
+                // Sigma "links" (- link/ syntax) are being deprecated and the API cannot create them.
+                // Drop any calculated column that references a column from another element, and warn.
                 const globalColMap = {};
                 for (const el of elements) {
                     for (const c of (el.columns || [])) {
@@ -10616,49 +11080,45 @@ ${cleanedSql}`;
                         if (fm) localNames.add(fm[1].toUpperCase());
                     }
 
-                    // Build FK physical name lookup: targetElementId → FK_PHYSICAL_NAME
-                    const relFkLookup = {};
-                    const elTableName = el.source && el.source.path
-                        ? el.source.path[el.source.path.length - 1] : (el.name || 'UNKNOWN');
-                    for (const rel of (el.relationships || [])) {
-                        const fkCol = (el.columns || []).find(c => c.id === rel.keys[0]?.sourceColumnId);
-                        if (fkCol) {
-                            const fkMatch = fkCol.formula.match(/\/([^\]]+)\]$/);
-                            if (fkMatch) {
-                                relFkLookup[rel.targetElementId] = fkMatch[1].replace(/\s+/g, '_').toUpperCase();
-                            }
+                    // Check calculated columns for cross-element refs and remove them
+                    for (let i = (el.columns || []).length - 1; i >= 0; i--) {
+                        const c = el.columns[i];
+                        if (!c.name || !c.formula) continue;
+                        if (c.formula.match(/^\[[\w_]+\//)) continue; // warehouse formula
+                        const refs = c.formula.match(/\[([^\]\/]+)\]/g) || [];
+                        let hasCrossRef = false;
+                        for (const ref of refs) {
+                            const rn = ref.replace(/^\[|\]$/g, '').toUpperCase();
+                            if (localNames.has(rn) || rn === 'TRUE' || rn === 'FALSE') continue;
+                            const ge = globalColMap[rn];
+                            if (ge && ge.elId !== el.id) { hasCrossRef = true; break; }
+                        }
+                        if (hasCrossRef) {
+                            warnings.push(`⚠ Removed "${c.name}" — references columns from related tables. Add manually in Sigma UI using linked columns.`);
+                            const colId = c.id;
+                            el.columns.splice(i, 1);
+                            if (el.order) { const oi = el.order.indexOf(colId); if (oi >= 0) el.order.splice(oi, 1); }
+                            localNames.delete(c.name.toUpperCase());
                         }
                     }
 
-                    for (const c of (el.columns || [])) {
-                        if (!c.name || !c.formula) continue;
-                        if (c.formula.match(/^\[[\w_]+\//)) continue;
-                        if (c.formula.includes('- link/')) continue;
-
-                        const refs = c.formula.match(/\[([^\]\/]+)\]/g) || [];
-                        let fixedFormula = c.formula;
-                        let wasFixed = false;
-
-                        for (const ref of refs) {
-                            const refName = ref.replace(/^\[|\]$/g, '');
-                            const refUpper = refName.toUpperCase();
-                            if (localNames.has(refUpper) || refUpper === 'TRUE' || refUpper === 'FALSE') continue;
-
-                            const ge = globalColMap[refUpper];
-                            if (ge && relFkLookup[ge.elId]) {
-                                // [TABLE/FK_COL - link/Display Name]
-                                const linkRef = `[${elTableName}/${relFkLookup[ge.elId]} - link/${ge.displayName}]`;
-                                fixedFormula = fixedFormula.replace(ref, linkRef);
-                                wasFixed = true;
-                            } else {
-                                warnings.push(`⚠ "${c.name}" references [${refName}] — no matching relationship found. Fix manually in Sigma UI.`);
+                    // Check metrics too
+                    if (el.metrics) {
+                        for (let i = el.metrics.length - 1; i >= 0; i--) {
+                            const m = el.metrics[i];
+                            if (!m.formula) continue;
+                            const refs = m.formula.match(/\[([^\]\/]+)\]/g) || [];
+                            let hasCrossRef = false;
+                            for (const ref of refs) {
+                                const rn = ref.replace(/^\[|\]$/g, '').toUpperCase();
+                                if (localNames.has(rn) || rn === 'TRUE' || rn === 'FALSE') continue;
+                                const ge = globalColMap[rn];
+                                if (ge && ge.elId !== el.id) { hasCrossRef = true; break; }
                             }
-                        }
-
-                        if (wasFixed) {
-                            c.formula = fixedFormula;
-                            warnings.push(`✅ "${c.name}" → linked column: ${fixedFormula.slice(0, 100)}`);
-                            warnings.push(`   ⚠ Note: Sigma API may not round-trip linked columns correctly yet. If this column errors after save, re-add it manually in the Sigma UI.`);
+                            if (hasCrossRef) {
+                                warnings.push(`⚠ Removed metric "${m.name}" — references columns from related tables. Add manually in Sigma UI.`);
+                                el.metrics.splice(i, 1);
+                            }
                         }
                     }
                 }
@@ -10682,6 +11142,12 @@ ${cleanedSql}`;
                         warnings.push('ℹ Parameter "' + p.name + '" → text control');
                     }
                 }
+
+                // Clean up empty metrics/relationships arrays
+                elements.forEach(el => {
+                    if (el.metrics && el.metrics.length === 0) delete el.metrics;
+                    if (el.relationships && el.relationships.length === 0) delete el.relationships;
+                });
 
                 const outputJson = {
                     name: ds.name,
@@ -11211,8 +11677,7 @@ ${cleanedSql}`;
                     }
                 }
 
-                // ── Auto-fix cross-element column references with - link/ syntax ──
-                // NOTE: Sigma API currently mangles - link/ on PUT. Generated assuming fix.
+                // ── Drop cross-element column references (links are deprecated) ──
                 const pbiGlobalColMap = {};
                 for (const el of elements) {
                     for (const c of (el.columns || [])) {
@@ -11227,43 +11692,55 @@ ${cleanedSql}`;
                         const fm = c.formula.match(/\/([^\]]+)\]$/);
                         if (fm) localNames.add(fm[1].toUpperCase());
                     }
-                    const relFkLookup = {};
-                    const elTbl = el.source && el.source.path
-                        ? el.source.path[el.source.path.length - 1] : (el.name || 'UNKNOWN');
-                    for (const rel of (el.relationships || [])) {
-                        const fkCol = (el.columns || []).find(c => c.id === rel.keys[0]?.sourceColumnId);
-                        if (fkCol) {
-                            const fkM = fkCol.formula.match(/\/([^\]]+)\]$/);
-                            if (fkM) relFkLookup[rel.targetElementId] = fkM[1].replace(/\s+/g, '_').toUpperCase();
-                        }
-                    }
-                    for (const c of (el.columns || [])) {
+
+                    for (let i = (el.columns || []).length - 1; i >= 0; i--) {
+                        const c = el.columns[i];
                         if (!c.name || !c.formula) continue;
                         if (c.formula.match(/^\[[\w_]+\//)) continue;
-                        if (c.formula.includes('- link/')) continue;
                         const refs = c.formula.match(/\[([^\]\/]+)\]/g) || [];
-                        let fixedFormula = c.formula;
-                        let wasFixed = false;
+                        let hasCrossRef = false;
                         for (const ref of refs) {
-                            const rn = ref.replace(/^\[|\]$/g, '');
-                            if (localNames.has(rn.toUpperCase()) || rn.toUpperCase() === 'TRUE' || rn.toUpperCase() === 'FALSE') continue;
-                            const ge = pbiGlobalColMap[rn.toUpperCase()];
-                            if (ge && relFkLookup[ge.elId]) {
-                                fixedFormula = fixedFormula.replace(ref, `[${elTbl}/${relFkLookup[ge.elId]} - link/${ge.displayName}]`);
-                                wasFixed = true;
-                            } else {
-                                warnings.push(`⚠ "${c.name}" references [${rn}] — no matching relationship found. Fix manually in Sigma UI.`);
-                            }
+                            const rn = ref.replace(/^\[|\]$/g, '').toUpperCase();
+                            if (localNames.has(rn) || rn === 'TRUE' || rn === 'FALSE') continue;
+                            const ge = pbiGlobalColMap[rn];
+                            if (ge && ge.elId !== el.id) { hasCrossRef = true; break; }
                         }
-                        if (wasFixed) {
-                            c.formula = fixedFormula;
-                            warnings.push(`✅ "${c.name}" → linked column: ${fixedFormula.slice(0, 100)}`);
-                            warnings.push(`   ⚠ Note: Sigma API may not round-trip linked columns correctly yet. If this column errors after save, re-add it manually in the Sigma UI.`);
+                        if (hasCrossRef) {
+                            warnings.push(`⚠ Removed "${c.name}" — references columns from related tables. Add manually in Sigma UI.`);
+                            const colId = c.id;
+                            el.columns.splice(i, 1);
+                            if (el.order) { const oi = el.order.indexOf(colId); if (oi >= 0) el.order.splice(oi, 1); }
+                            localNames.delete(c.name.toUpperCase());
+                        }
+                    }
+
+                    if (el.metrics) {
+                        for (let i = el.metrics.length - 1; i >= 0; i--) {
+                            const m = el.metrics[i];
+                            if (!m.formula) continue;
+                            const refs = m.formula.match(/\[([^\]\/]+)\]/g) || [];
+                            let hasCrossRef = false;
+                            for (const ref of refs) {
+                                const rn = ref.replace(/^\[|\]$/g, '').toUpperCase();
+                                if (localNames.has(rn) || rn === 'TRUE' || rn === 'FALSE') continue;
+                                const ge = pbiGlobalColMap[rn];
+                                if (ge && ge.elId !== el.id) { hasCrossRef = true; break; }
+                            }
+                            if (hasCrossRef) {
+                                warnings.push(`⚠ Removed metric "${m.name}" — references columns from related tables. Add manually in Sigma UI.`);
+                                el.metrics.splice(i, 1);
+                            }
                         }
                     }
                 }
 
                 // ── Build output ──────────────────────────────────────────────────
+                // Clean up empty arrays
+                elements.forEach(el => {
+                    if (el.metrics && el.metrics.length === 0) delete el.metrics;
+                    if (el.relationships && el.relationships.length === 0) delete el.relationships;
+                });
+
                 const modelName = _pbiModel.name || model.name || 'Power BI Import';
                 const outputJson = {
                     name: modelName,
@@ -11550,6 +12027,7 @@ ${cleanedSql}`;
             } catch(err) {
                 updateStatus('error', 'Save failed');
                 showToast(`Save failed: ${err.message}`, 'error');
+                showSaveErrorBanner(err.message);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = 'Save to Sigma';
@@ -11687,6 +12165,652 @@ view: date_dim {
             showToast('Example LookML project loaded — click Convert', 'success');
         }
 
+        // ── Alteryx Converter ─────────────────────────────────────────────
+        let _alteryxParsed = null;
+
+        function handleAlteryxFileInput(event) {
+            const file = event.target.files[0];
+            if (file) processAlteryxFile(file);
+            event.target.value = '';
+        }
+
+        function handleAlteryxDrop(event) {
+            event.preventDefault();
+            document.getElementById('alteryxDropZone').classList.remove('drag-over');
+            const file = event.dataTransfer.files[0];
+            if (file) processAlteryxFile(file);
+        }
+
+        async function processAlteryxFile(file) {
+            const name = file.name.toLowerCase();
+            if (!name.endsWith('.yxmd') && !name.endsWith('.xml')) {
+                showToast('Upload a .yxmd Alteryx Workflow file', 'warning'); return;
+            }
+            try {
+                const xmlText = await file.text();
+                ingestAlteryxXml(xmlText, file.name);
+            } catch(e) {
+                showToast('Could not read file: ' + e.message, 'error');
+            }
+        }
+
+        function ingestAlteryxXml(xmlText, filename) {
+            let doc;
+            try { doc = new DOMParser().parseFromString(xmlText, 'text/xml'); }
+            catch(e) { showToast('XML parse error: ' + e.message, 'error'); return; }
+            if (doc.querySelector('parsererror')) { showToast('Malformed XML in file', 'error'); return; }
+
+            const root = doc.documentElement;
+            if (root.tagName !== 'AlteryxDocument') {
+                showToast('Not an Alteryx workflow — expected <AlteryxDocument> root', 'error'); return;
+            }
+
+            // Parse nodes
+            const nodes = Array.from(root.querySelectorAll('Nodes > Node'));
+            const connections = Array.from(root.querySelectorAll('Connections > Connection'));
+
+            // Categorize tools
+            const inputs = [], joins = [], formulas = [], summarizes = [], selects = [], filters = [];
+            const nodeMap = {};
+
+            for (const node of nodes) {
+                const toolId = node.getAttribute('ToolID');
+                const gui = node.querySelector('GuiSettings');
+                const plugin = gui ? (gui.getAttribute('Plugin') || '') : '';
+                const engine = node.querySelector('EngineSettings');
+                const entryPoint = engine ? (engine.getAttribute('EngineDllEntryPoint') || '') : '';
+                const config = node.querySelector('Properties > Configuration');
+                const meta = node.querySelector('Properties > MetaInfo[connection="Output"] > RecordInfo');
+                const annotation = node.querySelector('Properties > Annotation > DefaultAnnotationText');
+
+                const info = { toolId, plugin, entryPoint, config, meta, node, annotation: annotation ? annotation.textContent : '' };
+                nodeMap[toolId] = info;
+
+                if (plugin.includes('DbFileInput') || entryPoint === 'AlteryxDbFileInput') inputs.push(info);
+                else if (plugin.includes('.Join.') || entryPoint === 'AlteryxJoin') joins.push(info);
+                else if (plugin.includes('.Formula.') || entryPoint === 'AlteryxFormula') formulas.push(info);
+                else if (plugin.includes('.Summarize.') || entryPoint === 'AlteryxSummarize') summarizes.push(info);
+                else if (plugin.includes('.AlteryxSelect.') || plugin.includes('.Select.') || entryPoint === 'AlteryxSelect') selects.push(info);
+                else if (plugin.includes('.Filter.') || entryPoint === 'AlteryxFilter') filters.push(info);
+            }
+
+            // Parse connections graph
+            const connGraph = connections.map(c => {
+                const origin = c.querySelector('Origin');
+                const dest = c.querySelector('Destination');
+                return {
+                    fromId: origin ? origin.getAttribute('ToolID') : '',
+                    fromConn: origin ? origin.getAttribute('Connection') : '',
+                    toId: dest ? dest.getAttribute('ToolID') : '',
+                    toConn: dest ? dest.getAttribute('Connection') : ''
+                };
+            });
+
+            _alteryxParsed = { inputs, joins, formulas, summarizes, selects, filters, nodeMap, connGraph, filename };
+
+            // Render UI
+            const fileList = document.getElementById('alteryxFileList');
+            fileList.innerHTML = '';
+            const badge = document.createElement('div');
+            badge.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-tertiary);border-radius:6px;font-size:12px;flex-shrink:0;';
+            badge.innerHTML = `<span style="font-size:14px;">⚙️</span>
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${filename}">${filename}</span>
+                <span style="font-size:10px;color:var(--text-muted);flex-shrink:0;">YXMD</span>`;
+            fileList.appendChild(badge);
+
+            const statsEl = document.getElementById('alteryxInputStats');
+            statsEl.innerHTML = [
+                `<span class="dbt-stat-badge">${inputs.length} input${inputs.length!==1?'s':''}</span>`,
+                `<span class="dbt-stat-badge">${joins.length} join${joins.length!==1?'s':''}</span>`,
+                `<span class="dbt-stat-badge">${formulas.length} formula tool${formulas.length!==1?'s':''}</span>`,
+                `<span class="dbt-stat-badge">${summarizes.length} summarize${summarizes.length!==1?'s':''}</span>`,
+                `<span class="dbt-stat-badge">${selects.length} select${selects.length!==1?'s':''}</span>`,
+                `<span class="dbt-stat-badge">${filters.length} filter${filters.length!==1?'s':''}</span>`,
+                `<span class="dbt-stat-badge">${nodes.length} total tools</span>`,
+            ].join('');
+
+            document.getElementById('alteryxConvertBtn').disabled = false;
+            showToast(`Loaded ${filename}: ${inputs.length} inputs, ${joins.length} joins, ${formulas.length} formulas`, 'success');
+        }
+
+        // ── Alteryx Formula → Sigma Formula Conversion ──────────────────
+        const ALTERYX_FUNC_MAP = {
+            'ToString': 'Text', 'ToNumber': 'Number', 'Trim': 'Trim',
+            'Uppercase': 'Upper', 'Lowercase': 'Lower',
+            'Left': 'Left', 'Right': 'Right', 'Substring': 'Substring',
+            'Length': 'Len', 'Contains': 'Contains', 'FindString': 'Find',
+            'PadLeft': 'PadStart', 'PadRight': 'PadEnd',
+            'ReplaceFirst': 'Replace', 'ReplaceChar': 'Replace',
+            'Abs': 'Abs', 'Ceil': 'Ceiling', 'Floor': 'Floor',
+            'Round': 'Round', 'Sqrt': 'Sqrt', 'Pow': 'Power',
+            'Log': 'Log', 'Log10': 'Log10',
+            'DateTimeYear': 'Year', 'DateTimeMonth': 'Month', 'DateTimeDay': 'Day',
+            'DateTimeHour': 'Hour', 'DateTimeMinute': 'Minute', 'DateTimeSecond': 'Second',
+            'DateTimeTrim': 'DateTrunc', 'DateTimeDiff': 'DateDiff', 'DateTimeAdd': 'DateAdd',
+            'DateTimeNow': 'Now', 'DateTimeToday': 'Today',
+            'IsNull': 'IsNull', 'IsEmpty': 'IsNull',
+            'IIF': 'If',
+            'Min': 'Min', 'Max': 'Max',
+        };
+
+        function alteryxFormulaToSigma(formula, warnings) {
+            if (!formula || !formula.trim()) return '';
+            let f = formula.trim();
+
+            // Alteryx IF/ELSEIF/ELSE/ENDIF → nested If()
+            if (/\bIF\b/i.test(f) && /\bENDIF\b/i.test(f)) {
+                f = alteryxIfToSigma(f);
+            }
+
+            // Map Alteryx functions → Sigma
+            for (const [ax, sig] of Object.entries(ALTERYX_FUNC_MAP)) {
+                const re = new RegExp('\\b' + ax + '\\s*\\(', 'gi');
+                f = f.replace(re, sig + '(');
+            }
+
+            // IIF(cond, true, false) → If(cond, true, false)
+            f = f.replace(/\bIIF\s*\(/gi, 'If(');
+
+            // NULL() → null
+            f = f.replace(/\bNULL\s*\(\s*\)/gi, 'null');
+
+            // Alteryx double-quote strings are fine in Sigma
+            // But single-quote strings need converting
+            // Actually Alteryx uses double quotes for strings, same as Sigma
+
+            // Column references: [Field Name] stays as-is (Sigma uses same syntax)
+            // But convert SNAKE_CASE bare refs to display names
+            f = f.replace(/\[([A-Z][A-Z0-9_]{2,})\]/g, (match, colName) => {
+                if (colName.includes(' ')) return match;
+                return '[' + sigmaDisplayName(colName) + ']';
+            });
+
+            return f.trim();
+        }
+
+        function alteryxIfToSigma(f) {
+            // Recursively convert IF/ELSEIF/ELSE/ENDIF to nested If()
+            const ifMatch = f.match(/\bIF\b([\s\S]*?)\bENDIF\b/i);
+            if (!ifMatch) return f;
+
+            let inner = ifMatch[0].replace(/^\s*IF\s*/i, '').replace(/\s*ENDIF\s*$/i, '');
+
+            // Extract ELSE
+            const elseIdx = inner.search(/\bELSE\b(?!\s*IF\b)/i);
+            let elseVal = 'null';
+            if (elseIdx >= 0) {
+                elseVal = inner.slice(elseIdx).replace(/^\s*ELSE\s*/i, '').trim();
+                inner = inner.slice(0, elseIdx);
+            }
+
+            // Split on ELSEIF
+            const parts = inner.split(/\bELSEIF\b/i);
+            let result = elseVal;
+            for (let i = parts.length - 1; i >= 0; i--) {
+                const thenParts = parts[i].split(/\bTHEN\b/i);
+                if (thenParts.length < 2) continue;
+                const cond = thenParts[0].trim();
+                const val = thenParts[1].trim();
+                result = 'If(' + cond + ', ' + val + ', ' + result + ')';
+            }
+
+            return f.slice(0, ifMatch.index) + result + f.slice(ifMatch.index + ifMatch[0].length);
+        }
+
+        // ── Alteryx Summarize action → Sigma aggregate formula ──────────
+        function alteryxSummarizeToSigma(action, fieldDisplayName) {
+            const map = {
+                'Sum': `Sum([${fieldDisplayName}])`,
+                'Avg': `Avg([${fieldDisplayName}])`,
+                'Min': `Min([${fieldDisplayName}])`,
+                'Max': `Max([${fieldDisplayName}])`,
+                'Count': 'Count()',
+                'CountDistinct': `CountDistinct([${fieldDisplayName}])`,
+                'CountNonNull': `CountIf(IsNotNull([${fieldDisplayName}]))`,
+                'CountNull': `CountIf(IsNull([${fieldDisplayName}]))`,
+                'First': `First([${fieldDisplayName}])`,
+                'Last': `Last([${fieldDisplayName}])`,
+                'Concat': `ListAgg([${fieldDisplayName}])`,
+            };
+            return map[action] || `/* ${action}([${fieldDisplayName}]) */`;
+        }
+
+        // ── Extract table path from Alteryx Input Data file string ──────
+        function alteryxExtractPath(fileStr, dbOverride, schOverride) {
+            // Pattern 1: ODBC with quoted table: "DB"."SCHEMA"."TABLE"
+            const odbcMatch = fileStr.match(/"([^"]+)"\."([^"]+)"\."([^"]+)"/);
+            if (odbcMatch) {
+                return [
+                    dbOverride || odbcMatch[1].toUpperCase(),
+                    schOverride || odbcMatch[2].toUpperCase(),
+                    odbcMatch[3].toUpperCase()
+                ];
+            }
+            // Pattern 2: Dotted path DB.SCHEMA.TABLE
+            const dotMatch = fileStr.match(/([A-Za-z_]\w*)\.([A-Za-z_]\w*)\.([A-Za-z_]\w+)\s*$/);
+            if (dotMatch) {
+                return [
+                    dbOverride || dotMatch[1].toUpperCase(),
+                    schOverride || dotMatch[2].toUpperCase(),
+                    dotMatch[3].toUpperCase()
+                ];
+            }
+            // Pattern 3: Just a file path — extract filename as table name
+            const filename = fileStr.split(/[/\\]/).pop().replace(/\.\w+$/, '').toUpperCase();
+            return [dbOverride || 'DATABASE', schOverride || 'SCHEMA', filename || 'UNKNOWN'];
+        }
+
+        // ── Main Alteryx Conversion ─────────────────────────────────────
+        function runAlteryxConversion() {
+            if (!_alteryxParsed || _alteryxParsed.inputs.length === 0) {
+                showToast('Upload a .yxmd file first', 'warning'); return;
+            }
+            const btn = document.getElementById('alteryxConvertBtn');
+            btn.disabled = true; btn.textContent = '⏳ Converting…';
+
+            try {
+                _usedIds.clear();
+                const connectionId = document.getElementById('alteryxConnectionId').value.trim() || '<CONNECTION_ID>';
+                const dbOverride = document.getElementById('alteryxDatabase').value.trim().toUpperCase();
+                const schOverride = document.getElementById('alteryxSchema').value.trim().toUpperCase();
+                const warnings = [], elements = [];
+                const elementMap = {}; // toolId → { element, colIdMap, tableName }
+
+                // 1. Build elements from Input Data tools
+                for (const inp of _alteryxParsed.inputs) {
+                    const fileEl = inp.config ? inp.config.querySelector('File') : null;
+                    const fileStr = fileEl ? fileEl.textContent.trim() : '';
+                    const path = alteryxExtractPath(fileStr, dbOverride, schOverride);
+                    const tableName = path[path.length - 1];
+
+                    const elementId = sigmaShortId();
+                    const columns = [], order = [], colIdMap = {};
+
+                    // Extract columns from RecordInfo
+                    const fields = inp.meta ? Array.from(inp.meta.querySelectorAll('Field')) : [];
+                    for (const field of fields) {
+                        const name = field.getAttribute('name');
+                        if (!name) continue;
+                        const id = sigmaInodeId(name.toUpperCase());
+                        columns.push({ id, formula: '[' + tableName + '/' + sigmaDisplayName(name) + ']' });
+                        order.push(id);
+                        colIdMap[name.toUpperCase()] = id;
+                        colIdMap[sigmaDisplayName(name).toUpperCase()] = id;
+                    }
+
+                    const element = {
+                        id: elementId, kind: 'table',
+                        source: { connectionId, kind: 'warehouse-table', path },
+                        columns, order
+                    };
+                    elements.push(element);
+                    elementMap[inp.toolId] = { element, colIdMap, tableName };
+                    warnings.push('ℹ Input "' + tableName + '": ' + fields.length + ' columns');
+                }
+
+                // 2. Resolve joins → relationships
+                // Trace the connection graph to find which Input feeds each Join
+                for (const join of _alteryxParsed.joins) {
+                    if (!join.config) continue;
+                    const joinInfos = Array.from(join.config.querySelectorAll('JoinInfo'));
+                    let leftField = '', rightField = '';
+                    for (const ji of joinInfos) {
+                        const conn = ji.getAttribute('connection');
+                        const fieldEl = ji.querySelector('Field');
+                        const fieldName = fieldEl ? fieldEl.getAttribute('field') : '';
+                        if (conn === 'Left') leftField = fieldName;
+                        else if (conn === 'Right') rightField = fieldName;
+                    }
+
+                    // Find which tools feed into this join's Left and Right
+                    const leftConn = _alteryxParsed.connGraph.find(c => c.toId === join.toolId && c.toConn === 'Left');
+                    const rightConn = _alteryxParsed.connGraph.find(c => c.toId === join.toolId && c.toConn === 'Right');
+
+                    // Trace back to find the source Input element
+                    function traceToInput(toolId) {
+                        const visited = new Set();
+                        let current = toolId;
+                        while (current && !visited.has(current)) {
+                            visited.add(current);
+                            if (elementMap[current]) return elementMap[current];
+                            // Follow connection graph backwards
+                            const prevConn = _alteryxParsed.connGraph.find(c => c.toId === current);
+                            current = prevConn ? prevConn.fromId : null;
+                        }
+                        return null;
+                    }
+
+                    const leftSrc = leftConn ? traceToInput(leftConn.fromId) : null;
+                    const rightSrc = rightConn ? traceToInput(rightConn.fromId) : null;
+
+                    if (leftSrc && rightSrc && leftField && rightField) {
+                        const srcColId = leftSrc.colIdMap[leftField.toUpperCase()]
+                            || leftSrc.colIdMap[sigmaDisplayName(leftField).toUpperCase()];
+                        const tgtColId = rightSrc.colIdMap[rightField.toUpperCase()]
+                            || rightSrc.colIdMap[sigmaDisplayName(rightField).toUpperCase()];
+
+                        if (srcColId && tgtColId) {
+                            if (!leftSrc.element.relationships) leftSrc.element.relationships = [];
+                            leftSrc.element.relationships.push({
+                                id: sigmaShortId(),
+                                targetElementId: rightSrc.element.id,
+                                keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
+                                name: rightSrc.tableName
+                            });
+                            warnings.push('ℹ Join: ' + leftSrc.tableName + '.' + leftField + ' → ' + rightSrc.tableName + '.' + rightField);
+                        } else {
+                            warnings.push('⚠ Join: could not resolve columns ' + leftField + ' / ' + rightField);
+                        }
+                    } else {
+                        warnings.push('⚠ Join (Tool ' + join.toolId + '): could not trace input sources');
+                    }
+                }
+
+                // 3. Formula tools → calculated columns on the fact element
+                const factEl = elements.find(e => e.relationships && e.relationships.length > 0)
+                    || (elements.length > 0 ? elements.reduce((best, e) =>
+                        (e.columns||[]).length > (best.columns||[]).length ? e : best, elements[0]) : null);
+
+                if (factEl) {
+                    for (const form of _alteryxParsed.formulas) {
+                        const formulaFields = form.config ? Array.from(form.config.querySelectorAll('FormulaField')) : [];
+                        for (const ff of formulaFields) {
+                            const expr = ff.getAttribute('expression') || '';
+                            const fieldName = ff.getAttribute('field') || '';
+                            if (!fieldName || !expr) continue;
+
+                            const sigmaFormula = alteryxFormulaToSigma(expr, warnings);
+                            if (sigmaFormula) {
+                                const colId = sigmaShortId();
+                                factEl.columns.push({ id: colId, formula: sigmaFormula, name: sigmaDisplayName(fieldName) });
+                                factEl.order.push(colId);
+                                warnings.push('ℹ Formula "' + fieldName + '" → ' + sigmaFormula.slice(0, 60));
+                            } else {
+                                warnings.push('⚠ Formula "' + fieldName + '": could not convert. Add manually.');
+                            }
+                        }
+                    }
+
+                    // 4. Summarize tools → metrics
+                    for (const summ of _alteryxParsed.summarizes) {
+                        const summFields = summ.config ? Array.from(summ.config.querySelectorAll('SummarizeField')) : [];
+                        for (const sf of summFields) {
+                            const field = sf.getAttribute('field') || '';
+                            const action = sf.getAttribute('action') || '';
+                            const rename = sf.getAttribute('rename') || field;
+                            if (action === 'GroupBy') continue; // groupBy dims are already columns
+
+                            const displayName = sigmaDisplayName(field);
+                            const formula = alteryxSummarizeToSigma(action, displayName);
+                            if (formula && !formula.startsWith('/*')) {
+                                if (!factEl.metrics) factEl.metrics = [];
+                                factEl.metrics.push({
+                                    id: sigmaShortId(),
+                                    formula: formula,
+                                    name: sigmaDisplayName(rename)
+                                });
+                                warnings.push('ℹ Summarize "' + rename + '" → ' + formula.slice(0, 60));
+                            } else {
+                                warnings.push('⚠ Summarize "' + rename + '" (' + action + '): not auto-converted');
+                            }
+                        }
+                    }
+
+                    // 5. Select tools → rename info (warnings only since renames happen in-place)
+                    for (const sel of _alteryxParsed.selects) {
+                        const selectFields = sel.config ? Array.from(sel.config.querySelectorAll('SelectField')) : [];
+                        let renameCount = 0;
+                        for (const sf of selectFields) {
+                            const field = sf.getAttribute('field') || '';
+                            const rename = sf.getAttribute('rename') || '';
+                            if (rename && rename !== field && field !== '*Unknown') renameCount++;
+                        }
+                        if (renameCount > 0) {
+                            warnings.push('ℹ Select tool has ' + renameCount + ' rename(s) — review column names in the JSON editor');
+                        }
+                    }
+
+                    // 6. Filter tools → info warning
+                    for (const filt of _alteryxParsed.filters) {
+                        const expr = filt.config ? filt.config.querySelector('Expression') : null;
+                        if (expr) {
+                            warnings.push('ℹ Filter: ' + expr.textContent.trim().slice(0, 80) + ' — consider adding as RLS via AI Assistant');
+                        }
+                    }
+
+                    // 7. Remove calculated columns/metrics that reference columns from other elements.
+                    // In Alteryx, formulas run after all joins so they freely reference columns from ALL tables.
+                    // In Sigma, calculated columns can only reference local columns. Cross-element refs need
+                    // Sigma "links" (- link/ syntax) are deprecated and the API cannot create them.
+                    // Drop any formula referencing columns from other elements, and warn.
+                    const globalColMap = {};
+                    elements.forEach(el => {
+                        (el.columns || []).forEach(c => {
+                            const fm = c.formula.match(/\[([^\/\]]+)\/([^\]]+)\]$/);
+                            if (fm) globalColMap[fm[2].toUpperCase()] = { elId: el.id, displayName: fm[2] };
+                        });
+                    });
+
+                    elements.forEach(el => {
+                        const localNames = new Set();
+                        (el.columns || []).forEach(c => {
+                            if (c.name) localNames.add(c.name.toUpperCase());
+                            const fm = c.formula.match(/\/([^\]]+)\]$/);
+                            if (fm) localNames.add(fm[1].toUpperCase());
+                        });
+
+                        const hasCrossRef = (formula) => {
+                            if (!formula) return false;
+                            if (formula.match(/^\[[\w_]+\//)) return false; // warehouse formula
+                            const refs = formula.match(/\[([^\]\/]+)\]/g) || [];
+                            for (const ref of refs) {
+                                const rn = ref.replace(/^\[|\]$/g, '');
+                                if (localNames.has(rn.toUpperCase())) continue;
+                                if (/^(True|False|null)$/i.test(rn)) continue;
+                                // Check if it's a string literal inside quotes — skip
+                                if (/^".*"$/.test(rn)) continue;
+                                const ge = globalColMap[rn.toUpperCase()];
+                                if (ge && ge.elId !== el.id) return true;
+                            }
+                            return false;
+                        };
+
+                        // Remove columns with cross-element refs (in reverse to preserve indices)
+                        for (let i = (el.columns || []).length - 1; i >= 0; i--) {
+                            const c = el.columns[i];
+                            if (c.name && hasCrossRef(c.formula)) {
+                                warnings.push('⚠ Removed "' + c.name + '" — references columns from related tables. Add manually in Sigma UI using linked columns.');
+                                const colId = c.id;
+                                el.columns.splice(i, 1);
+                                // Also remove from order array
+                                const oi = el.order.indexOf(colId);
+                                if (oi >= 0) el.order.splice(oi, 1);
+                                // Remove from localNames so metrics referencing this column get caught too
+                                localNames.delete(c.name.toUpperCase());
+                            }
+                        }
+
+                        // Remove metrics with cross-element refs
+                        if (el.metrics) {
+                            for (let i = el.metrics.length - 1; i >= 0; i--) {
+                                if (hasCrossRef(el.metrics[i].formula)) {
+                                    warnings.push('⚠ Removed metric "' + el.metrics[i].name + '" — references columns from related tables. Add manually in Sigma UI.');
+                                    el.metrics.splice(i, 1);
+                                }
+                            }
+                        }
+                    });
+
+                // Clean up empty metrics and relationships arrays on ALL elements
+                elements.forEach(el => {
+                    if (el.metrics && el.metrics.length === 0) delete el.metrics;
+                    if (el.relationships && el.relationships.length === 0) delete el.relationships;
+                });
+                }
+
+                // Sort: dims first, fact last
+                elements.sort((a, b) => {
+                    const aR = !!(a.relationships && a.relationships.length);
+                    const bR = !!(b.relationships && b.relationships.length);
+                    return aR === bR ? 0 : aR ? 1 : -1;
+                });
+
+                if (!connectionId || connectionId === '<CONNECTION_ID>') {
+                    warnings.unshift('⚠ Connection ID not set — update in JSON before saving to Sigma');
+                }
+
+                const metaEl = _alteryxParsed.nodeMap ? null : null;
+                const modelName = _alteryxParsed.filename.replace(/\.yxmd$/i, '').replace(/[_-]/g, ' ');
+
+                const sigmaModel = {
+                    name: modelName,
+                    pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
+                };
+
+                state.editorContent = JSON.stringify(sigmaModel, null, 2);
+                document.getElementById('alteryxJsonOutput').value = state.editorContent;
+                renderExplorer();
+                const totalCols = elements.reduce((s, e) => s + (e.columns||[]).length, 0);
+                const totalMetrics = elements.reduce((s, e) => s + (e.metrics||[]).length, 0);
+                const totalRels = elements.reduce((s, e) => s + (e.relationships||[]).length, 0);
+
+                // Show warnings
+                const warnBox = document.getElementById('alteryxWarningBox');
+                if (warnings.length > 0) {
+                    warnBox.style.display = '';
+                    warnBox.innerHTML = warnings.map(w => '<div>' + w + '</div>').join('');
+                } else {
+                    warnBox.style.display = 'none';
+                }
+
+                // Show output stats
+                document.getElementById('alteryxOutputStats').innerHTML = [
+                    `<span class="dbt-stat-badge">${elements.length} element${elements.length!==1?'s':''}</span>`,
+                    `<span class="dbt-stat-badge">${totalCols} column${totalCols!==1?'s':''}</span>`,
+                    `<span class="dbt-stat-badge">${totalMetrics} metric${totalMetrics!==1?'s':''}</span>`,
+                    `<span class="dbt-stat-badge">${totalRels} relationship${totalRels!==1?'s':''}</span>`,
+                ].join('');
+
+                // Enable buttons
+                document.getElementById('alteryxCopyBtn').disabled = false;
+                document.getElementById('alteryxLoadBtn').disabled = false;
+                document.getElementById('alteryxSaveBtn').disabled = false;
+
+                showToast('✅ Converted: ' + elements.length + ' elements, ' + totalCols + ' cols, ' + totalMetrics + ' metrics, ' + totalRels + ' relationships', 'success');
+
+            } catch(e) {
+                showToast('Conversion error: ' + e.message, 'error');
+                console.error(e);
+            } finally {
+                btn.disabled = false; btn.textContent = '⚙️ Convert to Sigma';
+            }
+        }
+
+        function alteryxLoadAndSave() {
+            const rawVal = document.getElementById('alteryxJsonOutput').value;
+            if (!rawVal) { showToast('Convert a workflow first', 'warning'); return; }
+            loadAlteryxOutputToEditor();
+            if (!state.accessToken) { showToast('Loaded into editor. Connect to Sigma, then click Save to Sigma.', 'warning'); return; }
+            openSaveLocationModal();
+        }
+
+        function copyAlteryxOutput() {
+            const text = document.getElementById('alteryxJsonOutput').value;
+            if (text) { navigator.clipboard.writeText(text); showToast('Copied to clipboard', 'success'); }
+        }
+
+        function loadAlteryxOutputToEditor() {
+            const val = document.getElementById('alteryxJsonOutput').value;
+            if (!val) return;
+            try {
+                const obj = JSON.parse(val);
+                editorMode = 'json';
+                _updateModeToggleUI();
+                setEditorContent(obj);
+            } catch(e) {
+                document.getElementById('jsonEditor').value = val;
+            }
+            state.isNewModel = true; state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from Alteryx (unsaved)';
+            ['formatBtn','copyBtn','saveBtn'].forEach(id => document.getElementById(id).disabled = false);
+            enableEditorModeToggle();
+            switchEditorTab('json');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
+        }
+
+        function loadAlteryxExample() {
+            const exampleXml = `<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2024.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput"><Position x="54" y="54" /></GuiSettings>
+      <Properties>
+        <Configuration><File>odbc:DSN=Snowflake|||"ANALYTICS"."PUBLIC"."ORDER_FACT"</File></Configuration>
+        <Annotation DisplayMode="0"><DefaultAnnotationText>ORDER_FACT</DefaultAnnotationText></Annotation>
+        <MetaInfo connection="Output"><RecordInfo>
+          <Field name="ORDER_KEY" type="Int32" /><Field name="CUSTOMER_KEY" type="Int32" />
+          <Field name="GROSS_REVENUE" type="Double" /><Field name="DISCOUNT_AMOUNT" type="Double" />
+          <Field name="QUANTITY" type="Int32" /><Field name="ORDER_CHANNEL" size="50" type="V_WString" />
+        </RecordInfo></MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput"><Position x="54" y="198" /></GuiSettings>
+      <Properties>
+        <Configuration><File>odbc:DSN=Snowflake|||"ANALYTICS"."PUBLIC"."CUSTOMER_DIM"</File></Configuration>
+        <Annotation DisplayMode="0"><DefaultAnnotationText>CUSTOMER_DIM</DefaultAnnotationText></Annotation>
+        <MetaInfo connection="Output"><RecordInfo>
+          <Field name="CUSTOMER_KEY" type="Int32" /><Field name="CUSTOMER_NAME" size="100" type="V_WString" />
+          <Field name="CUSTOMER_SEGMENT" size="50" type="V_WString" /><Field name="REGION" size="50" type="V_WString" />
+        </RecordInfo></MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+    </Node>
+    <Node ToolID="10">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Join.Join"><Position x="258" y="126" /></GuiSettings>
+      <Properties>
+        <Configuration joinByRecordPos="False">
+          <JoinInfo connection="Left"><Field field="CUSTOMER_KEY" /></JoinInfo>
+          <JoinInfo connection="Right"><Field field="CUSTOMER_KEY" /></JoinInfo>
+        </Configuration>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxJoin" />
+    </Node>
+    <Node ToolID="20">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula"><Position x="390" y="126" /></GuiSettings>
+      <Properties>
+        <Configuration><FormulaFields>
+          <FormulaField expression="[GROSS_REVENUE] - [DISCOUNT_AMOUNT]" field="NET_REVENUE" type="Double" />
+          <FormulaField expression="IF [ORDER_CHANNEL] = &quot;Online&quot; THEN &quot;Digital&quot; ELSE &quot;Physical&quot; ENDIF" field="CHANNEL_GROUP" size="50" type="V_WString" />
+        </FormulaFields></Configuration>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFormula" />
+    </Node>
+    <Node ToolID="30">
+      <GuiSettings Plugin="AlteryxSpatialPluginsGui.Summarize.Summarize"><Position x="522" y="126" /></GuiSettings>
+      <Properties>
+        <Configuration><SummarizeFields>
+          <SummarizeField field="CUSTOMER_SEGMENT" action="GroupBy" rename="CUSTOMER_SEGMENT" />
+          <SummarizeField field="GROSS_REVENUE" action="Sum" rename="TOTAL_REVENUE" />
+          <SummarizeField field="ORDER_KEY" action="CountDistinct" rename="ORDER_COUNT" />
+        </SummarizeFields></Configuration>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxSpatialPluginsEngine.dll" EngineDllEntryPoint="AlteryxSummarize" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="10" Connection="Left" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="10" Connection="Right" /></Connection>
+    <Connection><Origin ToolID="10" Connection="Join" /><Destination ToolID="20" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="20" Connection="Output" /><Destination ToolID="30" Connection="Input" /></Connection>
+  </Connections>
+  <Properties><MetaInfo><n>Example Retail Pipeline</n></MetaInfo></Properties>
+</AlteryxDocument>`;
+            ingestAlteryxXml(exampleXml, 'example_retail_pipeline.yxmd');
+            showToast('Example Alteryx workflow loaded — click Convert', 'success');
+        }
+
         // ── Help System ───────────────────────────────────────────────────
         const HELP_CONTENT = {
             overview: `
@@ -11695,11 +12819,12 @@ view: date_dim {
 
 <h3>Key Capabilities</h3>
 <ul>
-    <li><b>JSON Editor</b> — View and edit data model JSON directly, with syntax highlighting and formatting</li>
+    <li><b>JSON Editor</b> — View and edit data model JSON directly, with syntax highlighting and formatting. Paste JSON and save directly.</li>
     <li><b>File Explorer</b> — Navigate elements, columns, metrics, and relationships visually</li>
     <li><b>AI Assistant</b> — Generate columns, metrics, descriptions, RLS, CLS, and more using natural language</li>
+    <li><b>Fix with AI</b> — When a save fails, an error banner offers AI-powered repair of common issues (empty arrays, casing, structural problems)</li>
     <li><b>Smart Insert</b> — AI-generated content is merged intelligently into the correct element</li>
-    <li><b>Converters</b> — Import from dbt, Snowflake, LookML, Tableau, and Power BI</li>
+    <li><b>Converters</b> — Import from dbt, Snowflake, LookML, Tableau, Power BI, and Alteryx</li>
     <li><b>Bulk Upload</b> — Create multiple elements from warehouse tables at once</li>
 </ul>
 
@@ -11737,8 +12862,8 @@ view: date_dim {
 <h3>Known Limitations</h3>
 <ul>
     <li><b>LOD INCLUDE/EXCLUDE</b> — Cannot be auto-converted; generates a warning with guidance</li>
-    <li><b>Table calculations</b> — RUNNING_SUM, RANK, WINDOW_AVG etc. are flagged, not converted</li>
-    <li><b>Linked columns</b> — Formulas referencing related dimension columns use <code>- link/</code> syntax which has a known API round-trip bug <span class="help-badge api-bug">API Bug</span></li>
+    <li><b>Table calculations</b> — RUNNING_SUM → <code>CumulativeSum()</code>, RANK → <code>Rank()</code>/<code>DenseRank()</code>, INDEX → <code>RowNumber()</code>, WINDOW_SUM → <code>GrandTotal()</code>. Complex patterns (LOOKUP, PREVIOUS_VALUE) are flagged.</li>
+    <li><b>Cross-element columns</b> — Formulas referencing related dimension columns are removed with a warning. Add these manually in the Sigma UI after saving (the API does not support creating cross-element column references).</li>
     <li><b>Role-playing dimensions</b> — Only one relationship per dimension table is supported</li>
     <li><b>Bins &amp; sets</b> — Not directly converted; generates warnings</li>
 </ul>
@@ -11779,7 +12904,7 @@ view: date_dim {
 <h3>Known Limitations</h3>
 <ul>
     <li><b>M expression parsing</b> — Works for SQL Server, Snowflake, and simple patterns. Complex Power Query may not extract paths correctly.</li>
-    <li><b>Linked columns</b> — Same API round-trip limitation as Tableau <span class="help-badge api-bug">API Bug</span></li>
+    <li><b>Cross-element columns</b> — Formulas referencing related dimension columns are removed with a warning. Add manually in the Sigma UI after saving.</li>
 </ul>
 
 <div class="help-links">
@@ -11797,17 +12922,19 @@ view: date_dim {
 <ul>
     <li><b>Views with sql_table_name</b> → Sigma elements with warehouse paths</li>
     <li><b>Derived tables (SQL)</b> → Sigma custom SQL elements</li>
-    <li><b>Dimensions</b> → Sigma columns with formula conversion</li>
-    <li><b>Measures</b> → Sigma metrics (sum, count, count_distinct, average, min, max)</li>
+    <li><b>Dimensions</b> → Sigma columns with formula conversion (duplicate physical columns are auto-deduplicated)</li>
+    <li><b>Tier dimensions</b> → Bucketed <code>If()</code> calculated columns (e.g. "0 to 99", "100 to 499", "500 or Above")</li>
+    <li><b>Yesno dimensions</b> → Boolean calculated columns with "(T/F)" suffix (e.g. <code>[Is Active] = 1</code> → "Is Active (T/F)")</li>
+    <li><b>Measures</b> → Sigma metrics (sum, count, count_distinct, average, min, max, median)</li>
     <li><b>Explore joins</b> → Sigma relationships</li>
     <li><b>Dimension groups (time)</b> → Expanded into individual columns per timeframe</li>
 </ul>
 
-<h3>Known Limitations</h3>
+<h3>Special Handling</h3>
 <ul>
-    <li><b>percent_of_total measures</b> → Requires groupings; generates a warning pointing to <code>GrandTotal(Sum())</code></li>
-    <li><b>running_total measures</b> → Requires groupings; generates a warning pointing to <code>CumulativeSum()</code></li>
-    <li><b>Filtered measures</b> — <code>filters:</code> blocks are flagged, not auto-converted</li>
+    <li><b>percent_of_total measures</b> → Calculated column: <code>Sum([Col]) / GrandTotal(Sum([Col]))</code></li>
+    <li><b>running_total measures</b> → Calculated column: <code>CumulativeSum([Col])</code></li>
+    <li><b>Filtered measures</b> → Conditional aggregates: <code>SumIf([Col], [Filter] = "value")</code></li>
     <li><b>Liquid templating</b> — <code>{% %}</code> and <code>{{ }}</code> blocks are stripped with warnings</li>
     <li><b>PDT materializations</b> — Recognized but the materialization strategy doesn't carry over</li>
 </ul>
@@ -11858,9 +12985,40 @@ view: date_dim {
     <li><b>Materialized views / streams</b> — Treated as regular tables</li>
 </ul>`,
 
+            alteryx: `
+<h3>Alteryx Converter</h3>
+<p>Converts Alteryx workflows (<code>.yxmd</code>) to Sigma data model JSON. Parses the XML structure to extract Input Data tools, Join tools, Formula tools, Summarize tools, Select tools, and Filter tools.</p>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>Input Data tools</b> → Sigma elements with warehouse table paths (extracted from ODBC connection strings)</li>
+    <li><b>Join tools</b> → Sigma relationships (join keys mapped from Left/Right field configuration)</li>
+    <li><b>Formula tools</b> → Calculated columns with formula conversion (IF/ELSEIF/ELSE/ENDIF → nested If(), function mapping)</li>
+    <li><b>Summarize tools</b> → Sigma metrics (Sum, Avg, Min, Max, Count, CountDistinct, CountNonNull)</li>
+    <li><b>Select tools</b> → Column rename warnings (review in JSON editor)</li>
+    <li><b>Filter tools</b> → Informational warnings (consider adding as RLS via AI Assistant)</li>
+</ul>
+
+<h3>Supported Alteryx Functions</h3>
+<ul>
+    <li><b>Conditional</b> — IF/ELSEIF/ELSE/ENDIF, IIF</li>
+    <li><b>String</b> — ToString, Uppercase, Lowercase, Trim, Left, Right, Substring, Length, Contains</li>
+    <li><b>Math</b> — Abs, Ceil, Floor, Round, Sqrt, Pow, Log</li>
+    <li><b>Date</b> — DateTimeYear, DateTimeMonth, DateTimeDay, DateTimeDiff, DateTimeAdd, DateTimeTrim</li>
+    <li><b>Null handling</b> — IsNull, IsEmpty, NULL()</li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li><b>ETL vs Model</b> — Alteryx workflows are data pipelines, not star schemas. The converter extracts Input tools as elements and infers relationships from Join tools, but intermediate transformations are simplified.</li>
+    <li><b>Cross-element columns</b> — Alteryx formulas run after all joins are flattened, so they can reference columns from any table. Formulas referencing columns from other elements are removed with a warning. Add these manually in the Sigma UI after saving.</li>
+    <li><b>Complex formulas</b> — Multi-row formulas, RegEx, spatial functions, and custom macros generate warnings. Use the AI Assistant to convert these manually.</li>
+    <li><b>Connection graph tracing</b> — Join relationships are resolved by tracing the connection graph backwards from each Join tool to find the source Input tool. Complex branching workflows may need manual review.</li>
+</ul>`,
+
             ai: `
 <h3>AI Assistant</h3>
-<p>Uses the Claude API to generate data model content from natural language. Works in two modes: <b>modify existing</b> (add columns, metrics, descriptions to loaded models) and <b>add new table</b> (generate a complete element from scratch).</p>
+<p>Uses AI (Claude, OpenAI, or Gemini) to generate data model content from natural language. Works in two modes: <b>modify existing</b> (add columns, metrics, descriptions to loaded models) and <b>add new table</b> (generate a complete element from scratch).</p>
 
 <h3>Capabilities</h3>
 <ul>
@@ -11873,10 +13031,15 @@ view: date_dim {
     <li><b>Smart Insert</b> — AI output is auto-targeted to the correct element</li>
 </ul>
 
+<h3>Fix with AI</h3>
+<p>When a save to Sigma fails, a red error banner appears below the toolbar with a <b>🤖 Fix with AI</b> button. This sends the failed JSON and the error message to the AI provider (Claude, OpenAI, or Gemini) to attempt automatic repair.</p>
+<p>The AI can fix structural issues (empty arrays, casing mismatches, circular dependencies) but <b>cannot verify warehouse column names</b>. If column names don't match your warehouse schema, the AI will remove suspicious columns and warn you to double-check.</p>
+<p>To use: click "Fix with AI" → enter an API key inline if not already configured → AI returns corrected JSON → review and click Save again.</p>
+
 <h3>Formula Syntax Rules</h3>
 <ul>
     <li>Local columns: <code>[Column Name]</code> — no table prefix</li>
-    <li>Related columns: <code>[TABLE/FK_COL - link/Display Name]</code></li>
+    <li>Cross-element columns: Not supported via API — add manually in Sigma UI</li>
     <li>Conditional aggregates: <code>SumIf(field, condition)</code> — field FIRST</li>
     <li><code>CountIf(condition)</code> — condition only, NO field argument</li>
     <li>Booleans: always use <code>[Col] = True</code>, never bare <code>[Col]</code></li>
@@ -11892,9 +13055,9 @@ view: date_dim {
             api: `
 <h3>Sigma API Notes & Known Issues</h3>
 
-<h3>Linked Column Round-Trip Bug <span class="help-badge api-bug">Known Bug</span></h3>
-<p>Calculated columns that reference related dimension columns via relationships cannot be reliably saved through the API. The API returns linked column formulas in <code>- link/</code> format on GET, but this format gets mangled when sent back via PUT. The <code>[TABLE/RELATIONSHIP_NAME/Col]</code> format also doesn't round-trip correctly.</p>
-<p><b>Workaround:</b> After saving a converted model, re-add any linked columns manually in the Sigma UI. The converters generate these formulas with <code>- link/</code> syntax and include warnings about this limitation.</p>
+<h3>Cross-Element Column References (Links)</h3>
+<p>Sigma "links" (the <code>- link/</code> formula syntax) are a separate feature from relationships. Links are being <b>deprecated</b> in favor of relationships, and the API does not support creating them. Converters automatically detect and remove formulas that reference columns from related tables, with a warning to add them manually in the Sigma UI after saving.</p>
+<p>This applies to any calculated column or metric that references a column from a different element (e.g. referencing <code>Full Date</code> from DATE_DIM on an ORDER_FACT calculated column).</p>
 
 <h3>Column ID Formats</h3>
 <p>Sigma uses two column ID formats:</p>
@@ -11903,6 +13066,24 @@ view: date_dim {
     <li><b>Calculated columns:</b> Short random IDs — generated by the tool, Sigma keeps them</li>
 </ul>
 <p>When saving a new model, Sigma replaces all column IDs with its own inode-based IDs. References in formulas, relationships, and groupings are automatically remapped.</p>
+
+<h3>Display Name Casing</h3>
+<p>Sigma Title-Cases <b>ALL</b> words in display names. <code>SNAKE_CASE</code> → <code>Title Case</code> with every word capitalized:</p>
+<ul>
+    <li><code>IS_EMAIL_OPT_IN</code> → "Is Email Opt In" (not "Is Email Opt in")</li>
+    <li><code>ORDER_DATE_KEY</code> → "Order Date Key"</li>
+    <li>Words like "in", "of", "to", "at" are capitalized, unlike English title case</li>
+</ul>
+<p>Column formulas must use the exact display name Sigma generates. A casing mismatch causes "cycle in dependency order" errors.</p>
+
+<h3>"Cycle in Dependency Order" Error</h3>
+<p>This is the most common save error. It usually means:</p>
+<ul>
+    <li>A column formula references a display name that doesn't match the warehouse column (most common — check casing and column existence)</li>
+    <li>Empty <code>metrics: []</code> or <code>relationships: []</code> arrays on elements with no metrics/relationships</li>
+    <li>Deprecated <code>- link/</code> cross-element formulas</li>
+</ul>
+<p>Use the <b>Fix with AI</b> button in the error banner to attempt automatic repair, or double-check that all column names exist in your warehouse tables.</p>
 
 <h3>API Endpoints Used</h3>
 <ul>
@@ -11931,6 +13112,7 @@ view: date_dim {
     <li><code>convert_snowflake_to_sigma</code> — Snowflake Cortex Analyst YAML → Sigma JSON</li>
     <li><code>convert_lookml_to_sigma</code> — LookML project files → Sigma JSON</li>
     <li><code>convert_powerbi_to_sigma</code> — Power BI model (.bim / TOM JSON) → Sigma JSON</li>
+    <li><code>convert_tableau_to_sigma</code> — Tableau workbook/data source (.twb/.tds XML) → Sigma JSON</li>
     <li><code>convert_sql_to_sigma_formula</code> — SQL expression → Sigma formula</li>
     <li><code>convert_tableau_formula_to_sigma</code> — Tableau formula → Sigma formula</li>
     <li><code>get_sigma_data_model_schema</code> — Sigma data model JSON schema reference</li>
@@ -11971,7 +13153,7 @@ view: date_dim {
 
         function switchHelpTab(tab) {
             document.querySelectorAll('#helpTabs .help-tab').forEach((t, i) => {
-                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'ai', 'api', 'mcp'];
+                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'ai', 'api', 'mcp'];
                 t.classList.toggle('active', tabs[i] === tab);
             });
             document.getElementById('helpContent').innerHTML = HELP_CONTENT[tab] || '';
@@ -12101,6 +13283,7 @@ view: date_dim {
                 <button class="help-tab" onclick="switchHelpTab('lookml')">🔍 LookML</button>
                 <button class="help-tab" onclick="switchHelpTab('dbt')">🔄 dbt</button>
                 <button class="help-tab" onclick="switchHelpTab('snow')">❄️ Snowflake</button>
+                <button class="help-tab" onclick="switchHelpTab('alteryx')">⚙️ Alteryx</button>
                 <button class="help-tab" onclick="switchHelpTab('ai')">🤖 AI Assistant</button>
                 <button class="help-tab" onclick="switchHelpTab('api')">⚙️ API Notes</button>
                 <button class="help-tab" onclick="switchHelpTab('mcp')">🔌 MCP Server</button>
