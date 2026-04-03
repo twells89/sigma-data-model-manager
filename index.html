@@ -10308,9 +10308,13 @@ metrics:
             let expr = sql.trim();
 
             // 1. Field reference substitution
-            // ${TABLE}.col → [SOURCE_TABLE/Display Col]
+            // ${TABLE}.col → [SOURCE_TABLE/Display Col] for warehouse-table,
+            //               → [Custom SQL/COL_ALIAS] for SQL elements (raw uppercase alias)
+            const isCustomSql = (tableName === 'Custom SQL');
             expr = expr.replace(/\$\{TABLE\}\.(\w+)/g, (_, col) =>
-                `[${tableName}/${sigmaDisplayName(col)}]`
+                isCustomSql
+                    ? `[Custom SQL/${col.toUpperCase()}]`
+                    : `[${tableName}/${sigmaDisplayName(col)}]`
             );
             // ${view.field} → [Display Field] (cross-view, simplified)
             expr = expr.replace(/\$\{(\w+)\.(\w+)\}/g, (_, _v, field) =>
@@ -10437,38 +10441,55 @@ metrics:
                 const tableName = viewName.toUpperCase();
 
                 // Parse sql_table_name into path segments, then apply overrides
-                let path = [];
-                if (view.sql_table_name) {
-                    const raw = view.sql_table_name.replace(/"/g, '').trim();
-                    path = raw.split('.').map(s => s.trim().toUpperCase()).filter(Boolean);
-                } else if (view.derived_table) {
-                    warnings.push(`"${viewName}" uses a derived_table — mapped as a table source (edit the connection path after loading)`);
-                    path = [tableName];
-                } else {
-                    path = [tableName];
-                }
-
-                // Apply database/schema overrides to fill in incomplete paths
-                // Fully-qualified paths (length 3) are left as-is.
-                if (path.length === 1) {
-                    const table = path[0];
-                    if (dbOverride && schemaOverride)  path = [dbOverride, schemaOverride, table];
-                    else if (schemaOverride)            path = [schemaOverride, table];
-                    else if (dbOverride)                path = [dbOverride, table];
-                } else if (path.length === 2 && dbOverride) {
-                    path = [dbOverride, path[0], path[1]];
-                }
-
                 const elementId = sigmaShortId();
-                const element = {
-                    id: elementId,
-                    kind: 'table',
-                    name: displayName,
-                    source: { connectionId: connectionId || '<CONNECTION_ID>', kind: 'warehouse-table', path },
-                    columns: [],
-                    metrics: [],
-                    order: []
-                };
+                let element;
+                let path = []; // used by addCol default formula fallback
+
+                if (view.derived_table) {
+                    const rawSql = (view.derived_table.sql || '').trim();
+                    element = {
+                        id: elementId,
+                        kind: 'table',
+                        name: displayName,
+                        source: { connectionId: connectionId || '<CONNECTION_ID>', kind: 'sql', statement: rawSql },
+                        columns: [],
+                        metrics: [],
+                        order: []
+                    };
+                    if (rawSql) {
+                        warnings.push(`ℹ️ "${viewName}" → Custom SQL element. Review the SQL statement before saving.`);
+                    } else {
+                        warnings.push(`⚠ "${viewName}" has a derived_table block but no sql — SQL statement left blank. Add your SQL manually in the JSON editor before saving.`);
+                    }
+                } else {
+                    if (view.sql_table_name) {
+                        const raw = view.sql_table_name.replace(/"/g, '').trim();
+                        path = raw.split('.').map(s => s.trim().toUpperCase()).filter(Boolean);
+                    } else {
+                        path = [tableName];
+                    }
+
+                    // Apply database/schema overrides to fill in incomplete paths
+                    // Fully-qualified paths (length 3) are left as-is.
+                    if (path.length === 1) {
+                        const table = path[0];
+                        if (dbOverride && schemaOverride)  path = [dbOverride, schemaOverride, table];
+                        else if (schemaOverride)            path = [schemaOverride, table];
+                        else if (dbOverride)                path = [dbOverride, table];
+                    } else if (path.length === 2 && dbOverride) {
+                        path = [dbOverride, path[0], path[1]];
+                    }
+
+                    element = {
+                        id: elementId,
+                        kind: 'table',
+                        name: displayName,
+                        source: { connectionId: connectionId || '<CONNECTION_ID>', kind: 'warehouse-table', path },
+                        columns: [],
+                        metrics: [],
+                        order: []
+                    };
+                }
 
                 const colIdMap = {}; // FIELD_NAME_UPPER → inodeId
                 let pkColId = null;
@@ -10477,14 +10498,16 @@ metrics:
                 function addCol(fieldName, formula, label) {
                     const id = sigmaInodeId(fieldName.toUpperCase());
                     colIdMap[fieldName.toUpperCase()] = id;
-                    const col = { id, formula: formula || sigmaColFormula(path[path.length - 1] || tableName, fieldName) };
+                    const col = { id, formula: formula || (view.derived_table ? `[Custom SQL/${fieldName.toUpperCase()}]` : sigmaColFormula(path[path.length - 1] || tableName, fieldName)) };
                     if (label) col.name = label;
                     element.columns.push(col);
                     element.order.push(id);
                     return id;
                 }
 
-                const sourceTable = path[path.length - 1] || tableName;
+                // For derived tables (Custom SQL elements), Sigma references output columns
+                // by their SQL alias (e.g. [Custom SQL/ORDER_CHANNEL]), not by display name.
+                const sourceTable = view.derived_table ? 'Custom SQL' : (path[path.length - 1] || tableName);
 
                 // Dimensions → columns
                 for (const dim of view.dimensions || []) {
@@ -16147,7 +16170,7 @@ models:
 
 <h3>Known Limitations</h3>
 <ul>
-    <li><b>Derived tables</b> — Views using <code>derived_table.sql</code> are mapped as warehouse-table elements with a warning. The raw SQL is not preserved; add the SQL manually in the JSON editor before saving.</li>
+    <li><b>Derived tables without SQL</b> — If a <code>derived_table</code> block exists but contains no <code>sql:</code> statement, a Custom SQL element is still created with a blank SQL body and a warning is shown. Add the SQL manually in the JSON editor before saving to Sigma.</li>
     <li><b>Complex SQL expressions</b> — Omni <code>sql:</code> blocks can contain arbitrary warehouse SQL. Simple patterns (CASE WHEN, IN, common functions) are auto-converted. Complex expressions with Snowflake-specific syntax (<code>FLATTEN</code>, <code>LATERAL</code>, <code>QUALIFY</code>, window functions) will pass through as-is and will fail Sigma validation. Edit them in the JSON editor after conversion.</li>
     <li><b>Role-playing dimensions</b> — If the same view is joined multiple times under different aliases in an explore (e.g. <code>order_date</code> and <code>ship_date</code> both from <code>date_dim</code>), only one relationship per target view is created. Add duplicate relationships manually in Sigma.</li>
     <li><b>Topics</b> — Omni Topics (curated field subsets) have no direct Sigma equivalent and are ignored.</li>
