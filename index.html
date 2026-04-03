@@ -619,8 +619,95 @@
         
         .toolbar-actions {
             display: flex;
-            gap: 10px;
+            align-items: center;
+            gap: 6px;
         }
+
+        .toolbar-icon-group {
+            display: flex;
+            align-items: center;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 2px;
+            gap: 1px;
+        }
+
+        .tbr-icon-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            background: none;
+            border: none;
+            border-radius: 6px;
+            color: var(--text-secondary);
+            font-size: 15px;
+            cursor: pointer;
+            transition: background 0.12s, color 0.12s;
+            font-family: 'JetBrains Mono', monospace;
+            flex-shrink: 0;
+        }
+        .tbr-icon-btn:hover:not(:disabled) {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+        .tbr-icon-btn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+        }
+        .tbr-icon-btn.active {
+            background: rgba(88,101,242,0.2);
+            color: var(--accent);
+        }
+        .tbr-sep {
+            width: 1px;
+            height: 18px;
+            background: var(--border);
+            flex-shrink: 0;
+            margin: 0 2px;
+        }
+
+        /* CSS tooltips for icon buttons */
+        .tbr-icon-btn[data-tooltip] { position: relative; }
+        .tbr-icon-btn[data-tooltip]::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            top: calc(100% + 10px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 5px 9px;
+            font-size: 11px;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-weight: 500;
+            white-space: nowrap;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s 0.4s;
+            z-index: 500;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+            letter-spacing: 0;
+        }
+        .tbr-icon-btn[data-tooltip]::before {
+            content: '';
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-bottom-color: var(--border);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s 0.4s;
+            z-index: 501;
+        }
+        .tbr-icon-btn[data-tooltip]:hover::after,
+        .tbr-icon-btn[data-tooltip]:hover::before { opacity: 1; }
 
         .save-error-banner {
             background: rgba(220, 38, 38, 0.08);
@@ -1861,6 +1948,233 @@
             background: rgba(250, 166, 26, 0.15);
             color: var(--warning);
         }
+
+        /* ── Diff Viewer ────────────────────────────────────────── */
+        .diff-modal { max-width: 920px; width: 95%; }
+        .diff-controls {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-tertiary);
+            flex-shrink: 0;
+        }
+        .diff-legend { display: flex; gap: 16px; font-size: 12px; }
+        .diff-legend-item { display: flex; align-items: center; gap: 6px; }
+        .diff-legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+        .diff-legend-dot.added   { background: rgba(67, 181, 129, 0.55); }
+        .diff-legend-dot.removed { background: rgba(240,  71,  71, 0.55); }
+        .diff-legend-dot.context { background: var(--border); }
+        .diff-summary { font-size: 12px; color: var(--text-secondary); margin-left: auto; }
+        .diff-container {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            overflow: auto;
+            background: var(--bg-primary);
+        }
+        .diff-line {
+            display: flex;
+            min-width: max-content;
+        }
+        .diff-line.added   { background: rgba(67, 181, 129, 0.1); }
+        .diff-line.removed { background: rgba(240,  71,  71, 0.1); }
+        .diff-line.context { color: var(--text-secondary); }
+        .diff-line-num {
+            width: 52px; min-width: 52px;
+            text-align: right;
+            padding: 1px 8px;
+            color: var(--text-muted);
+            user-select: none;
+            border-right: 1px solid var(--border);
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+        .diff-line-sign {
+            width: 22px; min-width: 22px;
+            text-align: center;
+            padding: 1px 0;
+            user-select: none;
+            flex-shrink: 0;
+        }
+        .diff-line.added   .diff-line-sign { color: var(--success); }
+        .diff-line.removed .diff-line-sign { color: var(--error);   }
+        .diff-line-content { padding: 1px 8px; white-space: pre; }
+        .diff-hunk-header {
+            background: rgba(88, 101, 242, 0.12);
+            color: var(--accent);
+            padding: 2px 12px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .diff-no-changes {
+            padding: 48px;
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        /* ── Undo / Redo ────────────────────────────────────────── */
+        .btn.active { background: var(--bg-hover); border-color: var(--accent); color: var(--text-primary); }
+
+        /* ── Find & Replace Overlay ─────────────────────────────── */
+        .find-replace-overlay {
+            display: none;
+            position: absolute;
+            top: 12px;
+            right: 20px;
+            z-index: 200;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-focus);
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+            padding: 12px 16px;
+            width: 380px;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .find-replace-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .find-replace-input {
+            flex: 1;
+            padding: 6px 10px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }
+        .find-replace-input:focus { outline: none; border-color: var(--border-focus); }
+        .find-count { font-size: 11px; color: var(--text-secondary); min-width: 60px; text-align: right; white-space: nowrap; }
+        .find-options { display: flex; gap: 6px; align-items: center; }
+        .find-opt-btn {
+            padding: 3px 7px;
+            font-size: 11px;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.12s;
+        }
+        .find-opt-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+        .find-nav-btn {
+            padding: 4px 8px;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            line-height: 1;
+            transition: all 0.12s;
+        }
+        .find-nav-btn:hover { color: var(--text-primary); border-color: var(--border-focus); }
+        .find-close-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 16px;
+            cursor: pointer;
+            padding: 0 2px;
+            line-height: 1;
+        }
+        .find-close-btn:hover { color: var(--text-primary); }
+
+
+        /* ── Column/Metric Tree View ────────────────────────────── */
+        /* Override default .json-editor padding so the tree panel can flush to the edge */
+        .json-editor { display: flex; flex-direction: row; gap: 0; padding: 0; overflow: hidden; }
+        .editor-main-wrap { flex: 1; min-width: 0; padding: 24px; overflow: hidden; }
+        .tree-panel {
+            width: 260px;
+            min-width: 260px;
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        .tree-panel-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .tree-panel-body { flex: 1; overflow-y: auto; padding: 8px 0; }
+        .tree-element { margin-bottom: 4px; }
+        .tree-element-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+            transition: background 0.12s;
+        }
+        .tree-element-header:hover { background: var(--bg-hover); }
+        .tree-icon { font-size: 10px; color: var(--text-muted); transition: transform 0.15s; }
+        .tree-group { margin-left: 8px; }
+        .tree-group-header {
+            padding: 3px 14px 3px 20px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        .tree-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 14px 3px 20px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: background 0.1s;
+            border-radius: 4px;
+            margin: 0 4px;
+        }
+        .tree-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .tree-type-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .tree-type-dot.col { background: var(--json-key); }
+        .tree-type-dot.met { background: var(--success); }
+        .tree-type-dot.rel { background: var(--accent); }
+        .tree-empty { padding: 24px; text-align: center; font-size: 12px; color: var(--text-muted); }
+
+        /* Keyboard shortcut hint badge */
+        .kbd {
+            display: inline-block;
+            padding: 1px 5px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
     </style>
 </head>
 <body>
@@ -2016,11 +2330,11 @@
             <div class="toolbar">
                 <div class="toolbar-title" id="editorTitle">No Data Model Selected</div>
                 <div class="toolbar-actions">
-                    <button class="btn btn-ai" onclick="openAIAssistant()" id="aiBtn" disabled title="AI Assistant">
-                        🤖 AI Assistant
+                    <button class="btn btn-ai" onclick="openAIAssistant()" id="aiBtn" disabled title="AI Assistant" style="padding:8px 14px;font-size:12px;">
+                        🤖 AI
                     </button>
-                    <button class="btn btn-secondary" onclick="refreshFromSigma()" id="refreshSigmaBtn" disabled title="Refresh from Sigma API">
-                        ↻ Refresh
+                    <button class="btn btn-secondary" onclick="refreshFromSigma()" id="refreshSigmaBtn" disabled title="Refresh from Sigma API" style="padding:8px 12px;font-size:12px;">
+                        ↻
                     </button>
                     <!-- JSON / YAML toggle -->
                     <div class="editor-mode-toggle disabled" id="editorModeToggle">
@@ -2031,12 +2345,18 @@
                             YAML
                         </button>
                     </div>
-                    <button class="btn btn-secondary" onclick="formatEditor()" id="formatBtn" disabled>
-                        Format
-                    </button>
-                    <button class="btn btn-secondary" onclick="copyEditor()" id="copyBtn" disabled>
-                        Copy
-                    </button>
+                    <!-- Compact utility icon group -->
+                    <div class="toolbar-icon-group">
+                        <button class="tbr-icon-btn" onclick="editorUndo()" id="undoBtn" disabled data-tooltip="Undo  Ctrl+Z">↩</button>
+                        <button class="tbr-icon-btn" onclick="editorRedo()" id="redoBtn" disabled data-tooltip="Redo  Ctrl+Y">↪</button>
+                        <span class="tbr-sep"></span>
+                        <button class="tbr-icon-btn" onclick="openFindReplace()" id="findBtn" disabled data-tooltip="Find & Replace  Ctrl+F">⌕</button>
+                        <button class="tbr-icon-btn" onclick="toggleTreeView()" id="treeViewBtn" disabled data-tooltip="Structure Panel">⊞</button>
+                        <span class="tbr-sep"></span>
+                        <button class="tbr-icon-btn" onclick="formatEditor()" id="formatBtn" disabled data-tooltip="Format  Ctrl+Shift+F">{ }</button>
+                        <button class="tbr-icon-btn" onclick="openDiffModal()" id="diffBtn" disabled data-tooltip="Diff vs Original">⊕</button>
+                        <button class="tbr-icon-btn" onclick="copyEditor()" id="copyBtn" disabled data-tooltip="Copy as JSON">⎘</button>
+                    </div>
                     <button class="btn btn-success" onclick="saveDataModel()" id="saveBtn" disabled>
                         Save to Sigma
                     </button>
@@ -2074,9 +2394,31 @@
                     <div class="editor-tab" id="tabConverters" onclick="switchEditorTab('converters')">🔄 Converters <span class="badge beta" style="font-size:9px;padding:1px 5px;margin-left:3px;">Beta</span></div>
                 </div>
                 <div class="json-editor" id="panelJson">
-                    <div class="editor-wrap" id="editorWrap">
-                        <div class="line-numbers" id="lineNumbers" aria-hidden="true"></div>
-                        <textarea id="jsonEditor" oninput="onEditorInput()" placeholder="Select a data model from the sidebar to view and edit its JSON representation...
+                    <!-- Find & Replace Overlay -->
+                    <div class="find-replace-overlay" id="findReplaceOverlay">
+                        <div class="find-replace-row">
+                            <input class="find-replace-input" id="findInput" placeholder="Find…" oninput="runFind()" onkeydown="handleFindKey(event)">
+                            <span class="find-count" id="findCount"></span>
+                            <button class="find-nav-btn" onclick="findPrev()" title="Previous">▲</button>
+                            <button class="find-nav-btn" onclick="findNext()" title="Next">▼</button>
+                            <button class="find-close-btn" onclick="closeFindReplace()" title="Close (Esc)">✕</button>
+                        </div>
+                        <div class="find-replace-row">
+                            <input class="find-replace-input" id="replaceInput" placeholder="Replace with…" onkeydown="handleReplaceKey(event)">
+                            <button class="find-nav-btn" onclick="replaceOne()" title="Replace">↵</button>
+                            <button class="find-nav-btn" onclick="replaceAll()" title="Replace all" style="font-size:11px;padding:4px 7px;">All</button>
+                        </div>
+                        <div class="find-options">
+                            <button class="find-opt-btn" id="findCaseBtn" onclick="toggleFindOpt('case')" title="Match case">Aa</button>
+                            <button class="find-opt-btn" id="findRegexBtn" onclick="toggleFindOpt('regex')" title="Use regex">.*</button>
+                            <span style="font-size:11px;color:var(--text-muted);margin-left:auto;">Esc to close</span>
+                        </div>
+                    </div>
+                    <!-- Editor + Tree Panel -->
+                    <div class="editor-main-wrap">
+                        <div class="editor-wrap" id="editorWrap">
+                            <div class="line-numbers" id="lineNumbers" aria-hidden="true"></div>
+                            <textarea id="jsonEditor" oninput="onEditorInput()" placeholder="Select a data model from the sidebar to view and edit its JSON representation...
 
 WORKFLOW:
 1. Connect to Sigma (enter your API credentials)
@@ -2085,6 +2427,15 @@ WORKFLOW:
 4. Click 'Save to Sigma' to push changes directly
 
 This is the standalone version - changes are saved directly to Sigma."></textarea>
+                        </div>
+                    </div>
+                    <!-- Structure Tree Panel (hidden by default) -->
+                    <div class="tree-panel" id="treePanel" style="display:none;">
+                        <div class="tree-panel-header">
+                            <span>Structure</span>
+                            <button onclick="toggleTreeView()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;line-height:1;">✕</button>
+                        </div>
+                        <div class="tree-panel-body" id="treeViewContent"></div>
                     </div>
                 </div>
 
@@ -2100,6 +2451,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                             <option value="pbi">📈 Power BI (.bim / .pbit)</option>
                             <option value="alteryx">⚙️ Alteryx (.yxmd)</option>
                             <option value="contract">📝 Atlan Data Contract</option>
+                            <option value="omni">🌐 Omni Analytics</option>
                         </select>
                     </div>
 
@@ -2775,6 +3127,98 @@ How it works:
                 </div>
                 <!-- ── End Data Contract Panel ──────────────────────────────────── -->
 
+                <!-- ── Omni Analytics Converter Panel ───────────────────────────── -->
+                <div class="converter-panel" id="subPanelOmni">
+
+                    <!-- Left: File Upload + Config -->
+                    <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Omni Analytics Model</span>
+                            <button class="btn-example" onclick="loadOmniExample()">Load example</button>
+                        </div>
+
+                        <div id="omniDropZone" class="lookml-drop-zone"
+                             onclick="document.getElementById('omniFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleOmniFileDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">🌐</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop Omni YAML files here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">.view.yaml · .model.yaml</div>
+                        </div>
+                        <input type="file" id="omniFileInput" accept=".yml,.yaml" multiple style="display:none" onchange="handleOmniFileSelect(event)">
+
+                        <div id="omniFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Connection</label>
+                            <select id="omniConnectionId" class="form-input" style="font-size: 12px;"
+                                    onchange="if(document.getElementById('omniYamlInput').value.trim()) runOmniConversion();">
+                                <option value="">— Connect to Sigma to load —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="omniDatabase" placeholder="e.g. ANALYTICS" style="font-size: 12px;" oninput="this.style.cssText='font-size:12px'">
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Schema override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="omniSchema" placeholder="e.g. PUBLIC" style="font-size: 12px;" oninput="this.style.cssText='font-size:12px'">
+                        </div>
+
+                        <div class="dbt-badge-row" id="omniInputStats"></div>
+
+                        <textarea id="omniYamlInput" style="flex: 1; min-height: 80px; font-size: 11px; resize: none;" placeholder="Or paste Omni YAML directly here..."></textarea>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" onclick="runOmniConversion()">
+                                🌐 Convert to Sigma JSON
+                            </button>
+                        </div>
+
+                        <div style="font-size: 10px; color: var(--text-muted); padding: 0 4px; line-height: 1.4;">
+                            <strong>How to get files:</strong><br>
+                            • <b>.view.yaml</b>: One file per view — dimensions &amp; measures<br>
+                            • <b>.model.yaml</b>: Explores &amp; joins — wires relationships<br>
+                            • <b>Paste</b>: Paste YAML directly into the textarea above
+                        </div>
+                    </div>
+
+                    <!-- Right: Sigma JSON Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copyOmniOutput()" id="omniCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadOmniOutputToEditor()" id="omniLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="omniWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="omniJsonOutput" readonly placeholder="Convert an Omni Analytics model to see the Sigma JSON here...
+
+How it works:
+• Drop .view.yaml files — each view becomes a Sigma element
+• Drop your .model.yaml to include join relationships
+• dimensions → Sigma columns (with time expansion for type: time)
+• measures → Sigma metrics (sum, count, avg, count_distinct, etc.)
+• explores/joins → Sigma relationships with FK/PK key mapping
+• ${TABLE}.col and ${field} references are translated to Sigma formula syntax"></textarea>
+
+                        <div class="dbt-badge-row" id="omniOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="omniLoadAndSave()" id="omniSaveBtn" disabled>
+                                💾 Load &amp; Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <!-- ── End Omni Analytics Panel ──────────────────────────────────── -->
+
                 </div>
                 <!-- ── End Converters Container ─────────────────────────────────── -->
 
@@ -3148,7 +3592,7 @@ PRODUCT_NAME
                         state.selectedModel = null;
                         document.getElementById('jsonEditor').value = '';
                         document.getElementById('editorTitle').textContent = 'Select a data model';
-                        ['formatBtn','copyBtn','saveBtn','aiBtn'].forEach(bid => {
+                        ['undoBtn','redoBtn','findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(bid => {
                             const el = document.getElementById(bid);
                             if (el) el.disabled = true;
                         });
@@ -4519,7 +4963,7 @@ PRODUCT_NAME
                     state.isNewModel = false;
                     document.getElementById('jsonEditor').value = '';
                     document.getElementById('editorTitle').textContent = 'Select a data model';
-                    ['formatBtn','copyBtn','saveBtn','aiBtn'].forEach(id => {
+                    ['undoBtn','redoBtn','findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => {
                         const el = document.getElementById(id);
                         if (el) el.disabled = true;
                     });
@@ -4651,20 +5095,31 @@ PRODUCT_NAME
         // Set editor content from a JS object, respecting current mode
         function setEditorContent(obj) {
             const editor = document.getElementById('jsonEditor');
+            const prev = editor.value;
             if (editorMode === 'yaml') {
                 editor.value = jsyaml.dump(obj, { indent: 2, lineWidth: -1, noRefs: true });
             } else {
                 editor.value = JSON.stringify(obj, null, 2);
             }
             updateLineNumbers();
+            // Snapshot previous content so user can undo back to it
+            if (prev && prev !== editor.value) _pushUndo(prev);
+            // Auto-refresh panels if open
+            if (document.getElementById('treePanel')?.style.display !== 'none') buildTreeView();
         }
 
         // Format the editor content in current mode
         function onEditorInput() {
             const val = document.getElementById('jsonEditor').value.trim();
             if (val.length > 10) {
-                ['formatBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
+                ['findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
                 enableEditorModeToggle();
+            }
+            _scheduleUndo();
+            // Live-refresh tree if open
+            if (document.getElementById('treePanel').style.display !== 'none') {
+                clearTimeout(onEditorInput._treeDebounce);
+                onEditorInput._treeDebounce = setTimeout(buildTreeView, 600);
             }
         }
 
@@ -5004,6 +5459,7 @@ KNOWN SIGMA API ISSUES YOU CAN FIX:
 6. Metrics use display name only: Sum([Column Name])
 7. Circular references between calculated columns → break the cycle
 8. folderId "00000000-0000-0000-0000-000000000000" → remove it
+9. Relationships missing "relationshipType" → add "relationshipType": "N:1" to every relationship object
 
 WHAT YOU CANNOT FIX (flag these):
 - Column formulas referencing warehouse columns that may not exist (e.g. [TABLE/Customer Name] when the real column might be FIRST_NAME + LAST_NAME). You do NOT know the actual warehouse schema. If a column name looks like it could be wrong (doesn't follow standard naming, uses a generic name like "Customer Name" instead of something specific), REMOVE it and add a comment in the name field noting it was removed.
@@ -5278,7 +5734,7 @@ ${JSON.stringify(failedJson, null, 2)}`;
         async function populateConverterConnections() {
             if (!state.accessToken) return;
             const connections = await fetchConnectionsList();
-            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId'];
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId'];
             targetIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (!sel) return;
@@ -5394,7 +5850,7 @@ ${JSON.stringify(failedJson, null, 2)}`;
             editor.focus();
 
             // Enable buttons
-            ['formatBtn', 'copyBtn', 'saveBtn', 'aiBtn'].forEach(id => document.getElementById(id).disabled = false);
+            ['findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
             enableEditorModeToggle();
 
             // Update title
@@ -5759,9 +6215,11 @@ RELATIONSHIPS (inside element.relationships array)
   "keys": [
     { "sourceColumnId": "inode-xxx/SOURCE_COL", "targetColumnId": "inode-yyy/TARGET_COL" }
   ],
-  "name": "Relationship Name"
+  "name": "Relationship Name",
+  "relationshipType": "N:1"
 }
 Relationship is defined on the SOURCE (fact/many side) element pointing to the TARGET (dimension/one side).
+Always include "relationshipType": "N:1" — this is required by the official Sigma converter.
 
 ═══════════════════════════════════════════════════
 FOLDERS (inside element.folders array)
@@ -6343,7 +6801,7 @@ LIMITATIONS — what you CANNOT do via JSON
 
         const TOKEN_PRICING = {
             openai:    { input: 2.50,  output: 10.00, name: 'GPT-4o' },
-            anthropic: { input: 3.00,  output: 15.00, name: 'Claude Sonnet' },
+            anthropic: { input: 3.00,  output: 15.00, name: 'Claude Sonnet 4' },
             gemini:    { input: 0.10,  output: 0.40,  name: 'Gemini 2.0 Flash' }
         };
 
@@ -6751,7 +7209,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             while (attempts < maxAttempts) {
                 const response = await fetch('https://api.anthropic.com/v1/messages', {
                     method: 'POST', headers,
-                    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 8000, messages })
+                    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 8000, messages })
                 });
                 if (!response.ok) {
                     const error = await response.json();
@@ -7756,21 +8214,16 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
 
         // ── Editor Tab Switching ────────────────────────────────────────────
         function switchEditorTab(tab) {
-            // Two tabs: json and converters
             document.getElementById('tabJson').classList.toggle('active', tab === 'json');
             document.getElementById('tabConverters').classList.toggle('active', tab === 'converters');
             document.getElementById('panelJson').style.display = (tab === 'json') ? '' : 'none';
             document.getElementById('panelConverters').classList.toggle('active', tab === 'converters');
-
-            // Auto-populate connection dropdowns when opening converters
-            if (tab === 'converters' && state.accessToken) {
-                populateConverterConnections();
-            }
+            if (tab === 'converters' && state.accessToken) populateConverterConnections();
         }
 
         function switchConverter(format) {
-            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract'];
-            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract' };
+            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni'];
+            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni' };
             const target = map[format] || 'Dbt';
             panels.forEach(p => {
                 const el = document.getElementById('subPanel' + p);
@@ -8234,7 +8687,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             state.isNewModel = true;
             state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from Snowflake Semantic View (unsaved)';
-            ['formatBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
+            ['findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
             enableEditorModeToggle();
             switchEditorTab('json');
             showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
@@ -9555,7 +10008,7 @@ relationships:
             state.isNewModel = true;
             state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from dbt (unsaved)';
-            ['formatBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
+            ['findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
             enableEditorModeToggle();
             switchEditorTab('json');
             showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
@@ -9631,6 +10084,714 @@ metrics:
       denominator:
         name: order_count`;
             showToast('Example loaded', 'success');
+        }
+
+        // ── Omni Analytics Converter ────────────────────────────────────────
+
+        // Accumulated state for the current Omni conversion session
+        let _omniViews = [];    // parsed view YAML objects
+        let _omniExplores = []; // parsed explore/join definitions from .model.yaml
+
+        function handleOmniFileDrop(event) {
+            event.preventDefault();
+            document.getElementById('omniDropZone').classList.remove('drag-over');
+            processOmniFiles(Array.from(event.dataTransfer.files));
+        }
+
+        function handleOmniFileSelect(event) {
+            processOmniFiles(Array.from(event.target.files));
+            event.target.value = '';
+        }
+
+        async function processOmniFiles(files) {
+            if (!files.length) return;
+            _omniViews = [];
+            _omniExplores = [];
+            const loadedFiles = [];
+            let errors = 0;
+
+            for (const file of files) {
+                const name = file.name.toLowerCase();
+                if (!name.endsWith('.yaml') && !name.endsWith('.yml')) {
+                    showToast(`${file.name}: only .yaml / .yml files accepted`, 'warning');
+                    errors++;
+                    continue;
+                }
+                try {
+                    const text = await file.text();
+                    // jsyaml.loadAll handles multi-document YAML (--- separators)
+                    const docs = [];
+                    jsyaml.loadAll(text, d => { if (d) docs.push(d); });
+
+                    let viewsFound = 0, exploresFound = 0;
+                    for (const doc of docs) {
+                        // A view doc has a top-level `view:` key or directly has dimensions/measures
+                        if (doc.view || doc.dimensions || doc.measures) {
+                            const v = doc.view ? { name: doc.view, ...doc } : doc;
+                            _omniViews.push(v);
+                            viewsFound++;
+                        }
+                        // A model doc has `explores:` or `connection:`
+                        if (doc.explores) {
+                            _omniExplores.push(...doc.explores);
+                            exploresFound += doc.explores.length;
+                        }
+                    }
+                    loadedFiles.push({ name: file.name, views: viewsFound, explores: exploresFound });
+                } catch (e) {
+                    showToast(`${file.name}: ${e.message}`, 'error');
+                    errors++;
+                }
+            }
+
+            if (!_omniViews.length && !_omniExplores.length) {
+                showToast('No Omni views or explores found in the dropped files', 'error');
+                return;
+            }
+
+            // Render file badges
+            const fileList = document.getElementById('omniFileList');
+            fileList.innerHTML = '';
+            loadedFiles.forEach(f => {
+                const badge = document.createElement('div');
+                badge.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-tertiary);border-radius:6px;font-size:11px;';
+                const parts = [];
+                if (f.views)    parts.push(`${f.views} view${f.views !== 1 ? 's' : ''}`);
+                if (f.explores) parts.push(`${f.explores} explore${f.explores !== 1 ? 's' : ''}`);
+                badge.innerHTML = `<span>📁</span>
+                    <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${f.name}">${f.name}</span>
+                    <span style="font-size:10px;color:var(--text-muted);flex-shrink:0;">${parts.join(', ') || 'no models'}</span>`;
+                fileList.appendChild(badge);
+            });
+
+            // Populate YAML preview
+            try {
+                const preview = {};
+                if (_omniViews.length)    preview.views    = _omniViews;
+                if (_omniExplores.length) preview.explores = _omniExplores;
+                document.getElementById('omniYamlInput').value = jsyaml.dump(preview, { indent: 2, lineWidth: -1, noRefs: true });
+            } catch(e) {
+                document.getElementById('omniYamlInput').value = JSON.stringify({ views: _omniViews, explores: _omniExplores }, null, 2);
+            }
+
+            showToast(
+                `Loaded ${_omniViews.length} view${_omniViews.length !== 1 ? 's' : ''}` +
+                (_omniExplores.length ? ` + ${_omniExplores.length} explore${_omniExplores.length !== 1 ? 's' : ''}` : '') +
+                (errors ? ` (${errors} skipped)` : ''),
+                'success'
+            );
+
+            runOmniConversion();
+        }
+
+        function runOmniConversion() {
+            const yamlText    = document.getElementById('omniYamlInput').value.trim();
+            let connectionId  = document.getElementById('omniConnectionId').value;
+            const database    = document.getElementById('omniDatabase').value.trim();
+            const schema      = document.getElementById('omniSchema').value.trim();
+            if (!connectionId && state.accessToken) {
+                const s = document.getElementById('newModelConnectionId');
+                if (s?.value) connectionId = s.value;
+            }
+            state.useFriendlyNames = isConnectionFriendly(connectionId);
+
+            // If no pre-loaded views, try to parse the textarea directly
+            if (!_omniViews.length && yamlText) {
+                try {
+                    const docs = [];
+                    jsyaml.loadAll(yamlText, d => { if (d) docs.push(d); });
+                    for (const doc of docs) {
+                        if (doc.view || doc.dimensions || doc.measures) {
+                            _omniViews.push(doc.view ? { name: doc.view, ...doc } : doc);
+                        }
+                        if (doc.explores) _omniExplores.push(...doc.explores);
+                        if (doc.views) {
+                            for (const v of doc.views) {
+                                if (v.name) _omniViews.push(v);
+                            }
+                        }
+                    }
+                } catch(e) {
+                    showToast('YAML parse error: ' + e.message, 'error');
+                    document.getElementById('omniJsonOutput').value = '// YAML parse error:\n// ' + e.message;
+                    return;
+                }
+            }
+
+            if (!_omniViews.length) {
+                showToast('No Omni views found — drop .view.yaml files or paste YAML', 'warning');
+                return;
+            }
+
+            _usedIds.clear();
+            const { sigmaModel, warnings, stats } = convertOmniToSigma(_omniViews, _omniExplores, connectionId, { database, schema });
+            document.getElementById('omniJsonOutput').value = JSON.stringify(sigmaModel, null, 2);
+
+            const elements = sigmaModel.pages[0].elements;
+            const totalCols    = elements.reduce((s, e) => s + (e.columns?.length    || 0), 0);
+            const totalMetrics = elements.reduce((s, e) => s + (e.metrics?.length    || 0), 0);
+            const totalRels    = elements.reduce((s, e) => s + (e.relationships?.length || 0), 0);
+
+            document.getElementById('omniInputStats').innerHTML = `
+                <span class="dbt-stat-badge models">📦 ${_omniViews.length} view${_omniViews.length !== 1 ? 's' : ''}</span>
+                <span class="dbt-stat-badge dimensions">${stats.totalDims} dimensions</span>
+                <span class="dbt-stat-badge measures">${stats.totalMeasures} measures</span>
+            `;
+            document.getElementById('omniOutputStats').innerHTML = `
+                <span class="dbt-stat-badge models">🔷 ${elements.length} element${elements.length !== 1 ? 's' : ''}</span>
+                <span class="dbt-stat-badge dimensions">${totalCols} columns</span>
+                <span class="dbt-stat-badge measures">${totalMetrics} metrics</span>
+                ${totalRels > 0 ? `<span class="dbt-stat-badge entities">${totalRels} relationship${totalRels !== 1 ? 's' : ''}</span>` : ''}
+            `;
+
+            const allWarnings = [...warnings];
+            if (!connectionId) allWarnings.unshift('⚠ Connection ID not set — select a connection or edit the JSON before saving');
+
+            // Highlight override fields if any paths are incomplete
+            const warnStyle  = 'border-color: var(--warning); box-shadow: 0 0 0 3px rgba(250,166,26,0.2);';
+            const clearStyle = '';
+            const dbEl  = document.getElementById('omniDatabase');
+            const schEl = document.getElementById('omniSchema');
+            const anyShortPath = elements.some(e => (e.source?.path?.length || 0) < 2);
+            dbEl.style.cssText  = (!database && anyShortPath)  ? warnStyle : clearStyle;
+            schEl.style.cssText = (!schema  && anyShortPath)   ? warnStyle : clearStyle;
+            if (anyShortPath && (!database || !schema))
+                allWarnings.unshift('⚠ Some views have incomplete table paths — fill in Database and/or Schema override to complete them');
+
+            const warnBox = document.getElementById('omniWarningBox');
+            if (allWarnings.length) {
+                warnBox.style.display = '';
+                warnBox.innerHTML = allWarnings.map(w => `• ${w}`).join('<br>');
+            } else {
+                warnBox.style.display = 'none';
+            }
+
+            document.getElementById('omniCopyBtn').disabled = false;
+            document.getElementById('omniLoadBtn').disabled = false;
+            document.getElementById('omniSaveBtn').disabled = false;
+
+            showToast(`Converted ${_omniViews.length} view${_omniViews.length !== 1 ? 's' : ''} → ${elements.length} element${elements.length !== 1 ? 's' : ''}`, 'success');
+        }
+
+        // Translate an Omni SQL expression to a Sigma formula string.
+        // - ${TABLE}.col  → [TABLE/Display Col]  (source column reference)
+        // - ${field_name} → [Display Field Name]  (intra-view field reference)
+        // - Bare column names remain as-is for the caller to wrap
+        // SQL function name → Sigma function name (case-insensitive lookup)
+        const _OMNI_FUNC_MAP = {
+            MONTH: 'Month', YEAR: 'Year', DAY: 'Day', HOUR: 'Hour',
+            QUARTER: 'Quarter', WEEK: 'Week', MINUTE: 'Minute', SECOND: 'Second',
+            CONCAT: 'Concat', ROUND: 'Round', ABS: 'Abs',
+            CEIL: 'Ceiling', CEILING: 'Ceiling', FLOOR: 'Floor',
+            SQRT: 'Sqrt', POWER: 'Power', MOD: 'Mod', LOG: 'Log',
+            COALESCE: 'Coalesce', NVL: 'Coalesce', IFNULL: 'Coalesce',
+            NULLIF: 'Nullif', IFF: 'If', IIF: 'If',
+            LOWER: 'Lower', UPPER: 'Upper', TRIM: 'Trim',
+            LTRIM: 'Ltrim', RTRIM: 'Rtrim', LENGTH: 'Len', LEN: 'Len',
+            LEFT: 'Left', RIGHT: 'Right',
+            SUBSTR: 'Mid', SUBSTRING: 'Mid',
+            REPLACE: 'Replace', SPLIT_PART: 'SplitPart',
+            CONTAINS: 'Contains',
+            DATEDIFF: 'DateDiff', DATE_DIFF: 'DateDiff',
+            DATEADD: 'DateAdd', DATE_ADD: 'DateAdd',
+            DATE_TRUNC: 'DateTrunc', TRUNC: 'DateTrunc',
+            TO_DATE: 'Date', TO_CHAR: 'Text', TO_NUMBER: 'Number',
+            GETDATE: 'Now', CURRENT_DATE: 'Today', CURRENT_TIMESTAMP: 'Now',
+            REGEXP_LIKE: 'RegexpMatch', REGEXP_CONTAINS: 'RegexpMatch',
+            IS_NULL: 'IsNull', IS_NOT_NULL: 'IsNotNull',
+            NOT: 'Not', AND: 'And', OR: 'Or',
+            SUM: 'Sum', COUNT: 'Count', AVG: 'Avg', MIN: 'Min', MAX: 'Max',
+        };
+
+        function _omniTranslateFormula(sql, tableName) {
+            if (!sql || typeof sql !== 'string') return null;
+            let expr = sql.trim();
+
+            // 1. Field reference substitution
+            // ${TABLE}.col → [SOURCE_TABLE/Display Col]
+            expr = expr.replace(/\$\{TABLE\}\.(\w+)/g, (_, col) =>
+                `[${tableName}/${sigmaDisplayName(col)}]`
+            );
+            // ${view.field} → [Display Field] (cross-view, simplified)
+            expr = expr.replace(/\$\{(\w+)\.(\w+)\}/g, (_, _v, field) =>
+                `[${sigmaDisplayName(field)}]`
+            );
+            // ${field} → [Display Field]
+            expr = expr.replace(/\$\{(\w+)\}/g, (_, field) =>
+                `[${sigmaDisplayName(field)}]`
+            );
+
+            // 2. Single-quoted string literals → double-quoted
+            expr = expr.replace(/'([^']*)'/g, '"$1"');
+
+            // 3. expr IN (a, b, c) → (expr = a Or expr = b Or expr = c)
+            //    Match: word/bracket expr possibly with one function call, then IN (...)
+            expr = expr.replace(/(\w+(?:\([^)]*\))?|\[[^\]]+\])\s+IN\s+\(([^)]+)\)/gi,
+                (_, lhs, items) => {
+                    const vals = items.split(',').map(v => v.trim());
+                    return '(' + vals.map(v => `${lhs} = ${v}`).join(' Or ') + ')';
+                }
+            );
+
+            // 4. CASE WHEN ... THEN ... [ELSE ...] END → nested If()
+            expr = _sqlCaseToIf(expr);
+
+            // 5. SQL function names → Sigma equivalents
+            expr = expr.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\s*(?=\()/g, (match, fn) => {
+                const mapped = _OMNI_FUNC_MAP[fn.toUpperCase()];
+                return mapped ? `${mapped}` : match;
+            });
+
+            // 6. Boolean = 1 / = 0 patterns from yesno sql (IS_FIRST_ORDER = 1)
+            //    These are handled in the yesno dimension branch, not here.
+
+            return expr;
+        }
+
+        // Parse CASE WHEN ... THEN ... [WHEN ... THEN ...] [ELSE ...] END → If(...)
+        // Handles non-nested CASE blocks by replacing innermost first.
+        function _sqlCaseToIf(expr) {
+            // Iteratively replace innermost CASE...END (no nested CASE inside)
+            let safety = 0;
+            while (/\bCASE\b/i.test(expr) && safety++ < 20) {
+                const replaced = expr.replace(
+                    /\bCASE\b((?:(?!\bCASE\b).)*?)\bEND\b/is,
+                    (_, body) => _parseCaseBody(body)
+                );
+                if (replaced === expr) break; // no progress, bail
+                expr = replaced;
+            }
+            return expr;
+        }
+
+        function _parseCaseBody(body) {
+            // Split on top-level WHEN / THEN / ELSE keywords
+            // We track paren depth so keywords inside function args are ignored
+            const parts = [];
+            let current = '';
+            let depth = 0;
+            let i = 0;
+            const up = body.toUpperCase();
+
+            while (i < body.length) {
+                if (body[i] === '(' || body[i] === '[') depth++;
+                else if (body[i] === ')' || body[i] === ']') depth--;
+
+                if (depth === 0) {
+                    for (const kw of ['WHEN', 'THEN', 'ELSE']) {
+                        if (up.startsWith(kw, i) &&
+                            (i === 0 || !/[A-Z0-9_]/i.test(body[i - 1])) &&
+                            (i + kw.length >= body.length || !/[A-Z0-9_]/i.test(body[i + kw.length]))) {
+                            parts.push({ kw: null, val: current.trim() });
+                            parts.push({ kw, val: null });
+                            current = '';
+                            i += kw.length;
+                            break;
+                        }
+                    }
+                    if (i >= body.length) break;
+                }
+                current += body[i];
+                i++;
+            }
+            if (current.trim()) parts.push({ kw: null, val: current.trim() });
+
+            // Pair up: [WHEN, cond, THEN, result, ...] [ELSE, default]
+            const conditions = [];
+            let elseVal = 'null';
+            let pi = 0;
+            while (pi < parts.length) {
+                if (parts[pi].kw === 'WHEN') {
+                    const cond = (parts[pi + 1]?.val || '').trim();
+                    if (parts[pi + 2]?.kw === 'THEN') {
+                        const then = (parts[pi + 3]?.val || '').trim();
+                        conditions.push({ cond, then });
+                        pi += 4;
+                    } else { pi++; }
+                } else if (parts[pi].kw === 'ELSE') {
+                    elseVal = (parts[pi + 1]?.val || 'null').trim();
+                    pi += 2;
+                } else { pi++; }
+            }
+
+            // Build right-to-left nested If()
+            let result = elseVal;
+            for (let k = conditions.length - 1; k >= 0; k--) {
+                result = `If(${conditions[k].cond}, ${conditions[k].then}, ${result})`;
+            }
+            return result;
+        }
+
+        function convertOmniToSigma(views, explores, connectionId, overrides = {}) {
+            const dbOverride     = (overrides.database || '').trim().toUpperCase();
+            const schemaOverride = (overrides.schema   || '').trim().toUpperCase();
+            const warnings = [];
+            const stats = { totalDims: 0, totalMeasures: 0 };
+            const elements = [];
+            // viewName → { elementId, pkColId, colIdMap }
+            const viewRegistry = {};
+
+            for (const view of views) {
+                const viewName = (view.name || view.view || 'unknown').toString();
+                const displayName = sigmaDisplayName(viewName);
+                const tableName = viewName.toUpperCase();
+
+                // Parse sql_table_name into path segments, then apply overrides
+                let path = [];
+                if (view.sql_table_name) {
+                    const raw = view.sql_table_name.replace(/"/g, '').trim();
+                    path = raw.split('.').map(s => s.trim().toUpperCase()).filter(Boolean);
+                } else if (view.derived_table) {
+                    warnings.push(`"${viewName}" uses a derived_table — mapped as a table source (edit the connection path after loading)`);
+                    path = [tableName];
+                } else {
+                    path = [tableName];
+                }
+
+                // Apply database/schema overrides to fill in incomplete paths
+                // Fully-qualified paths (length 3) are left as-is.
+                if (path.length === 1) {
+                    const table = path[0];
+                    if (dbOverride && schemaOverride)  path = [dbOverride, schemaOverride, table];
+                    else if (schemaOverride)            path = [schemaOverride, table];
+                    else if (dbOverride)                path = [dbOverride, table];
+                } else if (path.length === 2 && dbOverride) {
+                    path = [dbOverride, path[0], path[1]];
+                }
+
+                const elementId = sigmaShortId();
+                const element = {
+                    id: elementId,
+                    kind: 'table',
+                    name: displayName,
+                    source: { connectionId: connectionId || '<CONNECTION_ID>', kind: 'warehouse-table', path },
+                    columns: [],
+                    metrics: [],
+                    order: []
+                };
+
+                const colIdMap = {}; // FIELD_NAME_UPPER → inodeId
+                let pkColId = null;
+
+                // Helper: register a column
+                function addCol(fieldName, formula, label) {
+                    const id = sigmaInodeId(fieldName.toUpperCase());
+                    colIdMap[fieldName.toUpperCase()] = id;
+                    const col = { id, formula: formula || sigmaColFormula(path[path.length - 1] || tableName, fieldName) };
+                    if (label) col.name = label;
+                    element.columns.push(col);
+                    element.order.push(id);
+                    return id;
+                }
+
+                const sourceTable = path[path.length - 1] || tableName;
+
+                // Dimensions → columns
+                for (const dim of view.dimensions || []) {
+                    const name = dim.name || '';
+                    if (!name) continue;
+                    stats.totalDims++;
+
+                    if (dim.primary_key) {
+                        // Track primary key for count measures
+                        const formula = dim.sql
+                            ? _omniTranslateFormula(dim.sql, sourceTable)
+                            : sigmaColFormula(sourceTable, name);
+                        pkColId = addCol(name, formula, dim.label || null);
+                        continue;
+                    }
+
+                    if (dim.type === 'time') {
+                        // Expand timeframes into separate columns
+                        const baseFormula = dim.sql
+                            ? _omniTranslateFormula(dim.sql, sourceTable)
+                            : sigmaColFormula(sourceTable, name);
+                        const timeframeMap = {
+                            raw:          baseFormula,
+                            date:         `DateTrunc("day", ${baseFormula})`,
+                            week:         `DateTrunc("week", ${baseFormula})`,
+                            month:        `DateTrunc("month", ${baseFormula})`,
+                            quarter:      `DateTrunc("quarter", ${baseFormula})`,
+                            year:         `DateTrunc("year", ${baseFormula})`,
+                            day_of_week:  `DatePart("dayofweek", ${baseFormula})`,
+                            hour:         `DateTrunc("hour", ${baseFormula})`,
+                            hour_of_day:  `DatePart("hour", ${baseFormula})`,
+                            minute:       `DateTrunc("minute", ${baseFormula})`,
+                            month_name:   `Text(DateTrunc("month", ${baseFormula}), "MMMM")`,
+                            quarter_of_year: `DatePart("quarter", ${baseFormula})`,
+                            week_of_year: `DatePart("week", ${baseFormula})`,
+                            year:         `DateTrunc("year", ${baseFormula})`,
+                        };
+                        const tfs = dim.timeframes || ['raw', 'date', 'week', 'month', 'quarter', 'year'];
+                        // Default: add a base column + one per timeframe
+                        let first = true;
+                        for (const tf of tfs) {
+                            if (tf === 'raw' || first) {
+                                addCol(name, baseFormula, dim.label || null);
+                                first = false;
+                                if (tf === 'raw') continue;
+                            }
+                            const tfFormula = timeframeMap[tf];
+                            if (tfFormula) {
+                                const tfName = `${name}_${tf}`;
+                                const tfLabel = dim.label ? `${dim.label} (${tf.replace(/_/g, ' ')})` : null;
+                                addCol(tfName, tfFormula, tfLabel);
+                            }
+                        }
+                    } else {
+                        const formula = dim.sql
+                            ? _omniTranslateFormula(dim.sql, sourceTable)
+                            : sigmaColFormula(sourceTable, name);
+                        addCol(name, formula, dim.label || null);
+                    }
+                }
+
+                // Measures → metrics
+                for (const measure of view.measures || []) {
+                    const name = measure.name || '';
+                    if (!name) continue;
+                    stats.totalMeasures++;
+
+                    const type = (measure.type || 'count').toLowerCase();
+                    let formula;
+
+                    if (type === 'count') {
+                        // count has no sql — use PK or first column if available
+                        const refCol = pkColId
+                            ? sigmaDisplayName(Object.keys(colIdMap).find(k => colIdMap[k] === pkColId) || name)
+                            : (element.columns[0] ? sigmaDisplayName((element.columns[0].id.split('/')[1] || '').toLowerCase()) : name);
+                        formula = `CountIf(IsNotNull([${refCol}]))`;
+                    } else if (measure.sql) {
+                        const rawExpr = _omniTranslateFormula(measure.sql, sourceTable);
+                        // Wrap the translated expression in the appropriate Sigma aggregation
+                        const sigmaAggMap = {
+                            sum:            e => `Sum(${e})`,
+                            average:        e => `Avg(${e})`,
+                            avg:            e => `Avg(${e})`,
+                            min:            e => `Min(${e})`,
+                            max:            e => `Max(${e})`,
+                            count_distinct: e => `CountDistinct(${e})`,
+                            median:         e => `Median(${e})`,
+                            sum_distinct:   e => `Sum(${e})`,
+                        };
+                        formula = (sigmaAggMap[type] || (e => `Sum(${e})`))(rawExpr);
+                    } else {
+                        formula = sigmaAggFormula(type, name);
+                    }
+
+                    const metricId = sigmaInodeId(name.toUpperCase());
+                    colIdMap[name.toUpperCase()] = metricId;
+                    element.metrics.push({
+                        id: metricId,
+                        name: measure.label || sigmaDisplayName(name),
+                        formula
+                    });
+                }
+
+                elements.push(element);
+                viewRegistry[viewName.toLowerCase()] = { elementId, pkColId, colIdMap, element, sourceTable };
+            }
+
+            // Wire relationships from explores/joins
+            for (const explore of explores) {
+                const fromViewName = (explore.from || explore.name || '').toLowerCase();
+                const fromEntry = viewRegistry[fromViewName];
+
+                for (const join of explore.joins || []) {
+                    const toViewName = (join.from || join.name || '').toLowerCase();
+                    const toEntry = viewRegistry[toViewName];
+
+                    if (!fromEntry || !toEntry) {
+                        if (fromEntry || toEntry) {
+                            warnings.push(`Join "${join.name}": view "${toViewName}" not found in loaded files — skipping relationship`);
+                        }
+                        continue;
+                    }
+
+                    // Parse sql_on to find FK/PK column pair: ${from.col} = ${to.col}
+                    let srcColId = null, tgtColId = null;
+                    if (join.sql_on) {
+                        const m = join.sql_on.match(/\$\{(\w+)\.(\w+)\}\s*=\s*\$\{(\w+)\.(\w+)\}/);
+                        if (m) {
+                            const [, v1, c1, v2, c2] = m;
+                            const left  = { view: v1.toLowerCase(), col: c1.toUpperCase() };
+                            const right = { view: v2.toLowerCase(), col: c2.toUpperCase() };
+                            // Determine which side is from/to
+                            const srcSide = (left.view  === fromViewName) ? left  : right;
+                            const tgtSide = (right.view === toViewName)   ? right : left;
+                            srcColId = fromEntry.colIdMap[srcSide.col] || null;
+                            tgtColId = toEntry.colIdMap[tgtSide.col]   || null;
+                        }
+                    }
+                    // Fall back to FK shorthand
+                    if (!srcColId && join.foreign_key) {
+                        const fkCol = join.foreign_key.includes('.')
+                            ? join.foreign_key.split('.')[1].toUpperCase()
+                            : join.foreign_key.toUpperCase();
+                        srcColId = fromEntry.colIdMap[fkCol] || null;
+                        tgtColId = toEntry.pkColId || null;
+                    }
+
+                    const rel = {
+                        id: sigmaShortId(),
+                        targetElementId: toEntry.elementId,
+                        name: `${sigmaDisplayName(fromViewName)} to ${sigmaDisplayName(toViewName)}`,
+                        relationshipType: join.relationship === 'one_to_many' ? '1:N' : 'N:1'
+                    };
+                    if (srcColId && tgtColId) {
+                        rel.keys = [{ sourceColumnId: srcColId, targetColumnId: tgtColId }];
+                    } else {
+                        warnings.push(`Join "${join.name}": could not resolve column keys — relationship added without key mapping`);
+                    }
+
+                    if (!fromEntry.element.relationships) fromEntry.element.relationships = [];
+                    fromEntry.element.relationships.push(rel);
+                }
+            }
+
+            const sigmaModel = {
+                name: views.length === 1
+                    ? sigmaDisplayName(views[0].name || views[0].view || 'Omni Model')
+                    : 'Omni Analytics Model',
+                pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
+            };
+
+            return { sigmaModel, warnings, stats };
+        }
+
+        function loadOmniExample() {
+            _omniViews = [];
+            _omniExplores = [];
+            document.getElementById('omniFileList').innerHTML = '';
+            document.getElementById('omniYamlInput').value = `# Example Omni Analytics model — orders star schema
+views:
+  - name: orders
+    sql_table_name: "ANALYTICS.PUBLIC.ORDERS"
+    dimensions:
+      - name: order_id
+        type: string
+        primary_key: true
+        sql: "\${TABLE}.ORDER_ID"
+        label: "Order ID"
+      - name: status
+        type: string
+        sql: "\${TABLE}.STATUS"
+        label: "Order Status"
+      - name: channel
+        type: string
+        sql: "\${TABLE}.CHANNEL"
+        label: "Channel"
+      - name: created_at
+        type: time
+        timeframes: [raw, date, week, month, quarter, year]
+        sql: "\${TABLE}.CREATED_AT"
+        label: "Order Date"
+      - name: amount_tier
+        type: string
+        sql: |
+          CASE
+            WHEN \${TABLE}.ORDER_AMOUNT < 50 THEN 'Small'
+            WHEN \${TABLE}.ORDER_AMOUNT < 200 THEN 'Medium'
+            ELSE 'Large'
+          END
+        label: "Order Amount Tier"
+    measures:
+      - name: order_count
+        type: count
+        label: "Order Count"
+      - name: total_revenue
+        type: sum
+        sql: "\${TABLE}.ORDER_AMOUNT"
+        label: "Total Revenue"
+        value_format_name: usd
+      - name: avg_order_value
+        type: average
+        sql: "\${TABLE}.ORDER_AMOUNT"
+        label: "Avg Order Value"
+        value_format_name: usd
+      - name: unique_customers
+        type: count_distinct
+        sql: "\${TABLE}.CUSTOMER_ID"
+        label: "Unique Customers"
+
+  - name: customers
+    sql_table_name: "ANALYTICS.PUBLIC.CUSTOMERS"
+    dimensions:
+      - name: customer_id
+        type: string
+        primary_key: true
+        sql: "\${TABLE}.CUSTOMER_ID"
+        label: "Customer ID"
+      - name: name
+        type: string
+        sql: "CONCAT(\${TABLE}.FIRST_NAME, ' ', \${TABLE}.LAST_NAME)"
+        label: "Customer Name"
+      - name: segment
+        type: string
+        sql: "\${TABLE}.SEGMENT"
+        label: "Segment"
+      - name: region
+        type: string
+        sql: "\${TABLE}.REGION"
+        label: "Region"
+    measures:
+      - name: customer_count
+        type: count
+        label: "Customer Count"
+      - name: avg_lifetime_revenue
+        type: average
+        sql: "\${TABLE}.LIFETIME_REVENUE"
+        label: "Avg Lifetime Revenue"
+        value_format_name: usd
+
+explores:
+  - name: orders
+    label: "Order Analysis"
+    joins:
+      - name: customers
+        type: left_outer
+        relationship: many_to_one
+        sql_on: "\${orders.customer_id} = \${customers.customer_id}"`;
+            showToast('Example loaded', 'success');
+            runOmniConversion();
+        }
+
+        function copyOmniOutput() {
+            const val = document.getElementById('omniJsonOutput').value;
+            if (!val) return;
+            navigator.clipboard.writeText(val).then(() => showToast('Copied to clipboard', 'success'));
+        }
+
+        function loadOmniOutputToEditor() {
+            const val = document.getElementById('omniJsonOutput').value;
+            if (!val) return;
+            try {
+                const obj = JSON.parse(val);
+                editorMode = 'json';
+                _updateModeToggleUI();
+                setEditorContent(obj);
+            } catch(e) {
+                document.getElementById('jsonEditor').value = val;
+            }
+            state.isNewModel = true;
+            state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from Omni Analytics (unsaved)';
+            ['findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+            enableEditorModeToggle();
+            switchEditorTab('json');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
+        }
+
+        async function omniLoadAndSave() {
+            loadOmniOutputToEditor();
+            if (!state.accessToken) {
+                showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning');
+                return;
+            }
+            openSaveLocationModal();
         }
 
         // ── dbt Import Modal ────────────────────────────────────────────────
@@ -12402,7 +13563,7 @@ ${cleanedSql}`;
             }
             state.isNewModel = true; state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from Tableau (unsaved)';
-            ['formatBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
+            ['findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
             enableEditorModeToggle();
             switchEditorTab('json');
             showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
@@ -13107,7 +14268,7 @@ ${cleanedSql}`;
             state.isNewModel = true;
             state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from Power BI (unsaved)';
-            ['formatBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
+            ['findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
             enableEditorModeToggle();
             switchEditorTab('json');
             showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
@@ -13143,7 +14304,7 @@ ${cleanedSql}`;
             state.isNewModel = true;
             state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from LookML (unsaved)';
-            ['formatBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
+            ['findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
             enableEditorModeToggle();
             switchEditorTab('json');
             showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
@@ -14042,7 +15203,7 @@ view: date_dim {
             }
             state.isNewModel = true; state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from Alteryx (unsaved)';
-            ['formatBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
+            ['findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
             enableEditorModeToggle();
             switchEditorTab('json');
             showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
@@ -14412,7 +15573,7 @@ view: date_dim {
             }
             state.isNewModel = true; state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from Atlan Data Contract (unsaved)';
-            ['formatBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
+            ['findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => document.getElementById(id).disabled = false);
             enableEditorModeToggle();
             switchEditorTab('json');
             showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
@@ -14514,16 +15675,30 @@ models:
 <h3>Key Capabilities</h3>
 <ul>
     <li><b>JSON Editor</b> — View and edit data model JSON directly, with syntax highlighting and formatting. Paste JSON and save directly.</li>
-    <li><b>File Explorer</b> — Navigate elements, columns, metrics, and relationships visually</li>
+    <li><b>Undo / Redo</b> — 50-step undo/redo history (Ctrl+Z / Ctrl+Y). Changes are auto-captured on a 400ms debounce so rapid edits don't flood the stack.</li>
+    <li><b>Find & Replace</b> — Search the editor with case-sensitive and regex modes. Navigate matches, replace one at a time, or replace all (Ctrl+F).</li>
+    <li><b>Structure Panel</b> — Collapsible right-side panel showing all elements, columns, metrics, and relationships in a tree view. Click any item to jump to it in the JSON editor.</li>
+    <li><b>Diff Viewer</b> — Compare the current editor state against the original loaded model. Line-by-line unified diff with added/removed highlighting.</li>
     <li><b>AI Assistant</b> — Generate columns, metrics, descriptions, RLS, CLS, and more using natural language</li>
     <li><b>Fix with AI</b> — When a save fails, an error banner offers AI-powered repair of common issues (empty arrays, casing, structural problems)</li>
     <li><b>Smart Insert</b> — AI-generated content is merged intelligently into the correct element</li>
-    <li><b>Converters</b> — Import from dbt, Snowflake, LookML, Tableau, Power BI, Alteryx, and Atlan Data Contracts</li>
+    <li><b>Converters</b> — Import from dbt, Snowflake Cortex Analyst, LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, and <b>Omni Analytics</b></li>
     <li><b>Bulk Upload</b> — Create multiple elements from warehouse tables at once</li>
 </ul>
 
+<h3>Keyboard Shortcuts</h3>
+<ul>
+    <li><code>Ctrl+Z</code> — Undo</li>
+    <li><code>Ctrl+Y</code> / <code>Ctrl+Shift+Z</code> — Redo</li>
+    <li><code>Ctrl+F</code> — Find &amp; Replace</li>
+    <li><code>Ctrl+Shift+F</code> — Format JSON</li>
+    <li><code>Ctrl+S</code> — Save to Sigma</li>
+    <li><code>Ctrl+D</code> — Open Diff viewer</li>
+    <li><code>Escape</code> — Close any open panel or modal</li>
+</ul>
+
 <h3>General Workflow</h3>
-<p>Connect to the Sigma API with your credentials → select or create a data model → edit in JSON or File Explorer → save back to Sigma. Converters let you import from other BI tools, generating Sigma-compatible JSON that you review and save.</p>
+<p>Connect to the Sigma API with your credentials → select or create a data model → edit in JSON or use the Structure Panel to navigate → save back to Sigma. Converters let you import from other BI tools, generating Sigma-compatible JSON that you review and save.</p>
 
 <div class="help-links">
     <div class="help-links-title">📚 Essential Community Articles</div>
@@ -14534,7 +15709,7 @@ models:
 
 <div class="help-links" style="margin-top:12px;border-color:rgba(88,101,242,0.3);background:rgba(88,101,242,0.06);">
     <div class="help-links-title" style="color:var(--accent);">🔌 MCP Server — Use These Converters with AI Agents</div>
-    <p style="font-size:12px;color:var(--text-secondary);margin:4px 0 8px;">The same conversion logic from this tool is available as an <b>MCP server</b> for Claude Code, Claude Desktop, Claude.ai, Cursor, and any MCP-compatible client. Convert dbt, Snowflake, LookML, Tableau, and Power BI models to Sigma using natural language.</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:4px 0 8px;">The same conversion logic from this tool is available as an <b>MCP server</b> for Claude Code, Claude Desktop, Claude.ai, Cursor, and any MCP-compatible client. Convert dbt, Snowflake, LookML, Tableau, Power BI, and Omni Analytics models to Sigma using natural language.</p>
     <a href="https://sigma-data-model-mcp.onrender.com/mcp" target="_blank">sigma-data-model-mcp.onrender.com/mcp</a>
     <a href="https://github.com/twells89/sigma-data-model-mcp" target="_blank">GitHub Repository</a>
 </div>`,
@@ -14932,6 +16107,63 @@ models:
     <li><b>AI keys</b> — AI provider keys (Anthropic, OpenAI, Gemini) have their own usage-based billing. Monitor your provider's dashboard for unexpected usage. Set a spending limit on your AI provider account as a safety net.</li>
 </ul>`,
 
+            omni: `
+<h3>Omni Analytics Converter</h3>
+<p>Converts Omni Analytics model files (<code>.view.yaml</code> and <code>.model.yaml</code>) to Sigma data model JSON. Omni uses a YAML format closely derived from LookML, with views defining dimensions and measures, and model files defining explores and joins.</p>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>Views with sql_table_name</b> → Sigma elements; path parsed from the fully-qualified table name (e.g. <code>DB.SCHEMA.TABLE</code>)</li>
+    <li><b>Derived tables</b> → Sigma elements with a warning to complete the source path manually</li>
+    <li><b>Dimensions</b> → Sigma columns; <code>\${TABLE}.col</code> and <code>\${field}</code> references translated to Sigma formula syntax</li>
+    <li><b>Dimensions — type: time</b> → Expanded into one column per timeframe (<code>date</code>, <code>week</code>, <code>month</code>, <code>quarter</code>, <code>year</code>, etc.) using <code>DateTrunc()</code></li>
+    <li><b>Dimensions — type: yesno</b> → Boolean calculated columns</li>
+    <li><b>Dimensions — primary_key: true</b> → Tracked as the join key for relationship wiring</li>
+    <li><b>Measures</b> → Sigma metrics with appropriate aggregation (<code>Sum</code>, <code>Avg</code>, <code>Min</code>, <code>Max</code>, <code>CountDistinct</code>, <code>CountIf</code>)</li>
+    <li><b>Measures with filters</b> → Conditional aggregates</li>
+    <li><b>Explores + joins</b> → Sigma relationships; <code>sql_on</code> parsed to extract FK/PK column pairs; <code>foreign_key</code> shorthand also supported</li>
+    <li><b>Multi-file drop</b> → Drop all <code>.view.yaml</code> and <code>.model.yaml</code> files at once; views and explores are merged automatically</li>
+    <li><b>Database/Schema overrides</b> → Fill in incomplete paths when <code>sql_table_name</code> is only a table name or <code>schema.table</code></li>
+</ul>
+
+<h3>Expression Conversion</h3>
+<p>Omni <code>sql:</code> expressions use <code>\${TABLE}.col</code> and <code>\${field}</code> substitution syntax. These are translated to Sigma formulas automatically:</p>
+<ul>
+    <li><code>\${TABLE}.col_name</code> → <code>[Source Table/Display Col Name]</code></li>
+    <li><code>\${field_name}</code> → <code>[Display Field Name]</code></li>
+    <li><code>\${view.field}</code> → <code>[Display Field Name]</code> (cross-view ref, simplified)</li>
+    <li><code>CASE WHEN … THEN … END</code> → <code>If(…, …, …)</code> (nested)</li>
+    <li><code>expr IN (a, b, c)</code> → <code>(expr = a Or expr = b Or expr = c)</code></li>
+    <li><code>'string'</code> → <code>"string"</code></li>
+    <li><code>MONTH(x)</code> → <code>Month(x)</code>, <code>CONCAT(…)</code> → <code>Concat(…)</code>, <code>ROUND(…)</code> → <code>Round(…)</code>, <code>DATEDIFF(…)</code> → <code>DateDiff(…)</code>, <code>NULLIF(…)</code> → <code>Nullif(…)</code>, and 30+ other SQL function mappings</li>
+</ul>
+
+<h3>How to Get Omni Files</h3>
+<ul>
+    <li><b>Git sync</b> — Connect your Omni model to a GitHub repo (Omni Settings → Git Sync). Each view becomes a <code>.view.yaml</code> file; the model becomes a <code>.model.yaml</code> file.</li>
+    <li><b>Omni IDE</b> — Copy view and model YAML directly from the Omni model editor.</li>
+    <li><b>Multi-file</b> — Drop all files at once. Views and explores are merged and converted as a single model.</li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li><b>Derived tables</b> — Views using <code>derived_table.sql</code> are mapped as warehouse-table elements with a warning. The raw SQL is not preserved; add the SQL manually in the JSON editor before saving.</li>
+    <li><b>Complex SQL expressions</b> — Omni <code>sql:</code> blocks can contain arbitrary warehouse SQL. Simple patterns (CASE WHEN, IN, common functions) are auto-converted. Complex expressions with Snowflake-specific syntax (<code>FLATTEN</code>, <code>LATERAL</code>, <code>QUALIFY</code>, window functions) will pass through as-is and will fail Sigma validation. Edit them in the JSON editor after conversion.</li>
+    <li><b>Role-playing dimensions</b> — If the same view is joined multiple times under different aliases in an explore (e.g. <code>order_date</code> and <code>ship_date</code> both from <code>date_dim</code>), only one relationship per target view is created. Add duplicate relationships manually in Sigma.</li>
+    <li><b>Topics</b> — Omni Topics (curated field subsets) have no direct Sigma equivalent and are ignored.</li>
+    <li><b>Access grants / access filters</b> — Omni row-level security definitions are not converted. Add RLS in Sigma using the AI Assistant after import.</li>
+    <li><b>extends / refinements</b> — View inheritance (<code>extends:</code>) is not resolved across files. Upload all parent and child view files together and the child's fields will be converted, but inherited fields from the parent may be missing. Merge manually.</li>
+    <li><b>Cross-view sql references</b> — <code>\${other_view.field}</code> references in dimension SQL are simplified to <code>[Display Field Name]</code> (table qualifier stripped). These formulas will fail Sigma validation if the column is on a different element. Add them manually in the Sigma UI after saving.</li>
+</ul>
+
+<div class="help-links">
+    <div class="help-links-title">📚 Resources</div>
+    <a href="https://docs.omni.co/docs/modeling/views" target="_blank">Omni Analytics — Views</a>
+    <a href="https://docs.omni.co/docs/modeling/explores" target="_blank">Omni Analytics — Explores &amp; Joins</a>
+    <a href="https://docs.omni.co/docs/modeling/dimensions" target="_blank">Omni Analytics — Dimensions</a>
+    <a href="https://docs.omni.co/docs/modeling/measures" target="_blank">Omni Analytics — Measures</a>
+</div>`,
+
             mcp: `
 <h3>MCP Server — AI-Powered Conversions</h3>
 <p>The same converter logic from this tool is available as a hosted <b>Model Context Protocol (MCP) server</b>. This lets AI agents — like Claude Code, Claude Desktop, Claude.ai, and Cursor — convert data models to Sigma using natural language.</p>
@@ -14947,6 +16179,7 @@ models:
     <li><code>convert_lookml_to_sigma</code> — LookML project files → Sigma JSON</li>
     <li><code>convert_powerbi_to_sigma</code> — Power BI model (.bim / TOM JSON) → Sigma JSON</li>
     <li><code>convert_tableau_to_sigma</code> — Tableau workbook/data source (.twb/.tds XML) → Sigma JSON</li>
+    <li><code>convert_omni_to_sigma</code> — Omni Analytics .view.yaml + .model.yaml → Sigma JSON</li>
     <li><code>convert_sql_to_sigma_formula</code> — SQL expression → Sigma formula</li>
     <li><code>convert_tableau_formula_to_sigma</code> — Tableau formula → Sigma formula</li>
     <li><code>get_sigma_data_model_schema</code> — Sigma data model JSON schema reference</li>
@@ -14987,7 +16220,7 @@ models:
 
         function switchHelpTab(tab) {
             document.querySelectorAll('#helpTabs .help-tab').forEach((t, i) => {
-                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'ai', 'api', 'mcp'];
+                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'ai', 'api', 'mcp'];
                 t.classList.toggle('active', tabs[i] === tab);
             });
             document.getElementById('helpContent').innerHTML = HELP_CONTENT[tab] || '';
@@ -14999,13 +16232,504 @@ models:
             const hash = location.hash;
             if (hash && hash.startsWith('#help-')) {
                 const tab = hash.replace('#help-', '');
-                const validTabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'ai', 'api', 'mcp'];
+                const validTabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'ai', 'api', 'mcp'];
                 if (validTabs.includes(tab)) {
                     toggleHelpModal();
                     switchHelpTab(tab);
                 }
             }
         });
+
+
+        // ── Undo / Redo ──────────────────────────────────────────
+        const _undoStack = [];
+        const _redoStack = [];
+        let _undoDebounce = null;
+        let _undoLastSnap = '';
+
+        function _pushUndo(text) {
+            if (text === _undoLastSnap) return;
+            _undoStack.push(text);
+            if (_undoStack.length > 50) _undoStack.shift();
+            _redoStack.length = 0;
+            _undoLastSnap = text;
+            _updateUndoRedoBtns();
+        }
+
+        function _scheduleUndo() {
+            clearTimeout(_undoDebounce);
+            _undoDebounce = setTimeout(() => {
+                _pushUndo(document.getElementById('jsonEditor').value);
+            }, 400);
+        }
+
+        function editorUndo() {
+            if (_undoStack.length === 0) return;
+            const editor = document.getElementById('jsonEditor');
+            _redoStack.push(editor.value);
+            const prev = _undoStack.pop();
+            editor.value = prev;
+            _undoLastSnap = prev;
+            onEditorInput();
+            updateLineNumbers();
+            _updateUndoRedoBtns();
+            if (document.getElementById('treePanel').style.display !== 'none') buildTreeView();
+        }
+
+        function editorRedo() {
+            if (_redoStack.length === 0) return;
+            const editor = document.getElementById('jsonEditor');
+            _undoStack.push(editor.value);
+            const next = _redoStack.pop();
+            editor.value = next;
+            _undoLastSnap = next;
+            onEditorInput();
+            updateLineNumbers();
+            _updateUndoRedoBtns();
+            if (document.getElementById('treePanel').style.display !== 'none') buildTreeView();
+        }
+
+        function _updateUndoRedoBtns() {
+            const u = document.getElementById('undoBtn');
+            const r = document.getElementById('redoBtn');
+            if (u) u.disabled = _undoStack.length === 0;
+            if (r) r.disabled = _redoStack.length === 0;
+        }
+
+        // ── Find & Replace ────────────────────────────────────────
+        let _findMatches = [];
+        let _findIdx = -1;
+        let _findCaseOn = false;
+        let _findRegexOn = false;
+
+        function openFindReplace() {
+            const ov = document.getElementById('findReplaceOverlay');
+            ov.style.display = 'flex';
+            document.getElementById('findInput').focus();
+            runFind();
+        }
+
+        function closeFindReplace() {
+            document.getElementById('findReplaceOverlay').style.display = 'none';
+            _findMatches = [];
+            _findIdx = -1;
+            document.getElementById('findCount').textContent = '';
+        }
+
+        function toggleFindOpt(opt) {
+            if (opt === 'case') {
+                _findCaseOn = !_findCaseOn;
+                document.getElementById('findCaseBtn').classList.toggle('active', _findCaseOn);
+            } else {
+                _findRegexOn = !_findRegexOn;
+                document.getElementById('findRegexBtn').classList.toggle('active', _findRegexOn);
+            }
+            runFind();
+        }
+
+        function runFind() {
+            const term = document.getElementById('findInput').value;
+            const countEl = document.getElementById('findCount');
+            _findMatches = [];
+            if (!term) { countEl.textContent = ''; return; }
+            const text = document.getElementById('jsonEditor').value;
+            try {
+                let pattern = _findRegexOn ? term : term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const flags = _findCaseOn ? 'g' : 'gi';
+                const re = new RegExp(pattern, flags);
+                let m;
+                while ((m = re.exec(text)) !== null) {
+                    _findMatches.push({ start: m.index, end: m.index + m[0].length });
+                }
+            } catch(e) { countEl.textContent = 'Bad regex'; return; }
+
+            if (_findMatches.length === 0) {
+                countEl.textContent = 'No matches';
+                _findIdx = -1;
+            } else {
+                _findIdx = 0;
+                _jumpToMatch(0);
+            }
+        }
+
+        function _jumpToMatch(idx) {
+            if (_findMatches.length === 0) return;
+            _findIdx = ((idx % _findMatches.length) + _findMatches.length) % _findMatches.length;
+            const m = _findMatches[_findIdx];
+            const editor = document.getElementById('jsonEditor');
+            editor.focus();
+            editor.setSelectionRange(m.start, m.end);
+            const linesBefore = editor.value.substring(0, m.start).split('\n').length;
+            const lh = parseFloat(getComputedStyle(editor).lineHeight) || 20;
+            editor.scrollTop = Math.max(0, (linesBefore - 4)) * lh;
+            document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
+        }
+
+        function findNext() { _jumpToMatch(_findIdx + 1); }
+        function findPrev() { _jumpToMatch(_findIdx - 1); }
+
+        function replaceOne() {
+            if (_findMatches.length === 0 || _findIdx < 0) return;
+            const editor = document.getElementById('jsonEditor');
+            const replacement = document.getElementById('replaceInput').value;
+            const m = _findMatches[_findIdx];
+            _pushUndo(editor.value);
+            editor.value = editor.value.substring(0, m.start) + replacement + editor.value.substring(m.end);
+            onEditorInput(); updateLineNumbers();
+            runFind();
+        }
+
+        function replaceAll() {
+            if (_findMatches.length === 0) return;
+            const editor = document.getElementById('jsonEditor');
+            const replacement = document.getElementById('replaceInput').value;
+            const term = document.getElementById('findInput').value;
+            _pushUndo(editor.value);
+            try {
+                const pattern = _findRegexOn ? term : term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const flags = _findCaseOn ? 'g' : 'gi';
+                const count = _findMatches.length;
+                editor.value = editor.value.replace(new RegExp(pattern, flags), replacement);
+                onEditorInput(); updateLineNumbers();
+                showToast(`Replaced ${count} occurrence${count !== 1 ? 's' : ''}`, 'success');
+                runFind();
+            } catch(e) { showToast('Invalid regex', 'error'); }
+        }
+
+        function handleFindKey(e) {
+            if (e.key === 'Enter') { e.shiftKey ? findPrev() : findNext(); e.preventDefault(); }
+            if (e.key === 'Escape') { closeFindReplace(); e.preventDefault(); }
+        }
+
+        function handleReplaceKey(e) {
+            if (e.key === 'Enter') { replaceOne(); e.preventDefault(); }
+            if (e.key === 'Escape') { closeFindReplace(); e.preventDefault(); }
+        }
+
+        // ── Column / Metric Tree View ─────────────────────────────
+        function toggleTreeView() {
+            const panel = document.getElementById('treePanel');
+            const btn   = document.getElementById('treeViewBtn');
+            const isOpen = panel.style.display !== 'none';
+            panel.style.display = isOpen ? 'none' : '';
+            btn.classList.toggle('active', !isOpen);
+            if (!isOpen) buildTreeView();
+        }
+
+        // Extract a human-readable label from a Sigma column id.
+        // Inode format: "inode-<hash>/COLUMN_NAME" → "COLUMN_NAME" → "Column Name"
+        // Short random IDs (no slash) return empty string — caller should fall back.
+        function _sigmaIdLabel(id) {
+            if (!id) return '';
+            const slash = id.lastIndexOf('/');
+            if (slash === -1) return ''; // short random ID — not human-readable
+            const raw = id.substring(slash + 1);
+            return raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        }
+
+        // Get the best human-readable display name for a Sigma element.
+        // Priority: el.name → last segment of source.path → el.id
+        function _elementLabel(el) {
+            if (!el) return '';
+            if (el.name) return el.name;
+            const path = el.source?.path;
+            if (Array.isArray(path) && path.length > 0) return path[path.length - 1];
+            return el.id || '';
+        }
+
+        // Get display label for a column — returns null if no readable name exists.
+        function _columnLabel(c) {
+            if (!c) return null;
+            if (c.name) return c.name;
+            const label = _sigmaIdLabel(c.id || '');
+            return label || null; // null = skip this column in previews
+        }
+
+        function buildTreeView() {
+            const container = document.getElementById('treeViewContent');
+            let model;
+            try {
+                model = getEditorJson();
+                if (!model) throw new Error('empty');
+            } catch(e) {
+                container.innerHTML = '<div class="tree-empty">Fix JSON errors first</div>';
+                return;
+            }
+
+            const pages = model.pages || [];
+            // Only show table elements (skip controls, text boxes, etc.)
+            const _tSeen = new Set();
+            const allElements = pages.flatMap(p => (p.elements || []).filter(e => {
+                if ((e.kind === 'table' || (!e.kind && (e.columns || e.metrics))) && !_tSeen.has(e.id)) {
+                    _tSeen.add(e.id); return true;
+                }
+                return false;
+            }));
+            if (allElements.length === 0) {
+                container.innerHTML = '<div class="tree-empty">No table elements found</div>';
+                return;
+            }
+
+            // Build id → element map for resolving relationship target names
+            const elById = {};
+            allElements.forEach(e => { elById[e.id] = e; });
+
+            let html = '';
+            for (const el of allElements) {
+                const elId    = el.id || '';
+                const elLabel = escapeHtml(_elementLabel(el));
+                const cols    = el.columns      || [];
+                const mets    = el.metrics       || [];
+                const rels    = el.relationships || [];
+                // Readable columns only (skip unnamed random-ID columns)
+                const readableCols = cols.filter(c => _columnLabel(c) !== null);
+
+                const jumpTarget = JSON.stringify('"id": ' + JSON.stringify(elId));
+                html += `<div class="tree-element">
+                    <div class="tree-element-header" onclick="jumpToEditorText(${jumpTarget})">
+                        <span class="tree-icon">▸</span>
+                        <span class="tree-label" style="font-size:12px;" title="${escapeHtml(elId)}">${elLabel}</span>
+                    </div>`;
+
+                if (readableCols.length > 0) {
+                    html += `<div class="tree-group">
+                        <div class="tree-group-header">Columns (${cols.length})</div>`;
+                    for (const c of readableCols) {
+                        const cId    = c.id || '';
+                        const cLabel = escapeHtml(_columnLabel(c));
+                        const cJump  = JSON.stringify('"id": ' + JSON.stringify(cId));
+                        html += `<div class="tree-item" onclick="jumpToEditorText(${cJump})" title="${escapeHtml(cId)}">
+                            <span class="tree-type-dot col"></span>${cLabel}</div>`;
+                    }
+                    html += '</div>';
+                }
+
+                if (mets.length > 0) {
+                    html += `<div class="tree-group">
+                        <div class="tree-group-header">Metrics (${mets.length})</div>`;
+                    for (const m of mets) {
+                        const mId    = m.id || '';
+                        const mLabel = escapeHtml(m.name || mId);
+                        const mJump  = JSON.stringify('"id": ' + JSON.stringify(mId));
+                        html += `<div class="tree-item" onclick="jumpToEditorText(${mJump})" title="${escapeHtml(mId)}">
+                            <span class="tree-type-dot met"></span>${mLabel}</div>`;
+                    }
+                    html += '</div>';
+                }
+
+                if (rels.length > 0) {
+                    html += `<div class="tree-group">
+                        <div class="tree-group-header">Relationships (${rels.length})</div>`;
+                    for (const r of rels) {
+                        const targetEl  = elById[r.targetElementId] || null;
+                        const rLabel    = escapeHtml(r.name || (targetEl ? _elementLabel(targetEl) : r.targetElementId) || '');
+                        const rJump     = JSON.stringify('"id": ' + JSON.stringify(r.id || ''));
+                        html += `<div class="tree-item" onclick="jumpToEditorText(${rJump})" title="→ ${escapeHtml(r.targetElementId || '')}">
+                            <span class="tree-type-dot rel"></span>${rLabel}</div>`;
+                    }
+                    html += '</div>';
+                }
+
+                html += '</div>';
+            }
+
+            container.innerHTML = html || '<div class="tree-empty">No elements found</div>';
+        }
+
+        function jumpToEditorText(searchStr) {
+            const editor = document.getElementById('jsonEditor');
+            const text = editor.value;
+            const idx = text.indexOf(searchStr);
+            if (idx === -1) return;
+            editor.focus();
+            editor.setSelectionRange(idx, idx + searchStr.length);
+            const linesBefore = text.substring(0, idx).split('\n').length;
+            const lh = parseFloat(getComputedStyle(editor).lineHeight) || 20;
+            editor.scrollTop = Math.max(0, (linesBefore - 4)) * lh;
+            // Switch back to JSON tab if on ERD
+            if (document.getElementById('panelJson').style.display === 'none') switchEditorTab('json');
+        }
+
+
+        // ── Keyboard Shortcuts ────────────────────────────────────
+        document.addEventListener('keydown', function(e) {
+            const ctrl = e.ctrlKey || e.metaKey;
+
+            // Esc: close modals / find overlay
+            if (e.key === 'Escape') {
+                const overlay = document.getElementById('findReplaceOverlay');
+                if (overlay && overlay.style.display !== 'none') { closeFindReplace(); return; }
+                const active = document.querySelector('.modal-overlay.active');
+                if (active) { active.classList.remove('active'); return; }
+            }
+
+            if (!ctrl) return;
+
+            // Ctrl+S — Save
+            if (e.key === 's') {
+                e.preventDefault();
+                const btn = document.getElementById('saveBtn');
+                if (btn && !btn.disabled) saveDataModel();
+                return;
+            }
+            // Ctrl+F — Find & Replace
+            if (e.key === 'f') {
+                e.preventDefault();
+                const btn = document.getElementById('findBtn');
+                if (btn && !btn.disabled) openFindReplace();
+                return;
+            }
+            // Ctrl+D — Diff (no default browser action to worry about in most cases)
+            if (e.key === 'd' && !e.shiftKey) {
+                const focusedTag = document.activeElement?.tagName;
+                if (focusedTag === 'TEXTAREA' || focusedTag === 'INPUT') return;
+                e.preventDefault();
+                const btn = document.getElementById('diffBtn');
+                if (btn && !btn.disabled) openDiffModal();
+                return;
+            }
+            // Ctrl+Shift+F — Format
+            if (e.key === 'F' && e.shiftKey) {
+                e.preventDefault();
+                const btn = document.getElementById('formatBtn');
+                if (btn && !btn.disabled) formatEditor();
+                return;
+            }
+            // Ctrl+Z — Undo
+            if (e.key === 'z' && !e.shiftKey) {
+                const el = document.activeElement;
+                if (el && el.id === 'jsonEditor') { e.preventDefault(); editorUndo(); }
+                return;
+            }
+            // Ctrl+Y / Ctrl+Shift+Z — Redo
+            if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+                const el = document.activeElement;
+                if (el && el.id === 'jsonEditor') { e.preventDefault(); editorRedo(); }
+                return;
+            }
+        });
+
+        // ── Diff Viewer ──────────────────────────────────────────
+        function openDiffModal() {
+            const container = document.getElementById('diffContainer');
+            const summary   = document.getElementById('diffSummary');
+
+            if (!state.originalJson) {
+                container.innerHTML = '<div class="diff-no-changes">No original snapshot available. Load a model from Sigma to enable diffing.</div>';
+                summary.textContent = '';
+                document.getElementById('diffModal').classList.add('active');
+                return;
+            }
+
+            let originalLines, currentLines;
+            try {
+                originalLines = JSON.stringify(JSON.parse(state.originalJson), null, 2).split('\n');
+            } catch(e) {
+                originalLines = state.originalJson.split('\n');
+            }
+
+            try {
+                const cur = getEditorJson();
+                if (!cur) throw new Error('empty');
+                currentLines = JSON.stringify(cur, null, 2).split('\n');
+            } catch(e) {
+                container.innerHTML = '<div class="diff-no-changes">Current editor content is invalid — fix errors before viewing diff.</div>';
+                summary.textContent = '';
+                document.getElementById('diffModal').classList.add('active');
+                return;
+            }
+
+            const diff = computeLineDiff(originalLines, currentLines);
+            renderDiffView(diff, container, summary);
+            document.getElementById('diffModal').classList.add('active');
+        }
+
+        function closeDiffModal() {
+            document.getElementById('diffModal').classList.remove('active');
+        }
+
+        // LCS-based line diff; falls back to full-block diff for very large inputs
+        function computeLineDiff(oldLines, newLines) {
+            const m = oldLines.length, n = newLines.length;
+            if (m * n > 4000000) {
+                // Too large for full LCS — show as two blocks
+                return [
+                    ...oldLines.map((c, i) => ({ type: 'removed', lineNo: i + 1, content: c })),
+                    ...newLines.map((c, i) => ({ type: 'added',   lineNo: i + 1, content: c }))
+                ];
+            }
+            // Build LCS table
+            const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+            for (let i = 1; i <= m; i++) {
+                for (let j = 1; j <= n; j++) {
+                    dp[i][j] = oldLines[i-1] === newLines[j-1]
+                        ? dp[i-1][j-1] + 1
+                        : Math.max(dp[i-1][j], dp[i][j-1]);
+                }
+            }
+            // Backtrack
+            const result = [];
+            let i = m, j = n;
+            while (i > 0 || j > 0) {
+                if (i > 0 && j > 0 && oldLines[i-1] === newLines[j-1]) {
+                    result.unshift({ type: 'context', oldLine: i, newLine: j, content: oldLines[i-1] });
+                    i--; j--;
+                } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
+                    result.unshift({ type: 'added',   newLine: j, content: newLines[j-1] });
+                    j--;
+                } else {
+                    result.unshift({ type: 'removed', oldLine: i, content: oldLines[i-1] });
+                    i--;
+                }
+            }
+            return result;
+        }
+
+        function renderDiffView(diff, container, summary) {
+            const CONTEXT = 3;
+            let added = 0, removed = 0;
+            diff.forEach(d => { if (d.type === 'added') added++; else if (d.type === 'removed') removed++; });
+
+            summary.innerHTML = added === 0 && removed === 0
+                ? '<span style="color:var(--success)">No changes</span>'
+                : `<span style="color:var(--success)">+${added} added</span> &nbsp; <span style="color:var(--error)">-${removed} removed</span>`;
+
+            if (added === 0 && removed === 0) {
+                container.innerHTML = '<div class="diff-no-changes">✓ No changes — editor matches the original.</div>';
+                return;
+            }
+
+            // Determine which indices to show (changed ± CONTEXT)
+            const visible = new Set();
+            diff.forEach((d, idx) => {
+                if (d.type !== 'context') {
+                    for (let k = Math.max(0, idx - CONTEXT); k <= Math.min(diff.length - 1, idx + CONTEXT); k++) {
+                        visible.add(k);
+                    }
+                }
+            });
+
+            let html = '';
+            let lastVisible = -1;
+            for (let idx = 0; idx < diff.length; idx++) {
+                if (!visible.has(idx)) continue;
+                if (lastVisible !== -1 && idx > lastVisible + 1) {
+                    const skipped = idx - lastVisible - 1;
+                    html += `<div class="diff-hunk-header">@@ … ${skipped} unchanged line${skipped !== 1 ? 's' : ''} …</div>`;
+                }
+                const d = diff[idx];
+                const sign   = d.type === 'added' ? '+' : d.type === 'removed' ? '-' : ' ';
+                const lineNo = d.type === 'added' ? d.newLine : d.oldLine;
+                const esc    = d.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                html += `<div class="diff-line ${d.type}">` +
+                    `<span class="diff-line-num">${lineNo}</span>` +
+                    `<span class="diff-line-sign">${sign}</span>` +
+                    `<span class="diff-line-content">${esc}</span>` +
+                    `</div>`;
+                lastVisible = idx;
+            }
+            container.innerHTML = html;
+        }
 
     </script>
 
@@ -15102,6 +16826,36 @@ models:
             </div>
         </div>
     </div>
+    <!-- Diff Viewer Modal -->
+    <div class="modal-overlay" id="diffModal" onclick="if(event.target===this)closeDiffModal()">
+        <div class="modal diff-modal">
+            <div class="modal-header">
+                <div class="modal-title">⊕ Changes vs Original</div>
+                <button class="modal-close" onclick="closeDiffModal()">&times;</button>
+            </div>
+            <div class="diff-controls" id="diffControls">
+                <div class="diff-legend">
+                    <div class="diff-legend-item">
+                        <div class="diff-legend-dot added"></div><span>Added</span>
+                    </div>
+                    <div class="diff-legend-item">
+                        <div class="diff-legend-dot removed"></div><span>Removed</span>
+                    </div>
+                    <div class="diff-legend-item">
+                        <div class="diff-legend-dot context"></div><span>Unchanged</span>
+                    </div>
+                </div>
+                <div class="diff-summary" id="diffSummary"></div>
+            </div>
+            <div class="modal-body" style="padding:0; background:var(--bg-primary); overflow:hidden;">
+                <div class="diff-container" id="diffContainer" style="max-height:60vh; overflow:auto;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeDiffModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ── Help System ──────────────────────────────────────────── -->
     <button class="help-fab" onclick="toggleHelpModal()" title="Help & Documentation">?</button>
     <div class="help-modal-overlay" id="helpOverlay" onclick="if(event.target===this)toggleHelpModal()">
@@ -15119,6 +16873,7 @@ models:
                 <button class="help-tab" onclick="switchHelpTab('snow')">❄️ Snowflake</button>
                 <button class="help-tab" onclick="switchHelpTab('alteryx')">⚙️ Alteryx</button>
                 <button class="help-tab" onclick="switchHelpTab('contract')">📝 Atlan</button>
+                <button class="help-tab" onclick="switchHelpTab('omni')">🌐 Omni</button>
                 <button class="help-tab" onclick="switchHelpTab('ai')">🤖 AI Assistant</button>
                 <button class="help-tab" onclick="switchHelpTab('api')">⚙️ API Notes</button>
                 <button class="help-tab" onclick="switchHelpTab('mcp')">🔌 MCP Server</button>
