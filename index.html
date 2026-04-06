@@ -2162,6 +2162,18 @@
         .tree-type-dot.met { background: var(--success); }
         .tree-type-dot.rel { background: var(--accent); }
         .tree-empty { padding: 24px; text-align: center; font-size: 12px; color: var(--text-muted); }
+        .tree-fmt-badge {
+            margin-left: auto;
+            font-size: 9px;
+            font-weight: 600;
+            padding: 1px 4px;
+            border-radius: 3px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            flex-shrink: 0;
+            letter-spacing: 0.02em;
+        }
 
         /* Keyboard shortcut hint badge */
         .kbd {
@@ -16386,6 +16398,11 @@ models:
             const lh = parseFloat(getComputedStyle(editor).lineHeight) || 20;
             editor.scrollTop = Math.max(0, (linesBefore - 4)) * lh;
             document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
+            // Restore focus to find input so typing continues in the search box
+            const overlay = document.getElementById('findReplaceOverlay');
+            if (overlay && overlay.style.display !== 'none') {
+                document.getElementById('findInput').focus();
+            }
         }
 
         function findNext() { _jumpToMatch(_findIdx + 1); }
@@ -16460,6 +16477,25 @@ models:
             return el.id || '';
         }
 
+        // Return a short human-readable format badge label from a Sigma format object,
+        // or null if no format is set. Infers from formatString patterns:
+        //   "$,.2f" / currencySymbol  → "$"
+        //   ",.2%"                    → "%"
+        //   ".2~S" / "S" suffix       → "SI"
+        //   "(,.2f"                   → "()"  (accounting)
+        //   plain number              → "#"
+        function _formatLabel(fmt) {
+            if (!fmt || typeof fmt !== 'object') return null;
+            const fs = fmt.formatString || '';
+            if (!fs) return null;
+            if (fs.includes('%')) return '%';
+            if (fs.startsWith('$') || fmt.currencySymbol) return '$';
+            if (fs.includes('~S') || /[0-9]S$/.test(fs)) return 'SI';
+            if (fs.startsWith('(')) return '()';
+            if (/[0-9]f$/.test(fs) || /[0-9]d$/.test(fs)) return '#';
+            return null;
+        }
+
         // Get display label for a column — returns null if no readable name exists.
         function _columnLabel(c) {
             if (!c) return null;
@@ -16521,8 +16557,10 @@ models:
                         const cId    = c.id || '';
                         const cLabel = escapeHtml(_columnLabel(c));
                         const cJump  = JSON.stringify('"id": ' + JSON.stringify(cId));
+                        const cFmt   = _formatLabel(c.format);
+                        const cBadge = cFmt ? `<span class="tree-fmt-badge" title="${escapeHtml(c.format?.formatString || '')}">${cFmt}</span>` : '';
                         html += `<div class="tree-item" onclick="jumpToEditorText(${cJump})" title="${escapeHtml(cId)}">
-                            <span class="tree-type-dot col"></span>${cLabel}</div>`;
+                            <span class="tree-type-dot col"></span>${cLabel}${cBadge}</div>`;
                     }
                     html += '</div>';
                 }
@@ -16534,8 +16572,10 @@ models:
                         const mId    = m.id || '';
                         const mLabel = escapeHtml(m.name || mId);
                         const mJump  = JSON.stringify('"id": ' + JSON.stringify(mId));
+                        const mFmt   = _formatLabel(m.format);
+                        const mBadge = mFmt ? `<span class="tree-fmt-badge" title="${escapeHtml(m.format?.formatString || '')}">${mFmt}</span>` : '';
                         html += `<div class="tree-item" onclick="jumpToEditorText(${mJump})" title="${escapeHtml(mId)}">
-                            <span class="tree-type-dot met"></span>${mLabel}</div>`;
+                            <span class="tree-type-dot met"></span>${mLabel}${mBadge}</div>`;
                     }
                     html += '</div>';
                 }
