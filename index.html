@@ -16389,26 +16389,20 @@ models:
             }
         }
 
-        // Scroll the editor to a match and update the counter.
-        // editor.focus() triggers an async browser scroll that can race with our manual
-        // scrollTop, so we re-apply it inside requestAnimationFrame (after the browser
-        // has settled) then immediately return focus to findInput.
+        // Scroll the editor to a match without touching editor focus.
+        // scrollTop works fine on an unfocused textarea; using scrollHeight/lineCount
+        // gives exact per-line height without fighting getComputedStyle multipliers.
         function _jumpToMatch(idx) {
             if (_findMatches.length === 0) return;
             _findIdx = ((idx % _findMatches.length) + _findMatches.length) % _findMatches.length;
             const m = _findMatches[_findIdx];
             const editor = document.getElementById('jsonEditor');
-            const linesBefore = editor.value.substring(0, m.start).split('\n').length;
-            const lh = parseFloat(getComputedStyle(editor).lineHeight) || 20;
-            const targetScroll = Math.max(0, (linesBefore - 4)) * lh;
-            editor.focus();
-            editor.setSelectionRange(m.start, m.end);
-            editor.scrollTop = targetScroll;
+            const lines = editor.value.split('\n');
+            const linesBefore = editor.value.substring(0, m.start).split('\n').length - 1;
+            const lineH = editor.scrollHeight / (lines.length || 1);
+            editor.scrollTop = Math.max(0, (linesBefore - 3)) * lineH;
             document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
-            requestAnimationFrame(() => {
-                editor.scrollTop = targetScroll; // re-apply after browser's async auto-scroll
-                document.getElementById('findInput').focus();
-            });
+            document.getElementById('findInput').focus();
         }
 
         function findNext() { _jumpToMatch(_findIdx + 1); }
@@ -16621,8 +16615,8 @@ models:
 
 
         // ── Find-bar safety net on the editor ────────────────────────
-        // _jumpToMatch briefly focuses the editor. If Enter/arrows arrive during
-        // that window, redirect them to the find bar instead of editing the text.
+        // If focus somehow lands on the editor while the find bar is open,
+        // redirect Enter/Esc to the find bar instead of editing the text.
         document.getElementById('jsonEditor').addEventListener('keydown', function(e) {
             const overlay = document.getElementById('findReplaceOverlay');
             if (!overlay || overlay.style.display === 'none') return;
