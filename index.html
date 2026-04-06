@@ -16383,11 +16383,14 @@ models:
                 _findIdx = -1;
             } else {
                 _findIdx = 0;
-                _jumpToMatch(0);
+                _jumpToMatch(0, true); // restore focus to find input after scrolling
             }
         }
 
-        function _jumpToMatch(idx) {
+        // keepFindFocus=true: called while typing in find box — restore focus there after scrolling.
+        // keepFindFocus=false (default): called via Next/Prev button — leave focus on editor so
+        // the selection highlight and scroll position are visible.
+        function _jumpToMatch(idx, keepFindFocus) {
             if (_findMatches.length === 0) return;
             _findIdx = ((idx % _findMatches.length) + _findMatches.length) % _findMatches.length;
             const m = _findMatches[_findIdx];
@@ -16398,15 +16401,13 @@ models:
             const lh = parseFloat(getComputedStyle(editor).lineHeight) || 20;
             editor.scrollTop = Math.max(0, (linesBefore - 4)) * lh;
             document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
-            // Restore focus to find input so typing continues in the search box
-            const overlay = document.getElementById('findReplaceOverlay');
-            if (overlay && overlay.style.display !== 'none') {
+            if (keepFindFocus) {
                 document.getElementById('findInput').focus();
             }
         }
 
-        function findNext() { _jumpToMatch(_findIdx + 1); }
-        function findPrev() { _jumpToMatch(_findIdx - 1); }
+        function findNext() { _jumpToMatch(_findIdx + 1, false); }
+        function findPrev() { _jumpToMatch(_findIdx - 1, false); }
 
         function replaceOne() {
             if (_findMatches.length === 0 || _findIdx < 0) return;
@@ -16635,11 +16636,10 @@ models:
                 if (btn && !btn.disabled) saveDataModel();
                 return;
             }
-            // Ctrl+F — Find & Replace
+            // Ctrl+F — Find & Replace (always available, even before a model is loaded)
             if (e.key === 'f') {
                 e.preventDefault();
-                const btn = document.getElementById('findBtn');
-                if (btn && !btn.disabled) openFindReplace();
+                openFindReplace();
                 return;
             }
             // Ctrl+D — Diff (no default browser action to worry about in most cases)
