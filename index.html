@@ -2362,7 +2362,7 @@
                         <button class="tbr-icon-btn" onclick="editorUndo()" id="undoBtn" disabled data-tooltip="Undo  Ctrl+Z">↩</button>
                         <button class="tbr-icon-btn" onclick="editorRedo()" id="redoBtn" disabled data-tooltip="Redo  Ctrl+Y">↪</button>
                         <span class="tbr-sep"></span>
-                        <button class="tbr-icon-btn" onclick="openFindReplace()" id="findBtn" disabled data-tooltip="Find & Replace  Ctrl+F">⌕</button>
+                        <button class="tbr-icon-btn" onclick="openFindReplace()" id="findBtn" data-tooltip="Find & Replace  Ctrl+F">⌕</button>
                         <button class="tbr-icon-btn" onclick="toggleTreeView()" id="treeViewBtn" disabled data-tooltip="Structure Panel">⊞</button>
                         <span class="tbr-sep"></span>
                         <button class="tbr-icon-btn" onclick="formatEditor()" id="formatBtn" disabled data-tooltip="Format  Ctrl+Shift+F">{ }</button>
@@ -16349,6 +16349,8 @@ models:
             _findMatches = [];
             _findIdx = -1;
             document.getElementById('findCount').textContent = '';
+            // Return focus to the editor when the bar is dismissed
+            document.getElementById('jsonEditor').focus();
         }
 
         function toggleFindOpt(opt) {
@@ -16383,31 +16385,30 @@ models:
                 _findIdx = -1;
             } else {
                 _findIdx = 0;
-                _jumpToMatch(0, true); // restore focus to find input after scrolling
+                _jumpToMatch(0);
             }
         }
 
-        // keepFindFocus=true: called while typing in find box — restore focus there after scrolling.
-        // keepFindFocus=false (default): called via Next/Prev button — leave focus on editor so
-        // the selection highlight and scroll position are visible.
-        function _jumpToMatch(idx, keepFindFocus) {
+        // Scroll the editor to a match and update the counter.
+        // Focus is intentionally NOT given to the editor — it stays on the find input
+        // so that Enter/arrows always navigate and never type into the document.
+        // setSelectionRange works on unfocused textareas; browsers show the selection
+        // greyed-out, which is enough to see where the match is.
+        function _jumpToMatch(idx) {
             if (_findMatches.length === 0) return;
             _findIdx = ((idx % _findMatches.length) + _findMatches.length) % _findMatches.length;
             const m = _findMatches[_findIdx];
             const editor = document.getElementById('jsonEditor');
-            editor.focus();
             editor.setSelectionRange(m.start, m.end);
             const linesBefore = editor.value.substring(0, m.start).split('\n').length;
             const lh = parseFloat(getComputedStyle(editor).lineHeight) || 20;
             editor.scrollTop = Math.max(0, (linesBefore - 4)) * lh;
             document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
-            if (keepFindFocus) {
-                document.getElementById('findInput').focus();
-            }
+            document.getElementById('findInput').focus();
         }
 
-        function findNext() { _jumpToMatch(_findIdx + 1, false); }
-        function findPrev() { _jumpToMatch(_findIdx - 1, false); }
+        function findNext() { _jumpToMatch(_findIdx + 1); }
+        function findPrev() { _jumpToMatch(_findIdx - 1); }
 
         function replaceOne() {
             if (_findMatches.length === 0 || _findIdx < 0) return;
