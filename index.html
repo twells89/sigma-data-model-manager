@@ -16390,21 +16390,21 @@ models:
         }
 
         // Scroll the editor to a match and update the counter.
-        // Focus is intentionally NOT given to the editor — it stays on the find input
-        // so that Enter/arrows always navigate and never type into the document.
-        // setSelectionRange works on unfocused textareas; browsers show the selection
-        // greyed-out, which is enough to see where the match is.
+        // We briefly focus the editor so the browser scrolls to the selection,
+        // then immediately return focus to findInput via setTimeout(0) so the
+        // next keypress (Enter, arrows) always lands in the find bar, never the editor.
         function _jumpToMatch(idx) {
             if (_findMatches.length === 0) return;
             _findIdx = ((idx % _findMatches.length) + _findMatches.length) % _findMatches.length;
             const m = _findMatches[_findIdx];
             const editor = document.getElementById('jsonEditor');
+            editor.focus();
             editor.setSelectionRange(m.start, m.end);
             const linesBefore = editor.value.substring(0, m.start).split('\n').length;
             const lh = parseFloat(getComputedStyle(editor).lineHeight) || 20;
             editor.scrollTop = Math.max(0, (linesBefore - 4)) * lh;
             document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
-            document.getElementById('findInput').focus();
+            setTimeout(() => document.getElementById('findInput').focus(), 0);
         }
 
         function findNext() { _jumpToMatch(_findIdx + 1); }
