@@ -16390,21 +16390,25 @@ models:
         }
 
         // Scroll the editor to a match and update the counter.
-        // We briefly focus the editor so the browser scrolls to the selection,
-        // then immediately return focus to findInput via setTimeout(0) so the
-        // next keypress (Enter, arrows) always lands in the find bar, never the editor.
+        // editor.focus() triggers an async browser scroll that can race with our manual
+        // scrollTop, so we re-apply it inside requestAnimationFrame (after the browser
+        // has settled) then immediately return focus to findInput.
         function _jumpToMatch(idx) {
             if (_findMatches.length === 0) return;
             _findIdx = ((idx % _findMatches.length) + _findMatches.length) % _findMatches.length;
             const m = _findMatches[_findIdx];
             const editor = document.getElementById('jsonEditor');
-            editor.focus();
-            editor.setSelectionRange(m.start, m.end);
             const linesBefore = editor.value.substring(0, m.start).split('\n').length;
             const lh = parseFloat(getComputedStyle(editor).lineHeight) || 20;
-            editor.scrollTop = Math.max(0, (linesBefore - 4)) * lh;
+            const targetScroll = Math.max(0, (linesBefore - 4)) * lh;
+            editor.focus();
+            editor.setSelectionRange(m.start, m.end);
+            editor.scrollTop = targetScroll;
             document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
-            setTimeout(() => document.getElementById('findInput').focus(), 0);
+            requestAnimationFrame(() => {
+                editor.scrollTop = targetScroll; // re-apply after browser's async auto-scroll
+                document.getElementById('findInput').focus();
+            });
         }
 
         function findNext() { _jumpToMatch(_findIdx + 1); }
@@ -16615,6 +16619,21 @@ models:
             if (document.getElementById('panelJson').style.display === 'none') switchEditorTab('json');
         }
 
+
+        // ── Find-bar safety net on the editor ────────────────────────
+        // _jumpToMatch briefly focuses the editor. If Enter/arrows arrive during
+        // that window, redirect them to the find bar instead of editing the text.
+        document.getElementById('jsonEditor').addEventListener('keydown', function(e) {
+            const overlay = document.getElementById('findReplaceOverlay');
+            if (!overlay || overlay.style.display === 'none') return;
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                e.shiftKey ? findPrev() : findNext();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closeFindReplace();
+            }
+        });
 
         // ── Keyboard Shortcuts ────────────────────────────────────
         document.addEventListener('keydown', function(e) {
