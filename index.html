@@ -784,6 +784,7 @@
             padding: 24px;
             overflow: hidden;
             background: var(--bg-primary);
+            position: relative;
         }
 
         .editor-wrap {
@@ -841,10 +842,31 @@
         .json-editor textarea:focus {
             outline: none;
         }
-        /* Keep match highlight visible after focus leaves the editor */
-        #jsonEditor::selection {
-            background: rgba(255, 200, 0, 0.35);
-            color: inherit;
+        /* Highlight backdrop — sits behind the transparent textarea */
+        .editor-backdrop {
+            position: absolute;
+            top: 0; bottom: 0;
+            left: 54px; right: 0;   /* 54px = line-numbers width */
+            padding: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            tab-size: 2;
+            overflow: hidden;
+            pointer-events: none;
+            color: transparent;
+        }
+        .editor-backdrop mark {
+            background: rgba(255, 180, 0, 0.22);
+            color: transparent;
+            border-radius: 2px;
+        }
+        .editor-backdrop mark.cur {
+            background: rgba(255, 155, 0, 0.55);
+            outline: 1px solid rgba(255, 155, 0, 0.85);
+            border-radius: 2px;
         }
         
         /* Status Messages */
@@ -2435,6 +2457,7 @@
                     <div class="editor-main-wrap">
                         <div class="editor-wrap" id="editorWrap">
                             <div class="line-numbers" id="lineNumbers" aria-hidden="true"></div>
+                            <div id="editorBackdrop" class="editor-backdrop"></div>
                             <textarea id="jsonEditor" oninput="onEditorInput()" placeholder="Select a data model from the sidebar to view and edit its JSON representation...
 
 WORKFLOW:
@@ -5187,7 +5210,9 @@ PRODUCT_NAME
         function syncLineScroll() {
             const editor = document.getElementById('jsonEditor');
             const gutter = document.getElementById('lineNumbers');
+            const backdrop = document.getElementById('editorBackdrop');
             if (editor && gutter) gutter.scrollTop = editor.scrollTop;
+            if (editor && backdrop) backdrop.scrollTop = editor.scrollTop;
         }
 
         // Hook up events once DOM is ready
@@ -16354,8 +16379,33 @@ models:
             _findMatches = [];
             _findIdx = -1;
             document.getElementById('findCount').textContent = '';
-            // Return focus to the editor when the bar is dismissed
+            document.getElementById('editorBackdrop').innerHTML = '';
             document.getElementById('jsonEditor').focus();
+        }
+
+        // Render all match highlights into the backdrop div.
+        // The backdrop sits behind the transparent textarea and uses <mark> elements
+        // to show match positions without needing the textarea to be focused.
+        function _updateBackdrop() {
+            const backdrop = document.getElementById('editorBackdrop');
+            const editor   = document.getElementById('jsonEditor');
+            if (!backdrop || !editor) return;
+            if (_findMatches.length === 0) { backdrop.innerHTML = ''; return; }
+            // Skip on very large files to avoid layout jank
+            const text = editor.value;
+            if (text.length > 300000) { backdrop.innerHTML = ''; return; }
+            let html = '';
+            let pos  = 0;
+            for (let i = 0; i < _findMatches.length; i++) {
+                const fm  = _findMatches[i];
+                html += escapeHtml(text.substring(pos, fm.start));
+                const cls = (i === _findIdx) ? ' class="cur"' : '';
+                html += `<mark${cls}>${escapeHtml(text.substring(fm.start, fm.end))}</mark>`;
+                pos = fm.end;
+            }
+            html += escapeHtml(text.substring(pos));
+            backdrop.innerHTML = html;
+            backdrop.scrollTop = editor.scrollTop;
         }
 
         function toggleFindOpt(opt) {
@@ -16388,6 +16438,7 @@ models:
             if (_findMatches.length === 0) {
                 countEl.textContent = 'No matches';
                 _findIdx = -1;
+                _updateBackdrop();
             } else {
                 _findIdx = 0;
                 _jumpToMatch(0);
@@ -16414,6 +16465,7 @@ models:
             editor.scrollTop = Math.max(0, linesBefore * lh - editor.clientHeight / 2);
 
             document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
+            _updateBackdrop();
 
             // 3. Return focus to find input with preventScroll:true so the browser
             //    does NOT scroll the page/container when focusing the overlay input,
