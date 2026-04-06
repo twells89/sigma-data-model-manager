@@ -16547,23 +16547,40 @@ models:
             return el.id || '';
         }
 
-        // Return a short human-readable format badge label from a Sigma format object,
-        // or null if no format is set. Infers from formatString patterns:
-        //   "$,.2f" / currencySymbol  → "$"
-        //   ",.2%"                    → "%"
-        //   ".2~S" / "S" suffix       → "SI"
-        //   "(,.2f"                   → "()"  (accounting)
-        //   plain number              → "#"
+        // Return a short badge label for a Sigma custom number format object.
+        // Sigma only stores the Custom Number Format fields (formatString, currencySymbol,
+        // prefix, suffix, decimalSymbol, digitGroupingSymbol, digitGroupingSize, displayNullAs)
+        // — the top-level type (Currency, Percent, SI, etc.) is inferred from those.
         function _formatLabel(fmt) {
             if (!fmt || typeof fmt !== 'object') return null;
+            // Currency symbol wins — use the actual symbol, not a generic "$"
+            if (fmt.currencySymbol) return fmt.currencySymbol;
             const fs = fmt.formatString || '';
-            if (!fs) return null;
-            if (fs.includes('%')) return '%';
-            if (fs.startsWith('$') || fmt.currencySymbol) return '$';
-            if (fs.includes('~S') || /[0-9]S$/.test(fs)) return 'SI';
-            if (fs.startsWith('(')) return '()';
-            if (/[0-9]f$/.test(fs) || /[0-9]d$/.test(fs)) return '#';
+            // D3 type character detection (order matters)
+            if (/%/.test(fs))            return '%';
+            if (/[sS]/.test(fs))         return 'SI';
+            if (/[eE]/.test(fs))         return 'sci';
+            if (/^\(/.test(fs))          return '()';   // financial / negative-in-parens
+            // Prefix/suffix give useful context when no type character is present
+            if (fmt.prefix)              return fmt.prefix.substring(0, 4);
+            if (fmt.suffix)              return fmt.suffix.substring(0, 4);
+            if (fs)                      return '#';    // generic numeric format
             return null;
+        }
+
+        // Build a tooltip string showing all non-trivial format fields.
+        function _formatTooltip(fmt) {
+            if (!fmt || typeof fmt !== 'object') return '';
+            const p = [];
+            if (fmt.formatString)        p.push(fmt.formatString);
+            if (fmt.currencySymbol)      p.push(`currency: ${fmt.currencySymbol}`);
+            if (fmt.prefix)              p.push(`prefix: "${fmt.prefix}"`);
+            if (fmt.suffix)              p.push(`suffix: "${fmt.suffix}"`);
+            if (fmt.decimalSymbol)       p.push(`decimal: "${fmt.decimalSymbol}"`);
+            if (fmt.digitGroupingSymbol) p.push(`grouping: "${fmt.digitGroupingSymbol}"`);
+            if (fmt.digitGroupingSize != null) p.push(`groupSize: ${fmt.digitGroupingSize}`);
+            if (fmt.displayNullAs != null)     p.push(`null: "${fmt.displayNullAs}"`);
+            return p.join(' · ');
         }
 
         // Get display label for a column — returns null if no readable name exists.
@@ -16628,7 +16645,7 @@ models:
                         const cLabel = escapeHtml(_columnLabel(c));
                         const cJump  = JSON.stringify('"id": ' + JSON.stringify(cId));
                         const cFmt   = _formatLabel(c.format);
-                        const cBadge = cFmt ? `<span class="tree-fmt-badge" title="${escapeHtml(c.format?.formatString || '')}">${cFmt}</span>` : '';
+                        const cBadge = cFmt ? `<span class="tree-fmt-badge" title="${escapeHtml(_formatTooltip(c.format))}">${escapeHtml(cFmt)}</span>` : '';
                         html += `<div class="tree-item" onclick="jumpToEditorText(${cJump})" title="${escapeHtml(cId)}">
                             <span class="tree-type-dot col"></span>${cLabel}${cBadge}</div>`;
                     }
@@ -16643,7 +16660,7 @@ models:
                         const mLabel = escapeHtml(m.name || mId);
                         const mJump  = JSON.stringify('"id": ' + JSON.stringify(mId));
                         const mFmt   = _formatLabel(m.format);
-                        const mBadge = mFmt ? `<span class="tree-fmt-badge" title="${escapeHtml(m.format?.formatString || '')}">${mFmt}</span>` : '';
+                        const mBadge = mFmt ? `<span class="tree-fmt-badge" title="${escapeHtml(_formatTooltip(m.format))}">${escapeHtml(mFmt)}</span>` : '';
                         html += `<div class="tree-item" onclick="jumpToEditorText(${mJump})" title="${escapeHtml(mId)}">
                             <span class="tree-type-dot met"></span>${mLabel}${mBadge}</div>`;
                     }
