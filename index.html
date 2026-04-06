@@ -6238,6 +6238,38 @@ do NOT generate a formula for it. Instead:
 "name": "Display Name"      // override display name
 "description": "Text"       // description shown to users
 "hidden": true              // hide from consumers
+"format": { ... }           // number format — see FORMAT section below
+
+═══════════════════════════════════════════════════
+FORMAT (on columns and metrics)
+═══════════════════════════════════════════════════
+Sigma uses Custom Number Format exclusively — there is no separate "type" selector.
+All formatting is expressed through these fields on the format object:
+
+"format": {
+  "kind": "number",              // always "number" for numeric formats
+  "formatString": ",.2f",        // D3 format specifier (required)
+  "currencySymbol": "$",         // currency unit shown to user (optional)
+  "decimalSymbol": ".",          // decimal separator override (optional)
+  "digitGroupingSymbol": ",",    // thousands separator override (optional)
+  "digitGroupingSize": 3,        // digits between grouping symbols (optional)
+  "prefix": "~",                 // text prepended to value (optional)
+  "suffix": " USD",              // text appended to value (optional)
+  "displayNullAs": "N/A"         // how null values appear (optional)
+}
+
+Common formatString patterns (D3 format spec):
+  "$,.2f"   → currency, comma-grouped, 2 decimal places   (use with currencySymbol)
+  "$,.0f"   → currency, comma-grouped, no decimals        (use with currencySymbol)
+  ",.2f"    → number, comma-grouped, 2 decimal places
+  ",.0f"    → whole number with comma grouping
+  ",.2%"    → percentage, comma-grouped, 2 decimal places
+  ".2~s"    → SI notation, 2 significant digits, trim zeros (1.2k, 3.4M)
+  "(,.2f"   → financial/accounting (negatives in parentheses)
+  ".2e"     → scientific notation, 2 decimal places
+  "#x"      → prefixed hexadecimal
+
+Only include fields that are actually set — omit the format object entirely if no format is needed.
 
 ═══════════════════════════════════════════════════
 METRICS (inside element.metrics array)
@@ -6247,6 +6279,7 @@ CRITICAL: Metric formulas reference LOCAL columns by display name ONLY — NO ta
 Correct:   "Sum([Revenue])"
 WRONG:     "Sum([TABLE/Revenue])"
 Note: Metrics cannot reference columns from related elements. Only local columns are supported.
+Metrics also support "description", "hidden", and "format" (same format object as columns).
 
 ═══════════════════════════════════════════════════
 RELATIONSHIPS (inside element.relationships array)
