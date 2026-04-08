@@ -14220,6 +14220,21 @@ ${cleanedSql}`;
                             const colId = c.id;
                             el.columns.splice(i, 1);
                             if (el.order) { const oi = el.order.indexOf(colId); if (oi >= 0) el.order.splice(oi, 1); }
+                            // Remove from any folder items; prune now-empty folders
+                            if (el.folders) {
+                                for (const folder of el.folders) {
+                                    const fi = folder.items.indexOf(colId);
+                                    if (fi >= 0) folder.items.splice(fi, 1);
+                                }
+                                for (let fi = el.folders.length - 1; fi >= 0; fi--) {
+                                    if (el.folders[fi].items.length === 0) {
+                                        const fId = el.folders[fi].id;
+                                        el.folders.splice(fi, 1);
+                                        if (el.order) { const oi = el.order.indexOf(fId); if (oi >= 0) el.order.splice(oi, 1); }
+                                    }
+                                }
+                                if (el.folders.length === 0) delete el.folders;
+                            }
                             localNames.delete(c.name.toUpperCase());
                         }
                     }
