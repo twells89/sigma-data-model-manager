@@ -2842,7 +2842,9 @@ How it works:
 • Role-playing dims (from: alias) → separate elements, each with its own relationship
 • one_to_many / many_to_many / full_outer → physical join element
 • Measures → Sigma metrics (Sum, Count, Avg, CountDistinct)
-• dimension_group → datetime column
+• dimension_group type:time → one column per timeframe (DateTrunc / DatePart)
+• dimension_group type:duration → DateDiff columns per interval
+• datatype:epoch → DateFromUnix() wrapper applied automatically
 • type: yesno → boolean column
 • derived_table blocks → converted to Custom SQL elements (kind: "sql")"></textarea>
 
@@ -11713,7 +11715,8 @@ explores:
 
             // Keys where the value runs until a ;; terminator
             const SQL_KEYS = new Set(['sql','sql_on','sql_where','sql_table_name',
-                                      'sql_trigger_value','html','label_from_parameter']);
+                                      'sql_trigger_value','html','label_from_parameter',
+                                      'sql_start','sql_end']);
 
             function parseBlock() {
                 const obj = {};
@@ -11879,8 +11882,10 @@ explores:
         }
 
         // Convert bare ALL_CAPS SQL identifier to Sigma display-name column ref [Title Case]
-        function lookColRef(identifier) {
-            return `[${sigmaDisplayName(identifier)}]`;
+        // Pass tableName to produce a qualified [TABLE/Col Name] ref for warehouse-table elements.
+        function lookColRef(identifier, tableName) {
+            const dn = sigmaDisplayName(identifier);
+            return tableName ? `[${tableName}/${dn}]` : `[${dn}]`;
         }
 
         // Detects SQL constructs that have no equivalent in Sigma's formula engine.
@@ -11907,7 +11912,7 @@ explores:
 
         // Rule-based SQL → Sigma formula converter for common LookML patterns.
         // Returns a Sigma formula string, or null if the pattern isn't recognised.
-        function lookSqlToSigmaRules(sql) {
+        function lookSqlToSigmaRules(sql, tableName) {
             // Strip ${TABLE}. and resolve ${view.field}
             let expr = sql
                 .replace(/\$\{TABLE\}\./gi, '')
@@ -11940,7 +11945,7 @@ explores:
             // ── Pattern 3: DATEDIFF('unit', col_a, col_b) ────────────────────
             {
                 const m = expr.match(/^DATEDIFF\s*\(\s*'([^']+)'\s*,\s*([A-Z_][A-Z0-9_]*)\s*,\s*([A-Z_][A-Z0-9_]*)\s*\)$/i);
-                if (m) return `DateDiff("${m[1]}", ${lookColRef(m[2])}, ${lookColRef(m[3])})`;
+                if (m) return `DateDiff("${m[1]}", ${lookColRef(m[2], tableName)}, ${lookColRef(m[3], tableName)})`;
             }
 
             // ── Pattern 4: CASE WHEN ... THEN ... [WHEN ...] ELSE ... END ────
@@ -12809,6 +12814,7 @@ ${cleanedSql}`;
                     },
                     columns: [],
                     metrics: [],
+                    folders: [],
                     order: []
                 };
                 if (rawSql) {
@@ -12829,6 +12835,7 @@ ${cleanedSql}`;
                     },
                     columns: [],
                     metrics: [],
+                    folders: [],
                     order: []
                 };
             }
@@ -12855,7 +12862,7 @@ ${cleanedSql}`;
                     const tierValues = rawTiers.replace(/[\[\]]/g, '').split(/[,\s]+/).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
                     if (tierValues.length > 0) {
                         // Convert the SQL expression to a Sigma formula for the source
-                        let srcFormula = lookSqlToSigmaRules(d.sql);
+                        let srcFormula = lookSqlToSigmaRules(d.sql, tableName);
                         if (!srcFormula) srcFormula = (d.sql || '').replace(/\$\{TABLE\}\./gi, '').replace(/\$\{[^.}]+\.([^}]+)\}/g, '[$1]').replace(/NULLIF\(([^,]+),\s*0\)/gi, 'If($1 = 0, null, $1)').trim();
                         const parts = [];
                         for (let ti = tierValues.length - 1; ti >= 0; ti--) {
@@ -12923,7 +12930,7 @@ ${cleanedSql}`;
                     const colId = sigmaShortId();
                     colIdMap[colName] = colId;
 
-                    let sigmaFormula = lookSqlToSigmaRules(d.sql);
+                    let sigmaFormula = lookSqlToSigmaRules(d.sql, tableName);
                     if (!sigmaFormula) {
                         sigmaFormula = await lookSqlToSigmaFormulaAI(d.sql, d._name, tableName);
                     }
@@ -13007,30 +13014,166 @@ ${cleanedSql}`;
                 element.order.push(colId);
             }
 
-            // ── Dimension groups (time) ──────────────────────────────────────
+            // ── Dimension groups ─────────────────────────────────────────────
             const dimGroups = view.dimension_group
                 ? (Array.isArray(view.dimension_group) ? view.dimension_group : [view.dimension_group])
                 : [];
 
+            // Default timeframes when none declared
+            const _DG_DEFAULT_TIMEFRAMES = ['raw', 'date', 'week', 'month', 'quarter', 'year'];
+            const _DG_DEFAULT_INTERVALS  = ['day'];
+
+            // type:time — timeframes that map to DateTrunc (null = no truncation, plain ref)
+            const _DG_TRUNC = {
+                raw: null, time: 'second', date: 'day', week: 'week',
+                month: 'month', quarter: 'quarter', year: 'year',
+                hour: 'hour', minute: 'minute', second: 'second',
+            };
+            // type:time — timeframes that map to DatePart
+            const _DG_PART = {
+                hour_of_day: 'hour', day_of_week: 'weekday',
+                day_of_week_index: 'weekday', day_of_month: 'day',
+                day_of_year: 'day_of_year', week_of_year: 'week',
+                month_num: 'month', month_of_year: 'month',
+                quarter_of_year: 'quarter',
+            };
+            // Timeframes only valid on timestamp/datetime — skip for date-only columns
+            const _DG_TIME_ONLY = new Set(['time', 'hour', 'minute', 'second', 'hour_of_day']);
+            // Fiscal timeframes Sigma has no equivalent for
+            const _DG_FISCAL = new Set([
+                'fiscal_month_num', 'fiscal_quarter', 'fiscal_quarter_of_year', 'fiscal_year'
+            ]);
+            // type:duration — interval → DateDiff precision
+            const _DG_DURATION = {
+                second: 'second', minute: 'minute', hour: 'hour',
+                day: 'day', week: 'week', month: 'month',
+                quarter: 'quarter', year: 'year',
+            };
+
             dimGroups.forEach(dg => {
                 if (!dg._name) return;
-                const colName = dg._name.toUpperCase();
+                const dgType    = (dg.type || 'time').toLowerCase();
+                const groupName = dg._name.toUpperCase();
+                const folderColIds = [];
 
-                if (lookIsComplexSql(dg.sql)) {
-                    warnings.push(`⚠ Dimension group "${dg._name}": sql is a complex expression — skipped.`);
+                // ── type: duration ───────────────────────────────────────────
+                if (dgType === 'duration') {
+                    if (!dg.sql_start || !dg.sql_end) {
+                        warnings.push(`⚠ Duration group "${dg._name}": missing sql_start/sql_end — skipped.`);
+                        return;
+                    }
+                    if (lookIsComplexSql(dg.sql_start) || lookIsComplexSql(dg.sql_end)) {
+                        warnings.push(`⚠ Duration group "${dg._name}": complex sql_start/sql_end — skipped.`);
+                        return;
+                    }
+                    const startCol  = lookStripSql(dg.sql_start).split('.').pop().toUpperCase();
+                    const endCol    = lookStripSql(dg.sql_end).split('.').pop().toUpperCase();
+                    const startRef  = `[${tableName}/${colLabel(startCol)}]`;
+                    const endRef    = `[${tableName}/${colLabel(endCol)}]`;
+                    const intervals = Array.isArray(dg.intervals)
+                        ? dg.intervals.map(i => String(i).toLowerCase())
+                        : _DG_DEFAULT_INTERVALS;
+
+                    intervals.forEach(interval => {
+                        const prec = _DG_DURATION[interval];
+                        if (!prec) {
+                            warnings.push(`⚠ Duration group "${dg._name}": unknown interval "${interval}" — skipped.`);
+                            return;
+                        }
+                        const colName = `${groupName}_${interval.toUpperCase()}S`;
+                        const colId   = sigmaShortId();
+                        colIdMap[colName] = colId;
+                        element.columns.push({
+                            id: colId,
+                            formula: `DateDiff("${prec}", ${startRef}, ${endRef})`,
+                            name: sigmaDisplayName(colName),
+                        });
+                        folderColIds.push(colId);
+                    });
+                    if (folderColIds.length > 0) {
+                        const folderId = sigmaShortId();
+                        element.folders.push({ id: folderId, name: sigmaDisplayName(dg._name), items: folderColIds });
+                        element.order.push(folderId);
+                    }
                     return;
                 }
 
-                const sqlCol = lookStripSql(dg.sql) || colName;
+                // ── type: time (default) ─────────────────────────────────────
+                if (lookIsComplexSql(dg.sql)) {
+                    warnings.push(`⚠ Dimension group "${dg._name}": complex sql — skipped.`);
+                    return;
+                }
+
+                const datatype   = (dg.datatype || 'timestamp').toLowerCase();
+                const sqlCol     = lookStripSql(dg.sql) || groupName;
                 const physicalCol = sqlCol.split('.').pop().toUpperCase();
-                const colId = sigmaShortId();
-                colIdMap[colName] = colId;
-                colIdMap[physicalCol] = colId;
-                element.columns.push({
-                    id: colId,
-                    formula: `[${tableName}/${colLabel(physicalCol)}]`
+                const timeframes  = Array.isArray(dg.timeframes)
+                    ? dg.timeframes.map(tf => String(tf).toLowerCase())
+                    : _DG_DEFAULT_TIMEFRAMES;
+
+                // epoch columns need DateFromUnix() wrapping before truncation
+                const baseRef = datatype === 'epoch'
+                    ? `DateFromUnix([${tableName}/${colLabel(physicalCol)}])`
+                    : `[${tableName}/${colLabel(physicalCol)}]`;
+
+                timeframes.forEach(tf => {
+                    // Fiscal timeframes — requires fiscal_month_offset from model-level LookML
+                    // config, which isn't present in view files, so can't be computed accurately
+                    if (_DG_FISCAL.has(tf)) {
+                        warnings.push(`⚠ Dim group "${dg._name}": fiscal timeframe "${tf}" skipped — requires fiscal_month_offset from LookML model config (not available in view files).`);
+                        return;
+                    }
+                    // Binned timeframes (minute15, hour4, etc.)
+                    const binnedMatch = tf.match(/^(hour|minute)(\d+)$/);
+                    if (binnedMatch) {
+                        const unit = binnedMatch[1];
+                        const n    = parseInt(binnedMatch[2], 10);
+                        const formula = unit === 'minute'
+                            ? `DateAdd("minute", Floor(DatePart("minute", ${baseRef}) / ${n}) * ${n}, DateTrunc("hour", ${baseRef}))`
+                            : `DateAdd("hour", Floor(DatePart("hour", ${baseRef}) / ${n}) * ${n}, DateTrunc("day", ${baseRef}))`;
+                        const colName = `${groupName}_${tf.toUpperCase()}`;
+                        const colId   = sigmaShortId();
+                        colIdMap[colName] = colId;
+                        element.columns.push({ id: colId, formula, name: sigmaDisplayName(colName) });
+                        folderColIds.push(colId);
+                        return;
+                    }
+                    // Skip time-of-day timeframes for date-only columns
+                    if (datatype === 'date' && _DG_TIME_ONLY.has(tf)) return;
+
+                    let formula;
+                    if (Object.prototype.hasOwnProperty.call(_DG_TRUNC, tf)) {
+                        const prec = _DG_TRUNC[tf];
+                        formula = prec ? `DateTrunc("${prec}", ${baseRef})` : baseRef;
+                    } else if (Object.prototype.hasOwnProperty.call(_DG_PART, tf)) {
+                        formula = `DatePart("${_DG_PART[tf]}", ${baseRef})`;
+                    } else {
+                        warnings.push(`⚠ Dim group "${dg._name}": unknown timeframe "${tf}" — skipped.`);
+                        return;
+                    }
+
+                    const colName = `${groupName}_${tf.toUpperCase()}`;
+                    const colId   = sigmaShortId();
+                    colIdMap[colName] = colId;
+                    // Register bare group name + physical col on the "raw" slot
+                    // so measures referencing ${created} resolve correctly
+                    if (tf === 'raw') {
+                        colIdMap[groupName]   = colId;
+                        colIdMap[physicalCol] = colId;
+                    }
+                    element.columns.push({
+                        id: colId,
+                        formula,
+                        name: sigmaDisplayName(colName),
+                    });
+                    folderColIds.push(colId);
                 });
-                element.order.push(colId);
+
+                if (folderColIds.length > 0) {
+                    const folderId = sigmaShortId();
+                    element.folders.push({ id: folderId, name: sigmaDisplayName(dg._name), items: folderColIds });
+                    element.order.push(folderId);
+                }
             });
 
             // ── Measures → metrics ───────────────────────────────────────────
@@ -13162,6 +13305,7 @@ ${cleanedSql}`;
             });
 
             if (element.metrics.length === 0) delete element.metrics;
+            if (element.folders && element.folders.length === 0) delete element.folders;
             return { element, elementId, colIdMap };
         }
 
