@@ -1280,7 +1280,67 @@
         .add-column-row input {
             flex: 1;
         }
-        
+
+        .fetch-cols-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .fetch-cols-status {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .fetch-cols-status.loading { color: var(--text-secondary); }
+        .fetch-cols-status.success { color: var(--success); }
+        .fetch-cols-status.error   { color: var(--error); }
+
+        .col-validation-table-block {
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .col-validation-table-block:last-child { border-bottom: none; }
+
+        .col-validation-table-name {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .col-validation-ok { font-weight: 400; color: var(--success); font-size: 12px; margin-left: 6px; }
+
+        .col-validation-issue-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .col-validation-col-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
+        .col-validation-col-tag {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(240, 71, 71, 0.15);
+            color: var(--error);
+            border: 1px solid rgba(240, 71, 71, 0.3);
+        }
+
+        .col-validation-hint { font-size: 11px; color: var(--text-muted); }
+
+        .col-validation-warning { font-size: 12px; color: var(--warning); }
+
+        /* ── Column autocomplete dropdown ──────────────────────────────── */
+
+
         .btn-small {
             padding: 6px 12px;
             font-size: 12px;
@@ -2407,7 +2467,7 @@
                 <div class="save-error-content">
                     <div class="save-error-icon">⚠</div>
                     <div class="save-error-text">
-                        <div class="save-error-title">Save failed</div>
+                        <div class="save-error-title">Sigma API error — save failed</div>
                         <div class="save-error-msg" id="saveErrorMsg"></div>
                     </div>
                     <div class="save-error-actions">
@@ -3342,7 +3402,7 @@ How it works:
                 
                 <div class="form-group">
                     <label class="form-label">Connection *</label>
-                    <select class="form-input" id="newModelConnectionId">
+                    <select class="form-input" id="newModelConnectionId" onchange="onWizardConnectionChange()">
                         <option value="">Loading connections...</option>
                     </select>
                     <div class="form-hint">Select the data warehouse connection for your tables</div>
@@ -5222,6 +5282,14 @@ PRODUCT_NAME
                 editor.addEventListener('input', updateLineNumbers);
                 editor.addEventListener('scroll', syncLineScroll);
                 updateLineNumbers();
+
+                // Capture pre-edit snapshot on keydown (before the key takes effect).
+                // _scheduleUndo (called from onEditorInput) fires *after* the edit, so
+                // capturing there always snapshots the post-edit value. Keydown fires first.
+                editor.addEventListener('keydown', function(e) {
+                    if (e.ctrlKey || e.metaKey || e.altKey) return;
+                    if (_undoKeySnap === null) _undoKeySnap = this.value;
+                });
             }
         });
 
@@ -5328,6 +5396,21 @@ PRODUCT_NAME
             }
 
             try {
+                // Pre-save column validation — non-blocking if lookup fails
+                if (state.accessToken) {
+                    try {
+                        btn.innerHTML = '<div class="spinner"></div><span>Validating columns...</span>';
+                        const validation = await validateModelColumns(jsonData);
+                        if (validation?.hasIssues) {
+                            const proceed = await showColumnValidationModal(validation);
+                            if (!proceed) return; // finally block re-enables the button
+                        }
+                    } catch (validationErr) {
+                        console.warn('Column validation skipped:', validationErr.message);
+                    }
+                    btn.innerHTML = '<div class="spinner"></div><span>Saving...</span>';
+                }
+
                 const cleanedPages = cleanPages(jsonData.pages);
 
                 // Build the full spec — columns, metrics, relationships all in one POST
@@ -5391,6 +5474,17 @@ PRODUCT_NAME
                 showToast(isNew ? 'Data model created in Sigma!' : 'Data model saved to Sigma!', 'success');
                 dismissSaveError();
                 await loadDataModels();
+                if (isNew) {
+                    // loadDataModels resets to tree/root — switch to flat so the new
+                    // model is immediately visible without navigating folder hierarchy
+                    explorerViewMode = 'flat';
+                    state.filteredModels = state.dataModels;
+                    renderExplorer();
+                    setTimeout(() => {
+                        const el = document.querySelector('.explorer-node.model-node.active');
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }, 50);
+                }
             } catch (error) {
                 console.error('Save error:', error);
                 const msg = error.message === 'Failed to fetch'
@@ -5922,29 +6016,37 @@ ${JSON.stringify(failedJson, null, 2)}`;
                         <input type="text" class="form-input table-name" placeholder="e.g., Orders">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Source Path * (Database / Schema / Table)</label>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
-                            <input type="text" class="form-input table-database" placeholder="DATABASE">
-                            <input type="text" class="form-input table-schema" placeholder="SCHEMA">
-                            <input type="text" class="form-input table-source" placeholder="TABLE_NAME">
-                        </div>
-                        <div class="form-hint">The warehouse path to your source table</div>
+                        <label class="form-label">Source Path *</label>
+                        <select class="form-input table-database" onchange="onWizardDatabaseChange('${tableId}')">
+                            <option value="">Loading databases...</option>
+                        </select>
+                        <select class="form-input table-schema" onchange="onWizardSchemaChange('${tableId}')" disabled style="margin-top:8px;">
+                            <option value="">Select database first...</option>
+                        </select>
+                        <select class="form-input table-source" onchange="onWizardTableSelected('${tableId}')" disabled style="margin-top:8px;">
+                            <option value="">Select schema first...</option>
+                        </select>
+                        <div class="form-hint">Cascades from your warehouse — select database, then schema, then table</div>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Columns</label>
+                        <label class="form-label" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>Columns</span>
+                            <span class="fetch-cols-status" id="${tableId}_fetchStatus"></span>
+                        </label>
                         <div class="column-list" id="${tableId}_columns"></div>
                         <div class="add-column-row">
                             <input type="text" class="form-input" id="${tableId}_newColumn" placeholder="Column name" onkeypress="if(event.key==='Enter'){addColumn('${tableId}'); event.preventDefault();}">
                             <button class="btn btn-secondary btn-small" onclick="addColumn('${tableId}')" title="Add column">Add</button>
                         </div>
-                        <div class="form-hint">Press Enter or click Add for each column. Leave empty to add columns later in Sigma.</div>
+                        <div class="form-hint">Columns populate automatically when a table is selected. Add or remove as needed.</div>
                     </div>
                 </div>
             `;
 
             container.insertAdjacentHTML('beforeend', tableHtml);
+            loadWizardDatabases(tableId);
         }
-        
+
         function removeTableConfig(tableId) {
             const element = document.getElementById(tableId);
             if (element) {
@@ -5979,7 +6081,365 @@ ${JSON.stringify(failedJson, null, 2)}`;
                 element.remove();
             }
         }
-        
+
+        // ══════════════════════════════════════════════════════════════════════
+        // 📋 Column Lookup — GET /v2/connections/paths → urlId → columns
+        // Endpoint returns flat list of all paths with connectionId + urlId + path[].
+        // Filter client-side by connectionId; path array depth = 1 (DB), 2 (schema), 3 (table).
+        // ══════════════════════════════════════════════════════════════════════
+
+        const _connectionPathsCache = {}; // connectionId → Promise<entries[]>
+
+        // Fetch and cache all paths for a connection (paginated).
+        // Promise-cached so concurrent callers share a single in-flight request.
+        function fetchConnectionPaths(connectionId) {
+            if (!_connectionPathsCache[connectionId]) {
+                _connectionPathsCache[connectionId] = (async () => {
+                    let entries = [];
+                    let pageToken = null;
+                    do {
+                        const url = `/v2/connections/paths?limit=1000${pageToken ? `&page=${encodeURIComponent(pageToken)}` : ''}`;
+                        const resp = await sigmaFetch(url);
+                        if (!resp.ok) throw new Error(`Failed to load warehouse paths (HTTP ${resp.status})`);
+                        const data = await resp.json();
+                        entries.push(...(data.entries || []).filter(e => e.connectionId === connectionId));
+                        pageToken = data.nextPage || null;
+                    } while (pageToken);
+                    return entries;
+                })().catch(err => { delete _connectionPathsCache[connectionId]; throw err; });
+            }
+            return _connectionPathsCache[connectionId];
+        }
+
+        // Fetch columns for a table identified by its urlId (from the paths response).
+        async function _fetchColumnsByTableId(tableId) {
+            let columns = [];
+            let pageToken = null;
+            do {
+                const url = `/v2/connections/tables/${tableId}/columns?pageSize=1000${pageToken ? `&pageToken=${pageToken}` : ''}`;
+                const resp = await sigmaFetch(url);
+                if (!resp.ok) throw new Error(`Failed to fetch columns (HTTP ${resp.status})`);
+                const data = await resp.json();
+                columns.push(...(data.entries || []));
+                pageToken = data.nextPageToken || null;
+            } while (pageToken);
+            return columns;
+        }
+
+        // Resolve (connectionId, [database, schema, table]) → warehouse column list.
+        async function fetchTableColumns(connectionId, pathArray) {
+            const [database, schema, tableName] = pathArray;
+            const paths = await fetchConnectionPaths(connectionId);
+            const entry = paths.find(e =>
+                e.path.length === 3 &&
+                e.path[0].toUpperCase() === database.toUpperCase() &&
+                e.path[1].toUpperCase() === schema.toUpperCase() &&
+                e.path[2].toUpperCase() === tableName.toUpperCase()
+            );
+            if (!entry) throw new Error(`Table "${database}.${schema}.${tableName}" not found in warehouse`);
+            return await _fetchColumnsByTableId(entry.urlId);
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // 🗂️ Wizard cascading dropdowns — connection → database → schema → table
+        // ══════════════════════════════════════════════════════════════════════
+
+        // Called when the wizard connection dropdown changes.
+        function onWizardConnectionChange() {
+            document.querySelectorAll('#tablesContainer .table-config').forEach(el => loadWizardDatabases(el.id));
+        }
+
+        // Populate the database dropdown for one table block.
+        async function loadWizardDatabases(tableId) {
+            const connectionId = document.getElementById('newModelConnectionId').value;
+            const tableEl      = document.getElementById(tableId);
+            if (!tableEl) return;
+            const dbSelect     = tableEl.querySelector('.table-database');
+            const schemaSelect = tableEl.querySelector('.table-schema');
+            const tableSelect  = tableEl.querySelector('.table-source');
+
+            schemaSelect.innerHTML = '<option value="">Select database first...</option>';
+            schemaSelect.disabled = true;
+            tableSelect.innerHTML  = '<option value="">Select schema first...</option>';
+            tableSelect.disabled = true;
+
+            if (!connectionId) {
+                dbSelect.innerHTML = '<option value="">Select a connection first...</option>';
+                dbSelect.disabled = true;
+                return;
+            }
+
+            dbSelect.innerHTML = '<option value="">Loading databases...</option>';
+            dbSelect.disabled = true;
+
+            try {
+                const paths = await fetchConnectionPaths(connectionId);
+                const databases = [...new Set(paths.map(e => e.path[0]))].sort();
+                dbSelect.innerHTML = '<option value="">Select database...</option>';
+                databases.forEach(db => {
+                    const opt = document.createElement('option');
+                    opt.value = db; opt.textContent = db;
+                    dbSelect.appendChild(opt);
+                });
+                dbSelect.disabled = false;
+            } catch (err) {
+                dbSelect.innerHTML = `<option value="">Failed to load</option>`;
+                dbSelect.disabled = false;
+                if (_isDevMode()) console.error('loadWizardDatabases:', err);
+            }
+        }
+
+        // Called when a database is selected — populate schema dropdown.
+        function onWizardDatabaseChange(tableId) {
+            const tableEl      = document.getElementById(tableId);
+            const connectionId = document.getElementById('newModelConnectionId').value;
+            const selectedDB   = tableEl.querySelector('.table-database').value;
+            const schemaSelect = tableEl.querySelector('.table-schema');
+            const tableSelect  = tableEl.querySelector('.table-source');
+
+            schemaSelect.innerHTML = '<option value="">Loading schemas...</option>';
+            schemaSelect.disabled = true;
+            tableSelect.innerHTML  = '<option value="">Select schema first...</option>';
+            tableSelect.disabled = true;
+            document.getElementById(`${tableId}_fetchStatus`).textContent = '';
+            document.getElementById(`${tableId}_columns`).innerHTML = '';
+
+            if (!selectedDB) return;
+
+            fetchConnectionPaths(connectionId).then(paths => {
+                const schemas = [...new Set(
+                    paths.filter(e => e.path[0] === selectedDB && e.path.length >= 2).map(e => e.path[1])
+                )].sort();
+                schemaSelect.innerHTML = '<option value="">Select schema...</option>';
+                schemas.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s; opt.textContent = s;
+                    schemaSelect.appendChild(opt);
+                });
+                schemaSelect.disabled = false;
+            }).catch(err => { schemaSelect.innerHTML = '<option value="">Failed to load</option>'; schemaSelect.disabled = false; if (_isDevMode()) console.error('onWizardDatabaseChange:', err); });
+        }
+
+        // Called when a schema is selected — populate table dropdown.
+        function onWizardSchemaChange(tableId) {
+            const tableEl       = document.getElementById(tableId);
+            const connectionId  = document.getElementById('newModelConnectionId').value;
+            const selectedDB    = tableEl.querySelector('.table-database').value;
+            const selectedSchema = tableEl.querySelector('.table-schema').value;
+            const tableSelect   = tableEl.querySelector('.table-source');
+
+            tableSelect.innerHTML = '<option value="">Loading tables...</option>';
+            tableSelect.disabled = true;
+            document.getElementById(`${tableId}_fetchStatus`).textContent = '';
+            document.getElementById(`${tableId}_columns`).innerHTML = '';
+
+            if (!selectedSchema) return;
+
+            fetchConnectionPaths(connectionId).then(paths => {
+                const tables = paths
+                    .filter(e => e.path.length === 3 && e.path[0] === selectedDB && e.path[1] === selectedSchema)
+                    .map(e => e.path[2]).sort();
+                tableSelect.innerHTML = '<option value="">Select table...</option>';
+                tables.forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t; opt.textContent = t;
+                    tableSelect.appendChild(opt);
+                });
+                tableSelect.disabled = false;
+            }).catch(err => { tableSelect.innerHTML = '<option value="">Failed to load</option>'; tableSelect.disabled = false; if (_isDevMode()) console.error('onWizardSchemaChange:', err); });
+        }
+
+        // Called when a table is selected — auto-fetch columns and suggest a table name.
+        async function onWizardTableSelected(tableId) {
+            const tableEl    = document.getElementById(tableId);
+            const sourceTable = tableEl.querySelector('.table-source').value;
+            if (!sourceTable) return;
+            const nameInput = tableEl.querySelector('.table-name');
+            if (!nameInput.value) {
+                nameInput.value = sourceTable.charAt(0).toUpperCase() + sourceTable.slice(1).toLowerCase().replace(/_/g, ' ');
+            }
+            await fetchColumnsForWizardTable(tableId);
+        }
+
+        // Populate column tags for a wizard table block from the warehouse.
+        async function fetchColumnsForWizardTable(tableId) {
+            const tableEl      = document.getElementById(tableId);
+            const connectionId = document.getElementById('newModelConnectionId').value;
+            const database     = tableEl.querySelector('.table-database').value;
+            const schema       = tableEl.querySelector('.table-schema').value;
+            const sourceTable  = tableEl.querySelector('.table-source').value;
+            const statusEl     = document.getElementById(`${tableId}_fetchStatus`);
+
+            if (!connectionId || !database || !schema || !sourceTable) return;
+
+            statusEl.textContent = 'Fetching columns...';
+            statusEl.className = 'fetch-cols-status loading';
+
+            try {
+                const columns = await fetchTableColumns(connectionId, [database, schema, sourceTable]);
+                const columnList = document.getElementById(`${tableId}_columns`);
+                columnList.innerHTML = '';
+                columns.forEach(col => {
+                    const colName = col.name || col.columnName || col.label;
+                    if (!colName) return;
+                    const colId = `${tableId}_col_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+                    columnList.insertAdjacentHTML('beforeend',
+                        `<span class="column-tag" id="${colId}" data-column-name="${colName}">` +
+                            colName +
+                            `<button class="column-tag-remove" onclick="removeColumn('${colId}')">&times;</button>` +
+                        `</span>`
+                    );
+                });
+                statusEl.textContent = `${columns.length} column${columns.length !== 1 ? 's' : ''} loaded`;
+                statusEl.className = 'fetch-cols-status success';
+            } catch (err) {
+                if (_isDevMode()) console.error('fetchColumnsForWizardTable:', err);
+                statusEl.textContent = err.message || String(err);
+                statusEl.className = 'fetch-cols-status error';
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // ✅ Pre-save column validation
+        // ══════════════════════════════════════════════════════════════════════
+
+        // Extract the warehouse column name from a direct reference formula like [TABLE/COLUMN].
+        // Returns null for derived/computed formulas — those don't need warehouse validation.
+        function extractWarehouseColRef(formula) {
+            if (!formula) return null;
+            const match = formula.trim().match(/^\[([^\]\/]+)\/([^\]]+)\]$/);
+            return match ? match[2] : null;
+        }
+
+        // Normalize a column name for friendly-name reconciliation:
+        // strips underscores and spaces, lowercases — so COST_ID and "Cost ID" both become "costid".
+        // This allows either form to match without flagging friendly-name variants as errors.
+        function normalizeColName(name) {
+            return name.replace(/[\s_]+/g, '').toLowerCase();
+        }
+
+        // Compares model column formula references against warehouse columns.
+        // Returns { results, hasIssues } or null if there are no warehouse-table elements.
+        async function validateModelColumns(jsonData) {
+            const tableElements = [];
+            for (const page of (jsonData.pages || [])) {
+                for (const el of (page.elements || [])) {
+                    if (
+                        el.kind === 'table' &&
+                        el.source?.kind === 'warehouse-table' &&
+                        el.source?.connectionId &&
+                        Array.isArray(el.source?.path) && el.source.path.length >= 3
+                    ) {
+                        tableElements.push(el);
+                    }
+                }
+            }
+            if (tableElements.length === 0) return null;
+
+            const results = [];
+            let hasIssues = false;
+
+            for (const el of tableElements) {
+                const { connectionId, path } = el.source;
+
+                // Extract warehouse column references from formulas (e.g. [ORDERS/ORDER_ID] → ORDER_ID).
+                // Skip derived/computed columns — their formulas don't directly reference a single warehouse col.
+                const colRefs = (el.columns || [])
+                    .map(c => {
+                        const ref = extractWarehouseColRef(c.formula);
+                        return ref ? { displayName: c.name, warehouseRef: ref.toUpperCase() } : null;
+                    })
+                    .filter(Boolean);
+
+                if (colRefs.length === 0) continue; // nothing to validate for this element
+
+                try {
+                    const warehouseCols = await fetchTableColumns(connectionId, path);
+                    const warehouseColNames = new Set(
+                        warehouseCols.map(c => (c.name || c.columnName || '').toUpperCase()).filter(Boolean)
+                    );
+                    // Also build a normalized set for friendly-name reconciliation:
+                    // COST_ID and "Cost ID" both normalize to "costid", so either form passes.
+                    const warehouseColNamesNormalized = new Set(
+                        [...warehouseColNames].map(normalizeColName)
+                    );
+
+                    const missingFromWarehouse = colRefs
+                        .filter(r =>
+                            !warehouseColNames.has(r.warehouseRef) &&
+                            !warehouseColNamesNormalized.has(normalizeColName(r.warehouseRef))
+                        )
+                        .map(r => ({ displayName: r.displayName, warehouseRef: r.warehouseRef }));
+
+                    if (missingFromWarehouse.length > 0) hasIssues = true;
+
+                    results.push({
+                        tableName: el.name || path.join('.'),
+                        missingFromWarehouse,
+                        error: null
+                    });
+                } catch (err) {
+                    // API lookup failed — warn but don't block the save
+                    results.push({
+                        tableName: el.name || path.join('.'),
+                        missingFromWarehouse: [],
+                        error: err.message
+                    });
+                }
+            }
+
+            return { results, hasIssues };
+        }
+
+        // Shows the pre-save app validation modal. Returns a Promise<boolean> — true = save anyway, false = cancel.
+        function showColumnValidationModal(validation) {
+            return new Promise(resolve => {
+                const { results } = validation;
+                let bodyHtml = '';
+
+                for (const r of results) {
+                    if (r.error) {
+                        bodyHtml += `<div class="col-validation-table-block">` +
+                            `<div class="col-validation-table-name">${escapeHtml(r.tableName)}</div>` +
+                            `<div class="col-validation-warning">Could not verify against warehouse: ${escapeHtml(r.error)}</div>` +
+                            `</div>`;
+                        continue;
+                    }
+                    if (r.missingFromWarehouse.length === 0) {
+                        bodyHtml += `<div class="col-validation-table-block">` +
+                            `<div class="col-validation-table-name">${escapeHtml(r.tableName)}` +
+                            `<span class="col-validation-ok">✓ all column formulas verified</span></div>` +
+                            `</div>`;
+                        continue;
+                    }
+                    const colTagsHtml = r.missingFromWarehouse.map(c =>
+                        `<span class="col-validation-col-tag" title="formula references [${escapeHtml(c.warehouseRef)}]">` +
+                            `${escapeHtml(c.displayName)} <span style="opacity:0.7;font-size:10px;">[${escapeHtml(c.warehouseRef)}]</span>` +
+                        `</span>`
+                    ).join('');
+                    bodyHtml += `<div class="col-validation-table-block">` +
+                        `<div class="col-validation-table-name">${escapeHtml(r.tableName)}</div>` +
+                        `<div class="col-validation-issue-label">Formula references not found in warehouse:</div>` +
+                        `<div class="col-validation-col-list">${colTagsHtml}</div>` +
+                        `<div class="col-validation-hint">These formulas will likely cause errors when Sigma queries the model.</div>` +
+                        `</div>`;
+                }
+
+                const close = (result) => { closeColumnValidationModal(); resolve(result); };
+                document.getElementById('colValidationBody').innerHTML = bodyHtml;
+                document.getElementById('colValidationSaveAnyway').onclick = () => close(true);
+                document.getElementById('colValidationCancel').onclick     = () => close(false);
+                document.getElementById('colValidationModal').querySelector('.modal-close').onclick = () => close(false);
+                document.getElementById('colValidationModal').classList.add('active');
+            });
+        }
+
+        function closeColumnValidationModal() {
+            document.getElementById('colValidationModal').classList.remove('active');
+        }
+
+
+
         async function createDataModelFromWizard() {
             const modelName = document.getElementById('newModelName').value.trim();
             const workspaceId = document.getElementById('newModelWorkspaceId').value;
@@ -16344,6 +16804,7 @@ models:
         const _redoStack = [];
         let _undoDebounce = null;
         let _undoLastSnap = '';
+        let _undoKeySnap  = null; // pre-edit value captured in keydown, before change lands
 
         function _pushUndo(text) {
             if (text === _undoLastSnap) return;
@@ -16355,10 +16816,14 @@ models:
         }
 
         function _scheduleUndo() {
+            // Snapshot was taken in keydown (before the edit). Commit it after a short
+            // pause so rapid typing is batched into one undo step rather than one per char.
+            const snap = _undoKeySnap;
             clearTimeout(_undoDebounce);
             _undoDebounce = setTimeout(() => {
-                _pushUndo(document.getElementById('jsonEditor').value);
-            }, 400);
+                if (snap !== null) _pushUndo(snap);
+                _undoKeySnap = null;
+            }, 600);
         }
 
         function editorUndo() {
@@ -16368,6 +16833,8 @@ models:
             const prev = _undoStack.pop();
             editor.value = prev;
             _undoLastSnap = prev;
+            _undoKeySnap  = null; // discard any pending pre-edit snap from before the undo
+            clearTimeout(_undoDebounce);
             onEditorInput();
             updateLineNumbers();
             _updateUndoRedoBtns();
@@ -16381,6 +16848,8 @@ models:
             const next = _redoStack.pop();
             editor.value = next;
             _undoLastSnap = next;
+            _undoKeySnap  = null;
+            clearTimeout(_undoDebounce);
             onEditorInput();
             updateLineNumbers();
             _updateUndoRedoBtns();
@@ -16739,7 +17208,7 @@ models:
         // redirect Enter/Esc to the find bar instead of editing the text.
         document.getElementById('jsonEditor').addEventListener('keydown', function(e) {
             const overlay = document.getElementById('findReplaceOverlay');
-            if (!overlay || overlay.style.display === 'none') return;
+            if (!overlay || getComputedStyle(overlay).display === 'none') return;
             if (e.key === 'Enter') {
                 e.preventDefault();
                 e.shiftKey ? findPrev() : findNext();
@@ -17076,6 +17545,26 @@ models:
                 <button class="help-tab" onclick="switchHelpTab('mcp')">🔌 MCP Server</button>
             </div>
             <div class="help-content" id="helpContent"></div>
+        </div>
+    </div>
+
+    <!-- Column Validation Modal -->
+    <div class="modal-overlay" id="colValidationModal">
+        <div class="modal" style="max-width: 560px;">
+            <div class="modal-header">
+                <div class="modal-title">Pre-save Check — App Warning</div>
+                <button class="modal-close" onclick="closeColumnValidationModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">
+                    Some columns defined in your data model were not found in the warehouse. They may cause formula errors in Sigma.
+                </p>
+                <div id="colValidationBody"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="colValidationCancel">Cancel</button>
+                <button class="btn btn-primary" id="colValidationSaveAnyway">Save Anyway</button>
+            </div>
         </div>
     </div>
 </body>
