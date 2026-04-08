@@ -13928,6 +13928,8 @@ ${cleanedSql}`;
 
                     // Collect LOD child elements as we process calculated fields
                     const lodChildElements = []; // will be pushed to elements[] after processing
+                    // Collect set boolean column IDs to group into a folder after the loop
+                    const setColIds = [];
 
                     // Determine the fact element's table name for child column formulas
                     const factTableName = factEl.name
@@ -13960,10 +13962,54 @@ ${cleanedSql}`;
                             }
                         }
 
-                        // ── Set → Contains() filter column ────────────────
+                        // ── Set → boolean calculated column ───────────────
                         if (calcEl && calcEl.getAttribute('class') === 'categorical-set') {
-                            // Sets are represented as boolean membership flags
-                            warnings.push('⚠ Set "' + caption + '" → create as a filter or boolean column in Sigma after conversion');
+                            const setFormula = (calcEl.getAttribute('formula') || '').trim();
+
+                            // Top N / Bottom N sets — aggregate-dependent, can't express as row-level boolean
+                            const topFilter = calcEl.querySelector('groupfilter[function="end"], groupfilter[function="top"]');
+                            if (topFilter) {
+                                warnings.push('⚠ Set "' + caption + '": Top N/Bottom N set cannot be expressed as a row-level boolean — skipped. Recreate in Sigma using a ranked child element.');
+                                continue;
+                            }
+
+                            let sigmaSetFormula = null;
+
+                            if (setFormula) {
+                                // Condition-based set — formula attribute holds the row predicate
+                                sigmaSetFormula = tableauFormulaToSigma(setFormula, warnings);
+                            } else {
+                                // Member-based set — groupfilter children list the dimension members
+                                const memberFilters = Array.from(calcEl.querySelectorAll('groupfilter[function="member"]'));
+                                if (memberFilters.length > 0) {
+                                    const membersByField = {};
+                                    for (const gf of memberFilters) {
+                                        const level = (gf.getAttribute('level') || '').replace(/^\[|\]$/g, '');
+                                        const val   = (gf.getAttribute('member') || '').replace(/^"|"$/g, '');
+                                        if (!level || !val) continue;
+                                        (membersByField[level] || (membersByField[level] = [])).push(val);
+                                    }
+                                    const conditions = Object.entries(membersByField).map(([field, vals]) => {
+                                        const dn = sigmaDisplayName(field);
+                                        return vals.length === 1
+                                            ? `[${dn}] = "${vals[0]}"`
+                                            : `In([${dn}], ${vals.map(v => `"${v}"`).join(', ')})`;
+                                    });
+                                    sigmaSetFormula = conditions.length === 1
+                                        ? conditions[0]
+                                        : conditions.map(c => `(${c})`).join(' And ');
+                                }
+                            }
+
+                            if (!sigmaSetFormula) {
+                                warnings.push('⚠ Set "' + caption + '": unrecognised set definition — skipped.');
+                                continue;
+                            }
+
+                            const id = sigmaShortId();
+                            factEl.columns.push({ id, formula: String(sigmaSetFormula), name: caption });
+                            setColIds.push(id);
+                            warnings.push('✅ Set "' + caption + '" → boolean column: ' + String(sigmaSetFormula).slice(0, 80) + '. Add a filter control on this column in your Sigma workbook.');
                             continue;
                         }
 
@@ -14126,6 +14172,14 @@ ${cleanedSql}`;
                             elements.push(child);
                         }
                         warnings.push('ℹ ' + lodChildElements.length + ' child element' + (lodChildElements.length !== 1 ? 's' : '') + ' created from LOD expressions (grouped views of ' + factTableName + ')');
+                    }
+
+                    // ── Group set boolean columns into a "Sets" folder ──
+                    if (setColIds.length > 0) {
+                        if (!factEl.folders) factEl.folders = [];
+                        const setFolderId = sigmaShortId();
+                        factEl.folders.push({ id: setFolderId, name: 'Sets', items: setColIds });
+                        factEl.order.push(setFolderId);
                     }
                 }
 
