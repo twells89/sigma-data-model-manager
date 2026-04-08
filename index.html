@@ -2842,9 +2842,10 @@ How it works:
 • Role-playing dims (from: alias) → separate elements, each with its own relationship
 • one_to_many / many_to_many / full_outer → physical join element
 • Measures → Sigma metrics (Sum, Count, Avg, CountDistinct)
-• dimension_group type:time → one column per timeframe (DateTrunc / DatePart)
-• dimension_group type:duration → DateDiff columns per interval
-• datatype:epoch → DateFromUnix() wrapper applied automatically
+• dimension_group type:time → one column per timeframe (DateTrunc / DatePart), grouped in a folder; binned timeframes (minute15, hour4, etc.) use DateAdd + Floor arithmetic
+• dimension_group type:duration → DateDiff columns per interval, grouped in a folder
+• datatype:epoch → DateFromUnix() wrapper applied automatically to all timeframe formulas
+• fiscal_* timeframes → skipped with a warning (require fiscal_month_offset from model config, not available in view files)
 • type: yesno → boolean column
 • derived_table blocks → converted to Custom SQL elements (kind: "sql")"></textarea>
 
@@ -16497,6 +16498,7 @@ models:
     <li><b>Simple aggregates</b> → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)</li>
     <li><b>Parameters</b> → Sigma controls (list, date-range, text)</li>
     <li><b>LOD FIXED expressions</b> → Child elements with groupings</li>
+    <li><b>Sets</b> → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → <code>In([Field], ...)</code> column. Add a filter control on these columns in your Sigma workbook to replicate set-based filtering.</li>
 </ul>
 
 <h3>Known Limitations</h3>
@@ -16505,7 +16507,8 @@ models:
     <li><b>Table calculations</b> — RUNNING_SUM → <code>CumulativeSum()</code>, RANK → <code>Rank()</code>/<code>DenseRank()</code>, INDEX → <code>RowNumber()</code>, WINDOW_SUM → <code>GrandTotal()</code>. Complex patterns (LOOKUP, PREVIOUS_VALUE, nested table calcs) are flagged but not converted.</li>
     <li><b>Cross-element columns</b> — Formulas referencing related dimension columns are removed with a warning. The Sigma API does not support creating cross-element column references — add these manually in the Sigma UI after saving.</li>
     <li><b>Role-playing dimensions</b> — Multiple relationships from a fact table to the same dimension are now supported. Each relationship gets a unique name including the join key (e.g. "DATE_DIM via Order Date Key"). Review the generated names for clarity.</li>
-    <li><b>Bins &amp; sets</b> — Bins are converted to bucketed <code>Floor()</code> calculated columns. Sets generate a warning and need to be recreated as filters in Sigma.</li>
+    <li><b>Bins</b> — Converted to bucketed <code>Floor()</code> calculated columns.</li>
+    <li><b>Top N / Bottom N sets</b> — Top N and Bottom N sets cannot be auto-converted and generate a warning. Recreate these as filters in the Sigma UI after saving.</li>
     <li><b>Custom SQL data sources</b> — Converted to Sigma custom SQL elements. The raw SQL is passed through as-is. Tableau-specific SQL syntax may need manual adjustment.</li>
     <li><b>Extracts (.hyper)</b> — Extract-only fields and extract filters are not converted. The converter reads the logical model definition, not the physical extract.</li>
     <li><b>Data blending</b> — Multi-connection blended data sources are not supported. Each data source is converted independently.</li>
@@ -16576,7 +16579,9 @@ models:
     <li><b>Yesno dimensions</b> → Boolean calculated columns with "(T/F)" suffix</li>
     <li><b>Measures</b> → Sigma metrics (sum, count, count_distinct, average, min, max, median)</li>
     <li><b>Explore joins</b> → Sigma relationships</li>
-    <li><b>Dimension groups (time)</b> → Expanded into individual columns per timeframe</li>
+    <li><b>Dimension groups (type:time)</b> → Expanded into individual columns per timeframe (DateTrunc / DatePart), all grouped into a folder named after the group. Supported standard timeframes: raw, date, week, month, quarter, year, hour, minute, day_of_week, day_of_month, week_of_year, month_num, quarter_of_year, hour_of_day. Binned timeframes (e.g. <code>minute15</code>, <code>hour4</code>) use <code>DateAdd + Floor</code> arithmetic. Fiscal timeframes (<code>fiscal_year</code>, <code>fiscal_quarter_of_year</code>, etc.) are skipped with a warning — they require <code>fiscal_month_offset</code> from the model-level config, which is not available in view files.</li>
+    <li><b>Dimension groups (type:duration)</b> → <code>DateDiff()</code> columns per interval (day, week, month, quarter, year, hour, minute, second), grouped into a folder named after the group</li>
+    <li><b>datatype: epoch</b> → <code>DateFromUnix()</code> wrapper applied automatically to all timeframe and duration formulas</li>
     <li><b>percent_of_total</b> → <code>Sum([Col]) / GrandTotal(Sum([Col]))</code></li>
     <li><b>running_total</b> → <code>CumulativeSum([Col])</code></li>
     <li><b>Filtered measures</b> → Conditional aggregates: <code>SumIf([Col], [Filter] = "value")</code></li>
@@ -16591,7 +16596,7 @@ models:
     <li><code>CONCAT(a, b)</code> → <code>a &amp; b</code></li>
     <li><code>SPLIT_PART(col, delim, n)</code> → <code>splitpart([Col], "delim", n)</code></li>
     <li><code>ROUND(x, n)</code> → <code>Round(x, n)</code></li>
-    <li><code>DATEDIFF('day', a, b)</code> → <code>DateDiff("day", [A], [B])</code></li>
+    <li><code>DATEDIFF('day', a, b)</code> → <code>DateDiff("day", [A], [B])</code> — column refs are qualified with the element's table name when the element maps to a warehouse table (e.g. <code>[PROMO_DIM/Start Date]</code>)</li>
     <li><code>NULLIF(x, 0)</code> → <code>If(x = 0, null, x)</code></li>
     <li><code>COALESCE(a, b)</code> → <code>Coalesce([A], [B])</code></li>
     <li><code>\${TABLE}.col_name</code> → <code>[Col Name]</code> (table prefix stripped)</li>
