@@ -6382,7 +6382,8 @@ ${JSON.stringify(failedJson, null, 2)}`;
                         error: null
                     });
                 } catch (err) {
-                    // API lookup failed — warn but don't block the save
+                    // API lookup failed — surface in modal so user is aware
+                    hasIssues = true;
                     results.push({
                         tableName: el.name || path.join('.'),
                         missingFromWarehouse: [],
@@ -15250,9 +15251,21 @@ ${cleanedSql}`;
 
             const btn = document.getElementById('saveBtn');
             btn.disabled = true;
-            btn.innerHTML = '<div class="spinner"></div><span>Saving…</span>';
+            btn.innerHTML = '<div class="spinner"></div><span>Validating columns…</span>';
 
             try {
+                // Pre-save column validation
+                try {
+                    const validation = await validateModelColumns(fullSpec);
+                    if (validation?.hasIssues) {
+                        const proceed = await showColumnValidationModal(validation);
+                        if (!proceed) return;
+                    }
+                } catch (validationErr) {
+                    console.warn('Column validation skipped:', validationErr.message);
+                }
+                btn.innerHTML = '<div class="spinner"></div><span>Saving…</span>';
+
                 // ── Step 1: POST without relationships ────────────────────────
                 updateStatus('loading', 'Creating model (step 1/2)…');
 
