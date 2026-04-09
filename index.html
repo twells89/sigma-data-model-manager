@@ -6665,7 +6665,7 @@ Text-area:    "value": "N480HA"
 Number:       "mode": "=", "value": 10, "includeNulls": "when-no-value-is-selected"
 Number-range: "min": 10, "max": 20, "includeNulls": "when-no-value-is-selected"
 Date:         "mode": "=", "value": {"op": "now-minus", "unit": "day", "value": 2}
-Date-range:   "mode": "between", "startDate": "2026-01-01T07:00:00Z", "endDate": "2026-01-16T06:59:59Z"
+Date-range:   "mode": "custom", "startDate": "2026-01-01T07:00:00Z", "endDate": "2026-01-16T06:59:59Z" (omit dates for unset default; other modes: current/last/next/after/before/on)
 Slider:       "low": 0, "high": 100, "mode": "<=", "value": 10
 Range-slider: "low": 0, "high": 100, "min": 10, "max": 20
 Segmented:    "source": {...}, "value": true
@@ -10441,7 +10441,6 @@ relationships:
                             kind: 'table',
                             source: { connectionId, kind: 'warehouse-table', path: tsPath },
                             columns: [],
-                            metrics: [],
                             order: []
                         };
                         // Include all timeframe columns on the ts element
@@ -11157,6 +11156,7 @@ metrics:
                     });
                 }
 
+                if (element.metrics && element.metrics.length === 0) delete element.metrics;
                 elements.push(element);
                 viewRegistry[viewName.toLowerCase()] = { elementId, pkColId, colIdMap, element, sourceTable };
             }
@@ -12659,7 +12659,7 @@ ${cleanedSql}`;
                             controlId,
                             id: sigmaShortId() + 'con',
                             controlType: 'date-range',
-                            mode: 'between',
+                            mode: 'custom',
                             includeNulls: 'when-no-value-is-selected'
                         });
                         warnings.push(`ℹ filter: "${f._name}" → date-range control (controlId: "${controlId}"). Reference in formulas as [${controlId}].start and [${controlId}].end`);
@@ -12735,7 +12735,7 @@ ${cleanedSql}`;
                             controlId,
                             id: sigmaShortId() + 'con',
                             controlType: 'date-range',
-                            mode: 'between',
+                            mode: 'custom',
                             includeNulls: 'when-no-value-is-selected'
                         });
                         warnings.push(`ℹ parameter: "${p._name}" → date-range control (controlId: "${controlId}")`);
@@ -13018,11 +13018,9 @@ ${cleanedSql}`;
                         const baseName = d.label || sigmaDisplayName(d._name);
                         const displayName = baseName + ' (T/F)';
                         const physDisplayName = colLabel(physicalCol);
-                        element.columns.push({
-                            id: calcId,
-                            formula: `[${physDisplayName}] = ${val}`,
-                            name: displayName
-                        });
+                        const boolCol = { id: calcId, formula: `[${physDisplayName}] = ${val}`, name: displayName };
+                        if (d.hidden === true || d.hidden === 'yes') boolCol.hidden = true;
+                        element.columns.push(boolCol);
                         element.order.push(calcId);
                         warnings.push(`ℹ "${d._name}" → boolean calculated column using [${physDisplayName}] = ${val}`);
                         continue;
@@ -13037,20 +13035,17 @@ ${cleanedSql}`;
                         sigmaFormula = await lookSqlToSigmaFormulaAI(d.sql, d._name, tableName);
                     }
 
+                    const isHiddenDim = d.hidden === true || d.hidden === 'yes';
                     if (sigmaFormula) {
-                        element.columns.push({
-                            id: colId,
-                            formula: sigmaFormula,
-                            name: d.label || sigmaDisplayName(d._name)
-                        });
+                        const sqlCol = { id: colId, formula: sigmaFormula, name: d.label || sigmaDisplayName(d._name) };
+                        if (isHiddenDim) sqlCol.hidden = true;
+                        element.columns.push(sqlCol);
                         element.order.push(colId);
                         warnings.push(`ℹ "${d._name}" → calculated column. Review: ${sigmaFormula}`);
                     } else {
-                        element.columns.push({
-                            id: colId,
-                            formula: `[${tableName}/${sigmaDisplayName(colName)}]`,
-                            name: d.label || sigmaDisplayName(d._name)
-                        });
+                        const sqlCol = { id: colId, formula: `[${tableName}/${sigmaDisplayName(colName)}]`, name: d.label || sigmaDisplayName(d._name) };
+                        if (isHiddenDim) sqlCol.hidden = true;
+                        element.columns.push(sqlCol);
                         element.order.push(colId);
                         warnings.push(`⚠ "${d._name}": could not auto-convert. Edit formula manually: ${(d.sql||'').replace(/\$\{TABLE\}\./gi,'').trim()}`);
                     }
@@ -13089,11 +13084,9 @@ ${cleanedSql}`;
                         const formula = parts.join(', ') + ')'.repeat(tierValues.length);
                         const calcId = sigmaShortId();
                         colIdMap[colName] = calcId;
-                        element.columns.push({
-                            id: calcId,
-                            formula,
-                            name: d.label || sigmaDisplayName(d._name)
-                        });
+                        const tierCol = { id: calcId, formula, name: d.label || sigmaDisplayName(d._name) };
+                        if (d.hidden === true || d.hidden === 'yes') tierCol.hidden = true;
+                        element.columns.push(tierCol);
                         element.order.push(calcId);
                         warnings.push(`✅ Tier "${d._name}" → bucketed calculated column: ${formula.slice(0, 80)}...`);
                     }
@@ -13109,10 +13102,9 @@ ${cleanedSql}`;
                 const colId = sigmaShortId();
                 colIdMap[colName] = colId;
                 colIdMap[physicalCol] = colId;
-                element.columns.push({
-                    id: colId,
-                    formula: `[${tableName}/${colLabel(physicalCol)}]`
-                });
+                const dimCol = { id: colId, formula: `[${tableName}/${colLabel(physicalCol)}]` };
+                if (d.hidden === true || d.hidden === 'yes') dimCol.hidden = true;
+                element.columns.push(dimCol);
                 element.order.push(colId);
             }
 
@@ -13161,6 +13153,7 @@ ${cleanedSql}`;
                 }
                 const dgType    = (dg.type || 'time').toLowerCase();
                 const groupName = dg._name.toUpperCase();
+                const dgHidden  = dg.hidden === true || dg.hidden === 'yes';
                 const folderColIds = [];
 
                 // ── type: duration ───────────────────────────────────────────
@@ -13190,11 +13183,9 @@ ${cleanedSql}`;
                         const colName = `${groupName}_${interval.toUpperCase()}S`;
                         const colId   = sigmaShortId();
                         colIdMap[colName] = colId;
-                        element.columns.push({
-                            id: colId,
-                            formula: `DateDiff("${prec}", ${startRef}, ${endRef})`,
-                            name: sigmaDisplayName(colName),
-                        });
+                        const dgDurCol = { id: colId, formula: `DateDiff("${prec}", ${startRef}, ${endRef})`, name: sigmaDisplayName(colName) };
+                        if (dgHidden) dgDurCol.hidden = true;
+                        element.columns.push(dgDurCol);
                         folderColIds.push(colId);
                     });
                     if (folderColIds.length > 0) {
@@ -13241,7 +13232,9 @@ ${cleanedSql}`;
                         const colName = `${groupName}_${tf.toUpperCase()}`;
                         const colId   = sigmaShortId();
                         colIdMap[colName] = colId;
-                        element.columns.push({ id: colId, formula, name: sigmaDisplayName(colName) });
+                        const dgBinCol = { id: colId, formula, name: sigmaDisplayName(colName) };
+                        if (dgHidden) dgBinCol.hidden = true;
+                        element.columns.push(dgBinCol);
                         folderColIds.push(colId);
                         return;
                     }
@@ -13268,11 +13261,9 @@ ${cleanedSql}`;
                         colIdMap[groupName]   = colId;
                         colIdMap[physicalCol] = colId;
                     }
-                    element.columns.push({
-                        id: colId,
-                        formula,
-                        name: sigmaDisplayName(colName),
-                    });
+                    const dgTimeCol = { id: colId, formula, name: sigmaDisplayName(colName) };
+                    if (dgHidden) dgTimeCol.hidden = true;
+                    element.columns.push(dgTimeCol);
                     folderColIds.push(colId);
                 });
 
@@ -13831,7 +13822,7 @@ ${cleanedSql}`;
                 // Custom SQL
                 const sql = rootRel.textContent.trim();
                 elements.push({ id: sigmaShortId(), kind: 'table',
-                    source: { connectionId, kind: 'custom-sql', sql },
+                    source: { connectionId, kind: 'sql', statement: sql },
                     columns: [], metrics: [], order: [] });
                 warnings.push('ℹ Custom SQL data source — SQL extracted as-is');
                 return;
@@ -14414,7 +14405,7 @@ ${cleanedSql}`;
                         warnings.push('ℹ Parameter "' + p.name + '" → list control (' + p.members.length + ' values)');
                     } else if (p.type === 'date' || p.type === 'datetime') {
                         controls.push({ kind:'control', controlId, id: sigmaShortId()+'con',
-                            controlType:'date-range', mode:'between', includeNulls:'when-no-value-is-selected' });
+                            controlType:'date-range', mode:'custom', includeNulls:'when-no-value-is-selected' });
                         warnings.push('ℹ Parameter "' + p.name + '" → date-range control');
                     } else {
                         controls.push({ kind:'control', controlId, id: sigmaShortId()+'con',
