@@ -13073,8 +13073,8 @@ ${cleanedSql}`;
                         warnings.push(`⚠ Duration group "${dg._name}": complex sql_start/sql_end — skipped.`);
                         return;
                     }
-                    const startCol  = lookStripSql(dg.sql_start).split('.').pop().toUpperCase();
-                    const endCol    = lookStripSql(dg.sql_end).split('.').pop().toUpperCase();
+                    const startCol  = lookStripSql(dg.sql_start).split('.').pop().replace(/"/g, '').toUpperCase();
+                    const endCol    = lookStripSql(dg.sql_end).split('.').pop().replace(/"/g, '').toUpperCase();
                     const startRef  = `[${tableName}/${colLabel(startCol)}]`;
                     const endRef    = `[${tableName}/${colLabel(endCol)}]`;
                     const intervals = Array.isArray(dg.intervals)
@@ -13113,7 +13113,7 @@ ${cleanedSql}`;
 
                 const datatype   = (dg.datatype || 'timestamp').toLowerCase();
                 const sqlCol     = lookStripSql(dg.sql) || groupName;
-                const physicalCol = sqlCol.split('.').pop().toUpperCase();
+                const physicalCol = sqlCol.split('.').pop().replace(/"/g, '').toUpperCase();
                 const timeframes  = Array.isArray(dg.timeframes)
                     ? dg.timeframes.map(tf => String(tf).toLowerCase())
                     : _DG_DEFAULT_TIMEFRAMES;
