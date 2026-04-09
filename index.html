@@ -10835,7 +10835,7 @@ metrics:
             DATE_TRUNC: 'DateTrunc', TRUNC: 'DateTrunc',
             TO_DATE: 'Date', TO_CHAR: 'Text', TO_NUMBER: 'Number',
             GETDATE: 'Now', CURRENT_DATE: 'Today', CURRENT_TIMESTAMP: 'Now',
-            REGEXP_LIKE: 'RegexpMatch', REGEXP_CONTAINS: 'RegexpMatch',
+            // NOTE: REGEXP_LIKE / REGEXP_CONTAINS intentionally omitted — they emit a skip warning instead
             IS_NULL: 'IsNull', IS_NOT_NULL: 'IsNotNull',
             NOT: 'Not', AND: 'And', OR: 'Or',
             SUM: 'Sum', COUNT: 'Count', AVG: 'Avg', MIN: 'Min', MAX: 'Max',
@@ -11051,6 +11051,14 @@ metrics:
                 for (const dim of view.dimensions || []) {
                     const name = dim.name || '';
                     if (!name) continue;
+
+                    // Detect REGEXP functions — Sigma uses RegexpMatch([col], "pattern") but these
+                    // can't be auto-translated without knowing which argument is the pattern.
+                    if (/\b(?:REGEXP_LIKE|REGEXP_CONTAINS|REGEXP_SUBSTR|REGEXP_REPLACE|REGEXP_EXTRACT)\s*\(/i.test(dim.sql || '')) {
+                        warnings.push(`⚠ "${name}": uses REGEXP function — skipped. Sigma uses RegexpMatch([col], "pattern") syntax — add this column manually.`);
+                        continue;
+                    }
+
                     stats.totalDims++;
 
                     if (dim.primary_key) {
@@ -11864,8 +11872,14 @@ explores:
             sql = sql.replace(/\$\{TABLE\}\./gi, '').trim();
             // ${view_name.field} → field (for cross-view refs — just take the field part)
             sql = sql.replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1');
-            // Unwrap CAST(col AS type) → col (Snowflake type-cast pattern)
-            const castMatch = sql.match(/^CAST\s*\(\s*("?[A-Za-z_][A-Za-z0-9_]*"?)\s+AS\s+\w[\w_]*\s*\)$/i);
+            // Strip backtick identifiers (BigQuery/MySQL style)
+            sql = sql.replace(/`/g, '');
+            // Strip bracket identifiers: [Column Name] → Column Name
+            sql = sql.replace(/\[([A-Za-z_][A-Za-z0-9_\s]*)\]/g, '$1');
+            // Strip PostgreSQL :: casts: col::INTEGER → col
+            sql = sql.replace(/::\w[\w_]*/g, '');
+            // Unwrap SAFE_CAST/TRY_CAST/CAST(col AS type) → col (Snowflake/BigQuery type-cast pattern)
+            const castMatch = sql.match(/^(?:SAFE_CAST|TRY_CAST|CAST)\s*\(\s*("?[A-Za-z_][A-Za-z0-9_]*"?)\s+AS\s+\w[\w_]*\s*\)$/i);
             if (castMatch) sql = castMatch[1];
             // Strip Snowflake double-quote identifiers e.g. "COLUMN_NAME"
             sql = sql.replace(/"/g, '').trim();
@@ -11880,11 +11894,11 @@ explores:
         function lookIsComplexSql(sql) {
             if (!sql) return false;
             const cleaned = sql.replace(/\$\{TABLE\}\./gi, '').replace(/\$\{[^}]+\}/g, 'X').trim();
-            // CAST(col AS type) wrapping a simple column ref is not complex — just a type hint
-            if (/^CAST\s*\(\s*"?[A-Za-z_][A-Za-z0-9_]*"?\s+AS\s+\w[\w_]*\s*\)$/i.test(cleaned)) return false;
+            // CAST/SAFE_CAST/TRY_CAST(col AS type) wrapping a simple column ref is not complex — just a type hint
+            if (/^(?:CAST|SAFE_CAST|TRY_CAST)\s*\(\s*"?[A-Za-z_][A-Za-z0-9_]*"?\s+AS\s+\w[\w_]*\s*\)$/i.test(cleaned)) return false;
             if (/^[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(cleaned)) return true;
             if (/^CASE\b/i.test(cleaned)) return true;
-            if (/[=<>!+\-*\/]/.test(cleaned.replace(/'[^']*'/g, ''))) return true;
+            if (/[=<>!+\-*\/%]/.test(cleaned.replace(/'[^']*'/g, ''))) return true;
             return false;
         }
 
@@ -12108,20 +12122,46 @@ explores:
         function lookConvertCase(expr) {
             const body = expr.replace(/^CASE\s*/i, '').replace(/\s*END\s*$/i, '').trim();
             const branches = [];
-            const branchRe = /WHEN\s+(.+?)\s+THEN\s+('(?:[^'\\]|\\.)*'|\S+)/gi;
-            let bm;
-            while ((bm = branchRe.exec(body)) !== null) {
-                const cond = lookConvertExpression(bm[1].trim());
-                const val  = bm[2].trim();
+
+            // Split on WHEN keyword boundaries — handles multi-condition WHENs like "a > 5 AND b < 10"
+            const parts = body.split(/\bWHEN\b/i).filter(Boolean);
+            let elseVal = null;
+
+            for (const part of parts) {
+                const elseMatch = part.match(/^([\s\S]+?)\s+THEN\s+([\s\S]+?)(?:\s+ELSE\s+([\s\S]+))?$/i);
+                if (!elseMatch) {
+                    const e = part.match(/\bELSE\s+([\s\S]+)$/i);
+                    if (e && !elseVal) elseVal = e[1].trim();
+                    continue;
+                }
+                const cond = elseMatch[1].trim();
+                let val = elseMatch[2].trim();
+                const elseInVal = val.match(/^([\s\S]+?)\s+ELSE\s+([\s\S]+)$/i);
+                if (elseInVal) {
+                    val = elseInVal[1].trim();
+                    if (!elseVal) elseVal = elseInVal[2].trim();
+                }
                 branches.push({ cond, val });
             }
-            const elseMatch = body.match(/ELSE\s+('(?:[^'\\]|\\.)*'|\S+)\s*$/i);
-            const elseVal = elseMatch ? elseMatch[1] : 'null';
+
+            // Also check for top-level ELSE
+            const topElse = body.match(/\bELSE\s+([\s\S]+)$/i);
+            if (topElse && !elseVal) elseVal = topElse[1].trim();
 
             if (branches.length === 0) return null;
-            let result = elseVal;
+
+            const convertVal = (v) => {
+                v = v.trim();
+                if (/^'[^']*'$/.test(v)) return v;       // string literal
+                if (/^-?\d+(\.\d+)?$/.test(v)) return v; // number literal
+                return lookConvertExpression(v);
+            };
+
+            let result = elseVal ? convertVal(elseVal) : 'null';
             for (let i = branches.length - 1; i >= 0; i--) {
-                result = `If(${branches[i].cond}, ${branches[i].val}, ${result})`;
+                const sigmaCond = lookConvertExpression(branches[i].cond);
+                const sigmaVal  = convertVal(branches[i].val);
+                result = `If(${sigmaCond}, ${sigmaVal}, ${result})`;
             }
             return result;
         }
@@ -12863,6 +12903,12 @@ ${cleanedSql}`;
                 if (!d._name) continue;
                 const colName = d._name.toUpperCase();
 
+                // Detect LookML parameter substitution — can't be resolved statically
+                if (/\$\{[^.}]+\}/.test(d.sql || '') && !/\$\{TABLE\}/i.test(d.sql || '')) {
+                    warnings.push(`⚠ "${d._name}": uses LookML parameter substitution — skipped. Add this dimension manually after configuring parameters in Sigma.`);
+                    continue;
+                }
+
                 // ── Tier dimensions with complex SQL → bucketed calculated column ──
                 if ((d.type || '').toLowerCase() === 'tier' && d.tiers && lookIsComplexSql(d.sql)) {
                     const rawTiers = typeof d.tiers === 'string' ? d.tiers : String(d.tiers);
@@ -13059,6 +13105,11 @@ ${cleanedSql}`;
 
             dimGroups.forEach(dg => {
                 if (!dg._name) return;
+                // Detect LookML parameter substitution — can't be resolved statically
+                if (/\$\{[^.}]+\}/.test(dg.sql || '') && !/\$\{TABLE\}/i.test(dg.sql || '')) {
+                    warnings.push(`⚠ "${dg._name}": uses LookML parameter substitution — skipped. Add this dimension manually after configuring parameters in Sigma.`);
+                    return;
+                }
                 const dgType    = (dg.type || 'time').toLowerCase();
                 const groupName = dg._name.toUpperCase();
                 const folderColIds = [];
@@ -14603,8 +14654,12 @@ ${cleanedSql}`;
             f = f.replace(/\bMIN\s*\(/gi, 'Min(');
             f = f.replace(/\bMAX\s*\(/gi, 'Max(');
             f = f.replace(/\bCOUNT\s*\(/gi, 'Count(');
-            // RELATED([Col]) → just [Col] (Sigma resolves via relationships)
+            // RELATED([Col]) → just [Col], but warn that cross-table reference may need review
+            const hadRelated = /\bRELATED\s*\(/i.test(f);
             f = f.replace(/\bRELATED\s*\(\s*(\[[^\]]+\])\s*\)/gi, '$1');
+            if (hadRelated && warnings) {
+                warnings.push(`⚠ Calculated column "${measureName}": uses RELATED() — cross-table reference may not resolve. Review and update to use Sigma linked column syntax: [TABLE/FK - link/Column].`);
+            }
             f = f.replace(/\bRELATEDTABLE\s*\([^)]*\)/gi, '/* RELATEDTABLE - use relationship */');
             // Logical
             f = f.replace(/\bIF\s*\(/gi, 'If(');
