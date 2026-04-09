@@ -12464,7 +12464,13 @@ ${cleanedSql}`;
                 }] : [];
 
                 if (!keyMatch && sqlOn) {
-                    warnings.push(`⚠ Join "${alias}": complex sql_on could not be parsed automatically — keys may need manual review`);
+                    // Detect range-based joins (>=, <=, >, <) — these can't be Sigma relationships
+                    const isRangeJoin = /\$\{[^}]+\}\s*[><!]|[><!]=?\s*\$\{/.test(sqlOn);
+                    if (isRangeJoin) {
+                        warnings.push(`⚠ Join "${alias}": uses range-based sql_on (>=, <=, >, <) which cannot be expressed as a Sigma relationship. Recreate this as a filtered join or custom SQL after import.`);
+                    } else {
+                        warnings.push(`⚠ Join "${alias}": complex sql_on could not be parsed automatically — add join keys manually in Sigma's ERD view`);
+                    }
                 }
 
                 joinDefs.push({ alias, viewName, rel, joinType: jType, keys });
@@ -12775,6 +12781,49 @@ ${cleanedSql}`;
                     targetEl.order.push(rlsId);
                     warnings.push(`✅ access_filter "${fieldRef}" → RLS column "RLS: ${userAttr}". Ensure user attribute "${userAttr}" exists in Sigma, then add a True filter on this column.`);
                 }
+            }
+
+            // ── LookML always_filter → Sigma element filters ─────────────────
+            const alwaysFilterBlock = explore.always_filter;
+            const alwaysFilterItems = alwaysFilterBlock?.filters
+                ? (Array.isArray(alwaysFilterBlock.filters) ? alwaysFilterBlock.filters : [alwaysFilterBlock.filters])
+                : [];
+
+            for (const af of alwaysFilterItems) {
+                const fieldRef = af.field || '';
+                const expr = (af.value || '').trim();
+                if (!fieldRef || !expr) continue;
+
+                // Resolve view_name.field_name
+                const dotIdx = fieldRef.lastIndexOf('.');
+                const viewPart = dotIdx >= 0 ? fieldRef.slice(0, dotIdx) : baseViewName;
+                const fieldPart = (dotIdx >= 0 ? fieldRef.slice(dotIdx + 1) : fieldRef).toUpperCase();
+
+                const targetRes = elementMap[viewPart] || elementMap[baseAlias];
+                if (!targetRes) {
+                    warnings.push(`⚠ always_filter "${fieldRef}": view "${viewPart}" not found — filter skipped`);
+                    continue;
+                }
+
+                // Try exact match first, then strip timeframe suffix (e.g. _date, _week)
+                const colId = lookFindColId(targetRes, fieldPart)
+                    || lookFindColId(targetRes, fieldPart.replace(/_(?:RAW|TIME|DATE|WEEK|MONTH|QUARTER|YEAR)$/, ''));
+                if (!colId) {
+                    warnings.push(`⚠ always_filter "${fieldRef}": column "${fieldPart}" not found in element — filter skipped`);
+                    continue;
+                }
+
+                // Parse expression → Sigma filter JSON
+                const sigmaFilter = lookParseFilterExpr(expr, colId);
+                if (!sigmaFilter) {
+                    warnings.push(`⚠ always_filter "${fieldRef}" = "${expr}": date/range expression cannot be auto-converted — add filter manually in Sigma using a relative date or number range filter`);
+                    continue;
+                }
+
+                const targetEl = targetRes.element;
+                if (!targetEl.filters) targetEl.filters = [];
+                targetEl.filters.push(sigmaFilter);
+                warnings.push(`✅ always_filter "${fieldRef}" = "${expr}" → element list filter added`);
             }
 
             // ── Assemble final data model JSON ───────────────────────────────
@@ -13372,6 +13421,42 @@ ${cleanedSql}`;
             if (!elementResult) return null;
             const upper = (colName || '').toUpperCase();
             return elementResult.colIdMap[upper] || null;
+        }
+
+        // ── Parse a LookML filter expression into a Sigma list filter object ─
+        // Returns null for date/range expressions that require unknown JSON schema.
+        function lookParseFilterExpr(expr, columnId) {
+            expr = (expr || '').trim();
+
+            // NULL / NOT NULL
+            if (/^NULL$/i.test(expr))
+                return { id: sigmaShortId(), columnId, kind: 'list', mode: 'include', values: [null] };
+            if (/^NOT\s+NULL$/i.test(expr))
+                return { id: sigmaShortId(), columnId, kind: 'list', mode: 'exclude', values: [null] };
+
+            // Date relative expressions ("1 day", "7 days", "last month", "this week", etc.) — unsupported
+            if (/^\d+\s+(second|minute|hour|day|week|month|quarter|year)s?$/i.test(expr)) return null;
+            if (/^(this|last|next|current)\s+/i.test(expr)) return null;
+            if (/^\d{4}[\/\-]\d{2}/.test(expr)) return null;   // date literals
+
+            // Comparison operators — unsupported
+            if (/^[><!]=?/.test(expr)) return null;
+
+            // Range expressions [x,y] or (x,y) — unsupported
+            if (/^[\[(]/.test(expr)) return null;
+
+            // Negation: -value or -value1,-value2
+            if (expr.startsWith('-')) {
+                const vals = expr.slice(1).split(/\s*,\s*-?\s*/).map(v => v.replace(/^"|"$/g, '').trim()).filter(Boolean);
+                return { id: sigmaShortId(), columnId, kind: 'list', mode: 'exclude', values: vals };
+            }
+
+            // Simple string value(s): "value" or value1,value2
+            const vals = expr.split(',').map(v => v.replace(/^"|"$/g, '').trim()).filter(Boolean);
+            if (vals.length > 0)
+                return { id: sigmaShortId(), columnId, kind: 'list', mode: 'include', values: vals };
+
+            return null;
         }
 
 
@@ -16669,7 +16754,7 @@ models:
     <li><b>Cross-element columns</b> — Formulas referencing columns from other elements (via <code>\${view_name.field}</code> across explores) are removed with a warning. These must be added manually in the Sigma UI because the API does not support cross-element column references.</li>
     <li><b>PDT materializations</b> — Persistent Derived Tables are recognized but the materialization strategy (trigger, datagroup, sql_trigger_value) does not carry over.</li>
     <li><b>Access filters / row-level access</b> — LookML <code>access_filter</code> blocks are converted to Sigma RLS calculated columns using <code>CurrentUserAttributeText()</code>. You must ensure the matching user attribute exists in Sigma and add a <code>True</code> filter on the generated column. <code>access_grant</code> blocks (permission-based access) are not converted.</li>
-    <li><b>Explore-level always_filter / conditionally_filter</b> — These are noted but not applied. Add equivalent filters in Sigma after conversion.</li>
+    <li><b>Explore-level always_filter</b> — String/list value filters are converted directly to Sigma element filters. Date relative expressions ("1 day", "last month") and range expressions (">100") cannot be auto-converted — add those manually using Sigma's date range or number range filter after import. <code>conditionally_filter</code> is not converted.</li>
     <li><b>sql_table_name with Liquid</b> — If a view's <code>sql_table_name</code> uses Liquid to switch tables dynamically (e.g. by environment), the converter strips the Liquid and uses whatever static text remains. Verify the warehouse path after conversion.</li>
     <li><b>Unsupported SQL functions</b> — Dimension and measure <code>sql:</code> expressions containing Snowflake-specific functions without Sigma equivalents (<code>FLATTEN</code>, <code>LATERAL</code>, <code>QUALIFY</code>, <code>PIVOT</code>, <code>UNPIVOT</code>, <code>GENERATOR</code>, <code>TABLESAMPLE</code>, <code>OBJECT_CONSTRUCT</code>, <code>ARRAY_CONSTRUCT</code>) are automatically <b>skipped with a warning</b>. The column is omitted from the output — add it manually in the Sigma UI after saving.</li>
     <li><b>Derived tables without SQL</b> — If a <code>derived_table</code> block exists but contains no <code>sql:</code> statement, a Custom SQL element is still created with a blank SQL body and a warning is shown. Add the SQL manually in the JSON editor before saving to Sigma.</li>
