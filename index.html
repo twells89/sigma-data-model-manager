@@ -2285,7 +2285,7 @@
                     <div class="logo-icon" id="logoIcon" style="cursor: pointer;" title="Click 5 times to enable developer mode">Σ</div>
                     <span class="logo-text">Data Model Manager</span>
                 </div>
-                <div class="logo-subtitle">Direct Sigma Integration <span class="badge beta">Standalone</span> <span class="badge" style="background:rgba(255,180,0,0.2);color:#ffb400;">v2025-DEBUG-3</span><span class="badge" id="devModeBadge" style="display: none; margin-left: 8px; background: rgba(255, 123, 114, 0.15); color: #ff7b72;">DEV</span></div>
+                <div class="logo-subtitle">Direct Sigma Integration <span class="badge beta">Standalone</span><span class="badge" id="devModeBadge" style="display: none; margin-left: 8px; background: rgba(255, 123, 114, 0.15); color: #ff7b72;">DEV</span></div>
             </div>
             
             <div class="credentials-section">
@@ -11969,6 +11969,21 @@ explores:
                 if (m) return `${lookColRef(m[1])} ${m[2] === '<>' ? '!=' : m[2]} ${m[3]}`;
             }
 
+            // ── Pattern 1c: COLUMN IN ('val1', 'val2', ...) ──────────────────
+            // e.g. LOYALTY_TIER IN ('Gold', 'Silver') → In([Loyalty Tier], "Gold", "Silver")
+            {
+                const m = expr.match(/^([A-Z_][A-Z0-9_]*)\s+IN\s*\(([^)]+)\)$/i);
+                if (m) {
+                    const col = lookColRef(m[1]);
+                    const vals = splitTopLevelArgs(m[2]).map(v => {
+                        v = v.trim();
+                        if (/^'[^']*'$/.test(v)) return `"${v.slice(1, -1)}"`;
+                        return v;
+                    });
+                    return `In(${col}, ${vals.join(', ')})`;
+                }
+            }
+
             // ── Pattern 2: ROUND(expr, n) ──────────────────────────────────────
             // First convert any NULLIF inside, then wrap in Round()
             if (/^ROUND\s*\(/i.test(expr)) {
@@ -13274,8 +13289,6 @@ ${cleanedSql}`;
                                       || lookStripSql(dg.sql_start).split('.').pop().replace(/"/g, '').toUpperCase();
                     const endCol    = (normEnd.match(/^([A-Za-z_][A-Za-z0-9_]*)/) || ['',''])[1].toUpperCase()
                                       || lookStripSql(dg.sql_end).split('.').pop().replace(/"/g, '').toUpperCase();
-                    // DEBUG: log raw values so we can see what the parser produced
-                    warnings.push(`🔍 DEBUG duration "${dg._name}": sql_start=«${dg.sql_start}» sql_end=«${dg.sql_end}» normStart=«${normStart}» normEnd=«${normEnd}» startCol=«${startCol}» endCol=«${endCol}»`);
                     const startRef  = `[${tableName}/${colLabel(startCol)}]`;
                     const endRef    = `[${tableName}/${colLabel(endCol)}]`;
                     const intervals = Array.isArray(dg.intervals)
