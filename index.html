@@ -13264,8 +13264,16 @@ ${cleanedSql}`;
                         warnings.push(`⚠ Duration group "${dg._name}": complex sql_start/sql_end — skipped.`);
                         return;
                     }
-                    const startCol  = lookStripSql(dg.sql_start).split('.').pop().replace(/"/g, '').toUpperCase();
-                    const endCol    = lookStripSql(dg.sql_end).split('.').pop().replace(/"/g, '').toUpperCase();
+                    // Inline normalisation: strip ${TABLE}. with any surrounding whitespace before
+                    // passing to lookStripSql.  The tokenizer can introduce a space before the dot
+                    // ("${TABLE} .COLUMN") which lookStripSql's regex should already handle, but
+                    // normalising here makes extraction reliable even if pre-extraction didn't run.
+                    const normStart = (dg.sql_start || '').replace(/\$\{TABLE\}\s*\.\s*/gi, '').trim();
+                    const normEnd   = (dg.sql_end   || '').replace(/\$\{TABLE\}\s*\.\s*/gi, '').trim();
+                    const startCol  = (normStart.match(/^([A-Za-z_][A-Za-z0-9_]*)/) || ['',''])[1].toUpperCase()
+                                      || lookStripSql(dg.sql_start).split('.').pop().replace(/"/g, '').toUpperCase();
+                    const endCol    = (normEnd.match(/^([A-Za-z_][A-Za-z0-9_]*)/) || ['',''])[1].toUpperCase()
+                                      || lookStripSql(dg.sql_end).split('.').pop().replace(/"/g, '').toUpperCase();
                     const startRef  = `[${tableName}/${colLabel(startCol)}]`;
                     const endRef    = `[${tableName}/${colLabel(endCol)}]`;
                     const intervals = Array.isArray(dg.intervals)
