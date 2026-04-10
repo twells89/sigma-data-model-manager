@@ -13033,6 +13033,37 @@ ${cleanedSql}`;
                 (Array.isArray(grp) ? grp : [grp]).forEach(f => f?._name && allViewFields.add(f._name));
             });
 
+            // Build a map of yesno dimension name → its cleaned boolean SQL expression so that
+            // when other dimensions reference a yesno field via ${field_name}, we can substitute
+            // the full boolean expression instead of just the column name.
+            // e.g. ${is_active}       → (IS_ACTIVE = 1)
+            //      ${is_premium_customer} → (LOYALTY_TIER IN ('Gold', 'Silver'))
+            const yesnoExprMap = new Map();
+            {
+                const allDims = view.dimension ? (Array.isArray(view.dimension) ? view.dimension : [view.dimension]) : [];
+                allDims.forEach(yd => {
+                    if ((yd.type || '').toLowerCase() === 'yesno' && yd.sql && yd._name) {
+                        const expr = yd.sql
+                            .replace(/\$\{TABLE\}\s*\.\s*/gi, '')
+                            .replace(/\$\{[^.}]+\.([^}]+)\}/g, (_, f) => f.toUpperCase())
+                            .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, n) => n.toUpperCase())
+                            .trim();
+                        yesnoExprMap.set(yd._name.toLowerCase(), expr);
+                    }
+                });
+            }
+
+            // Pre-expand ${yesno_field} refs to their full boolean expression before
+            // passing SQL to the converter. This prevents integer columns from appearing
+            // where Sigma expects a logical/boolean value.
+            function expandYesnoRefs(sql) {
+                if (!yesnoExprMap.size) return sql;
+                return sql.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, n) => {
+                    const expr = yesnoExprMap.get(n.toLowerCase());
+                    return expr !== undefined ? `(${expr})` : match;
+                });
+            }
+
             // For Custom SQL elements Sigma matches against the literal SQL alias (e.g. ORDER_ID),
             // not a display name. For warehouse-table elements it uses the display name.
             const isCustomSql = (tableName === 'Custom SQL');
@@ -13134,9 +13165,11 @@ ${cleanedSql}`;
                     const colId = sigmaShortId();
                     colIdMap[colName] = colId;
 
-                    let sigmaFormula = lookSqlToSigmaRules(d.sql, tableName);
+                    // Expand ${yesno_field} refs to full boolean expressions before converting
+                    const expandedSql = expandYesnoRefs(d.sql);
+                    let sigmaFormula = lookSqlToSigmaRules(expandedSql, tableName);
                     if (!sigmaFormula) {
-                        sigmaFormula = await lookSqlToSigmaFormulaAI(d.sql, d._name, tableName);
+                        sigmaFormula = await lookSqlToSigmaFormulaAI(expandedSql, d._name, tableName);
                     }
 
                     const isHiddenDim = d.hidden === true || d.hidden === 'yes';
