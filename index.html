@@ -12135,12 +12135,20 @@ explores:
                 return `In(${lhs}, ${list})`;
             });
 
-            // 3. Convert bare ALL_CAPS identifiers (not followed by '(') to [Display Name]
-            expr = expr.replace(/\b([A-Z_][A-Z0-9_]*)\b(?!\s*\()/g, (match) => {
-                if (/^(AND|OR|NOT|NULL|IS|IN|BETWEEN|LIKE|THEN|ELSE|END|WHEN|CASE|TRUE|FALSE)$/i.test(match)) return match;
-                if (/^\d+$/.test(match)) return match;
-                return lookColRef(match);
-            });
+            // 3. Convert bare ALL_CAPS identifiers (not followed by '(') to [Display Name].
+            //    Split on single-quoted string literals first so that values like 'BOGO' or 'SMS'
+            //    inside WHERE/CASE conditions are never treated as column references.
+            {
+                const parts = expr.split(/(\'[^\']*\')/g);
+                expr = parts.map((part, i) => {
+                    if (i % 2 === 1) return part; // odd indices = quoted string literals — leave untouched
+                    return part.replace(/\b([A-Z_][A-Z0-9_]*)\b(?!\s*\()/g, (match) => {
+                        if (/^(AND|OR|NOT|NULL|IS|IN|BETWEEN|LIKE|THEN|ELSE|END|WHEN|CASE|TRUE|FALSE)$/i.test(match)) return match;
+                        if (/^\d+$/.test(match)) return match;
+                        return lookColRef(match);
+                    });
+                }).join('');
+            }
 
             return expr.trim();
         }
