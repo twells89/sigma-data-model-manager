@@ -13083,9 +13083,21 @@ ${cleanedSql}`;
                             .trim();
                         yesnoExprMap.set(lname, expr);
                     } else {
-                        // Non-yesno → Sigma display name (prefer label so e.g. "List Margin %"
-                        // is used instead of sigmaDisplayName → "List Margin Pct")
-                        const displayName = yd.label || sigmaDisplayName(yd._name);
+                        // Non-yesno → Sigma display name.
+                        // For simple (non-complex) SQL, use sigmaDisplayName of the physical
+                        // warehouse column — this matches the name Sigma auto-assigns when the
+                        // column spec has no explicit "name" property (e.g. DISCOUNT_PCT →
+                        // "Discount Pct", CHANNEL → "Channel").
+                        // For complex SQL / calculated columns, the model spec DOES set
+                        // name: d.label || sigmaDisplayName(d._name), so use the label there.
+                        let displayName;
+                        if (yd.sql && !lookIsComplexSql(yd.sql)) {
+                            const stripped = lookStripSql(yd.sql) || yd._name;
+                            const physCol = stripped.split('.').pop().replace(/"/g, '').toUpperCase();
+                            displayName = tableName === 'Custom SQL' ? physCol : sigmaDisplayName(physCol);
+                        } else {
+                            displayName = yd.label || sigmaDisplayName(yd._name);
+                        }
                         fieldDisplayMap.set(lname, displayName);
                     }
                 });
