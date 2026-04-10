@@ -11938,10 +11938,11 @@ explores:
         // Returns a Sigma formula string, or null if the pattern isn't recognised.
         function lookSqlToSigmaRules(sql, tableName) {
             // Strip ${TABLE}. and resolve ${view.field} and ${field_name} (same-view refs)
+            // Bare ${field_name} refs are uppercased so lookConvertExpression wraps them as [Display Name]
             let expr = sql
                 .replace(/\$\{TABLE\}\./gi, '')
-                .replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1')
-                .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, '$1')
+                .replace(/\$\{[^.}]+\.([^}]+)\}/g, (_, f) => f.toUpperCase())
+                .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, n) => n.toUpperCase())
                 .trim();
 
             // ── Pattern 1: COLUMN = 1  (yesno boolean flag) ───────────────────
@@ -12174,8 +12175,8 @@ explores:
         async function lookSqlToSigmaFormulaAI(sql, dimensionName, tableName) {
             const cleanedSql = sql
                 .replace(/\$\{TABLE\}\./gi, '')
-                .replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1')
-                .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, '$1')
+                .replace(/\$\{[^.}]+\.([^}]+)\}/g, (_, f) => f.toUpperCase())
+                .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, n) => n.toUpperCase())
                 .trim();
 
             // Prefer the LookML tab's own key; fall back to AI assistant key; then saved config
