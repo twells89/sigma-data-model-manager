@@ -11870,7 +11870,9 @@ explores:
         function lookStripSql(sql) {
             if (!sql) return '';
             // ${TABLE}.COLUMN → just COLUMN
-            sql = sql.replace(/\$\{TABLE\}\./gi, '').trim();
+            // Allow optional whitespace before the dot — the tokenizer can introduce a space
+            // between the ${TABLE} token and the following .COLUMN_NAME token.
+            sql = sql.replace(/\$\{TABLE\}\s*\./gi, '').trim();
             // ${view_name.field} → field (for cross-view refs — just take the field part)
             sql = sql.replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1');
             // ${field_name} (no dot) — same-view field ref → bare column name
@@ -11901,6 +11903,7 @@ explores:
             if (/^(?:CAST|SAFE_CAST|TRY_CAST)\s*\(\s*"?[A-Za-z_][A-Za-z0-9_]*"?\s+AS\s+\w[\w_]*\s*\)$/i.test(cleaned)) return false;
             if (/^[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(cleaned)) return true;
             if (/^CASE\b/i.test(cleaned)) return true;
+            if (/\bIN\s*\(/i.test(cleaned)) return true;  // SQL IN operator — needs In() formula
             if (/[=<>!+\-*\/%]/.test(cleaned.replace(/'[^']*'/g, ''))) return true;
             return false;
         }
