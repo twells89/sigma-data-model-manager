@@ -11873,6 +11873,8 @@ explores:
             sql = sql.replace(/\$\{TABLE\}\./gi, '').trim();
             // ${view_name.field} → field (for cross-view refs — just take the field part)
             sql = sql.replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1');
+            // ${field_name} (no dot) — same-view field ref → bare column name
+            sql = sql.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, '$1');
             // Strip backtick identifiers (BigQuery/MySQL style)
             sql = sql.replace(/`/g, '');
             // Strip bracket identifiers: [Column Name] → Column Name
@@ -11935,10 +11937,11 @@ explores:
         // Rule-based SQL → Sigma formula converter for common LookML patterns.
         // Returns a Sigma formula string, or null if the pattern isn't recognised.
         function lookSqlToSigmaRules(sql, tableName) {
-            // Strip ${TABLE}. and resolve ${view.field}
+            // Strip ${TABLE}. and resolve ${view.field} and ${field_name} (same-view refs)
             let expr = sql
                 .replace(/\$\{TABLE\}\./gi, '')
                 .replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1')
+                .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, '$1')
                 .trim();
 
             // ── Pattern 1: COLUMN = 1  (yesno boolean flag) ───────────────────
@@ -12172,6 +12175,7 @@ explores:
             const cleanedSql = sql
                 .replace(/\$\{TABLE\}\./gi, '')
                 .replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1')
+                .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, '$1')
                 .trim();
 
             // Prefer the LookML tab's own key; fall back to AI assistant key; then saved config
@@ -12897,9 +12901,38 @@ ${cleanedSql}`;
 
             if (view.derived_table !== undefined) {
                 // Strip LookML ;; terminator and any surrounding whitespace
-                const rawSql = (view.derived_table.sql || '')
+                let rawSql = (view.derived_table.sql || '')
                     .replace(/;;\s*$/, '')
                     .trim();
+
+                // ── Pre-process derived table SQL ────────────────────────────
+                // 1. Strip Liquid incrementcondition blocks (incremental PDT syntax)
+                rawSql = rawSql.replace(
+                    /\{%\s*incrementcondition\s*%\}[\s\S]*?\{%\s*endincrementcondition\s*%\}/gi,
+                    '/* REMOVED: incrementcondition — update for Sigma incremental materialization */'
+                );
+                // Strip any remaining Liquid tags
+                rawSql = rawSql.replace(/\{%-?\s*[^%]+\s*-?%\}/g, '/* REMOVED: LookML liquid tag */');
+
+                // 2. Resolve ${view_name.SQL_TABLE_NAME} using uploaded view files
+                rawSql = rawSql.replace(/\$\{(\w+)\.SQL_TABLE_NAME\}/gi, (match, refViewName) => {
+                    const refView = lookProject.views[refViewName];
+                    if (!refView) {
+                        warnings.push(`⚠ "${viewName}" SQL: referenced view "${refViewName}" not found in uploaded files — placeholder left in SQL.`);
+                        return `/* TODO: table for "${refViewName}" — upload that view file to auto-resolve */`;
+                    }
+                    if (refView.derived_table !== undefined) {
+                        warnings.push(`ℹ "${viewName}" SQL: "${refViewName}" is a PDT — its materialized table name cannot be resolved statically. Update the placeholder.`);
+                        return `/* TODO: PDT table for "${refViewName}" */`;
+                    }
+                    const path = (refView.sql_table_name || '').trim().replace(/;;\s*$/, '').trim();
+                    if (path) {
+                        warnings.push(`✅ Resolved \${${refViewName}.SQL_TABLE_NAME} → ${path}`);
+                        return path;
+                    }
+                    return `/* TODO: table for "${refViewName}" */`;
+                });
+
                 tableName = 'Custom SQL'; // makes column formulas → [Custom SQL/COL]
                 element = {
                     id: elementId,
@@ -12939,6 +12972,14 @@ ${cleanedSql}`;
 
             const colIdMap = {};
 
+            // Collect all field names defined in this view so we can distinguish
+            // same-view field refs (${source_dataset}) from LookML parameters (${max_date})
+            const allViewFields = new Set();
+            [view.dimension, view.dimension_group, view.measure].forEach(grp => {
+                if (!grp) return;
+                (Array.isArray(grp) ? grp : [grp]).forEach(f => f?._name && allViewFields.add(f._name));
+            });
+
             // For Custom SQL elements Sigma matches against the literal SQL alias (e.g. ORDER_ID),
             // not a display name. For warehouse-table elements it uses the display name.
             const isCustomSql = (tableName === 'Custom SQL');
@@ -12953,10 +12994,19 @@ ${cleanedSql}`;
                 if (!d._name) continue;
                 const colName = d._name.toUpperCase();
 
-                // Detect LookML parameter substitution — can't be resolved statically
-                if (/\$\{[^.}]+\}/.test(d.sql || '') && !/\$\{TABLE\}/i.test(d.sql || '')) {
-                    warnings.push(`⚠ "${d._name}": uses LookML parameter substitution — skipped. Add this dimension manually after configuring parameters in Sigma.`);
-                    continue;
+                // Detect ${identifier} refs — distinguish same-view field refs from LookML parameters
+                {
+                    const bareRefs = [...(d.sql || '').matchAll(/\$\{([^.}]+)\}/g)]
+                        .map(m => m[1]).filter(n => !/^TABLE$/i.test(n));
+                    const paramRefs = bareRefs.filter(n => !allViewFields.has(n));
+                    const fieldRefs = bareRefs.filter(n =>  allViewFields.has(n));
+                    if (paramRefs.length > 0 && fieldRefs.length === 0) {
+                        warnings.push(`⚠ "${d._name}": uses LookML parameters (${[...new Set(paramRefs)].join(', ')}) — skipped. Add this dimension manually after configuring parameters in Sigma.`);
+                        continue;
+                    }
+                    if (paramRefs.length > 0) {
+                        warnings.push(`⚠ "${d._name}": LookML parameters (${[...new Set(paramRefs)].join(', ')}) could not be resolved — best-effort conversion applied.`);
+                    }
                 }
 
                 // ── Tier dimensions with complex SQL → bucketed calculated column ──
@@ -13147,10 +13197,19 @@ ${cleanedSql}`;
 
             dimGroups.forEach(dg => {
                 if (!dg._name) return;
-                // Detect LookML parameter substitution — can't be resolved statically
-                if (/\$\{[^.}]+\}/.test(dg.sql || '') && !/\$\{TABLE\}/i.test(dg.sql || '')) {
-                    warnings.push(`⚠ "${dg._name}": uses LookML parameter substitution — skipped. Add this dimension manually after configuring parameters in Sigma.`);
-                    return;
+                // Detect ${identifier} refs — distinguish same-view field refs from LookML parameters
+                {
+                    const bareRefs = [...(dg.sql || '').matchAll(/\$\{([^.}]+)\}/g)]
+                        .map(m => m[1]).filter(n => !/^TABLE$/i.test(n));
+                    const paramRefs = bareRefs.filter(n => !allViewFields.has(n));
+                    const fieldRefs = bareRefs.filter(n =>  allViewFields.has(n));
+                    if (paramRefs.length > 0 && fieldRefs.length === 0) {
+                        warnings.push(`⚠ "${dg._name}": uses LookML parameters (${[...new Set(paramRefs)].join(', ')}) — skipped. Add this dimension group manually after configuring parameters in Sigma.`);
+                        return;
+                    }
+                    if (paramRefs.length > 0) {
+                        warnings.push(`⚠ "${dg._name}": LookML parameters (${[...new Set(paramRefs)].join(', ')}) could not be resolved — best-effort conversion applied.`);
+                    }
                 }
                 const dgType    = (dg.type || 'time').toLowerCase();
                 const groupName = dg._name.toUpperCase();
@@ -13285,14 +13344,43 @@ ${cleanedSql}`;
                 'running_total',    // → CumulativeSum() calculated column
                 'percent_of_total', // → Sum()/GrandTotal(Sum()) calculated column
             ]);
+            // Measure types that map to simple aggregates (all others with complex SQL → calc col)
+            const SIMPLE_AGG_TYPES = new Set(['sum','count','count_distinct','average','max','min','median']);
 
-            measures.forEach(ms => {
-                if (!ms._name) return;
+            for (const ms of measures) {
+                if (!ms._name) continue;
                 const msName = ms._name.toUpperCase();
-                const sqlCol = lookStripSql(ms.sql) || msName;
-                const physicalCol = sqlCol.split('.').pop().toUpperCase() || msName;
                 const msType = (ms.type || 'count').toLowerCase();
                 const msLabel = ms.label || sigmaDisplayName(msName);
+
+                // ── Complex measure SQL → calculated column ───────────────────
+                // Measures with CASE, functions, or cross-field refs that can't
+                // be expressed as a simple aggregate (e.g. type:string, type:number
+                // with a computed expression rather than a plain column ref).
+                if (ms.sql && !SIMPLE_AGG_TYPES.has(msType)) {
+                    const resolvedMsSql = ms.sql
+                        .replace(/\$\{TABLE\}\./gi, '')
+                        .replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1')
+                        .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, '$1')
+                        .replace(/;;\s*$/, '').trim();
+                    if (lookIsComplexSql(resolvedMsSql)) {
+                        let formula = lookSqlToSigmaRules(resolvedMsSql, tableName);
+                        if (!formula) formula = await lookSqlToSigmaFormulaAI(resolvedMsSql, ms._name, tableName);
+                        const calcId = sigmaShortId();
+                        if (formula) {
+                            element.columns.push({ id: calcId, formula, name: msLabel });
+                            warnings.push(`✅ Measure "${ms._name}" (${msType}) → calculated column: ${formula.slice(0, 100)}`);
+                        } else {
+                            element.columns.push({ id: calcId, formula: `[${tableName}/${sigmaDisplayName(msName)}]`, name: msLabel });
+                            warnings.push(`⚠ Measure "${ms._name}": could not auto-convert complex SQL — edit formula manually.`);
+                        }
+                        element.order.push(calcId);
+                        continue;
+                    }
+                }
+
+                const sqlCol = lookStripSql(ms.sql) || msName;
+                const physicalCol = sqlCol.split('.').pop().toUpperCase() || msName;
 
                 // ── running_total / percent_of_total → calculated columns (window functions)
                 if (CALC_COL_MEASURE_TYPES.has(msType)) {
@@ -13313,7 +13401,7 @@ ${cleanedSql}`;
                         warnings.push(`✅ Measure "${ms._name}" (percent_of_total) → calculated column: Sum([${dn}]) / GrandTotal(Sum([${dn}]))`);
                     }
                     element.order.push(calcId);
-                    return;
+                    continue;
                 }
 
                 // ── Filtered measures → conditional aggregates (SumIf, CountIf, etc.)
@@ -13362,7 +13450,7 @@ ${cleanedSql}`;
                         const formula = condAggMap[msType] || `SumIf([${dn}], ${condition})`;
                         element.metrics.push({ id: sigmaShortId(), formula, name: msLabel });
                         warnings.push(`✅ Filtered measure "${ms._name}" → ${formula.slice(0, 80)}`);
-                        return;
+                        continue;
                     }
                     // Fall through if filters couldn't be parsed
                     warnings.push(`⚠ Measure "${ms._name}": filters block could not be fully parsed — metric created without filter`);
@@ -13401,7 +13489,7 @@ ${cleanedSql}`;
                         name: msLabel
                     });
                 }
-            });
+            }
 
             if (element.metrics.length === 0) delete element.metrics;
             if (element.folders && element.folders.length === 0) delete element.folders;
