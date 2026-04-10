@@ -13033,34 +13033,54 @@ ${cleanedSql}`;
                 (Array.isArray(grp) ? grp : [grp]).forEach(f => f?._name && allViewFields.add(f._name));
             });
 
-            // Build a map of yesno dimension name → its cleaned boolean SQL expression so that
-            // when other dimensions reference a yesno field via ${field_name}, we can substitute
-            // the full boolean expression instead of just the column name.
-            // e.g. ${is_active}       → (IS_ACTIVE = 1)
-            //      ${is_premium_customer} → (LOYALTY_TIER IN ('Gold', 'Silver'))
-            const yesnoExprMap = new Map();
+            // Build two maps over this view's dimensions so that ${field_ref} expansions in
+            // computed dimensions produce correct Sigma column names / boolean expressions.
+            //
+            // yesnoExprMap: fieldName → cleaned boolean SQL expression
+            //   ${is_active}          → (IS_ACTIVE = 1)
+            //   ${is_premium_customer}→ (LOYALTY_TIER IN ('Gold', 'Silver'))
+            //
+            // fieldDisplayMap: fieldName → Sigma display name (using label if present)
+            //   ${list_margin_pct}    → [List Margin %]  (label beats sigmaDisplayName)
+            //   ${brand}              → [Brand]
+            const yesnoExprMap   = new Map();
+            const fieldDisplayMap = new Map();
             {
                 const allDims = view.dimension ? (Array.isArray(view.dimension) ? view.dimension : [view.dimension]) : [];
                 allDims.forEach(yd => {
-                    if ((yd.type || '').toLowerCase() === 'yesno' && yd.sql && yd._name) {
+                    if (!yd._name) return;
+                    const lname = yd._name.toLowerCase();
+                    if ((yd.type || '').toLowerCase() === 'yesno' && yd.sql) {
+                        // Yesno → boolean expression
                         const expr = yd.sql
                             .replace(/\$\{TABLE\}\s*\.\s*/gi, '')
                             .replace(/\$\{[^.}]+\.([^}]+)\}/g, (_, f) => f.toUpperCase())
                             .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, n) => n.toUpperCase())
                             .trim();
-                        yesnoExprMap.set(yd._name.toLowerCase(), expr);
+                        yesnoExprMap.set(lname, expr);
+                    } else {
+                        // Non-yesno → Sigma display name (prefer label so e.g. "List Margin %"
+                        // is used instead of sigmaDisplayName → "List Margin Pct")
+                        const displayName = yd.label || sigmaDisplayName(yd._name);
+                        fieldDisplayMap.set(lname, displayName);
                     }
                 });
             }
 
-            // Pre-expand ${yesno_field} refs to their full boolean expression before
-            // passing SQL to the converter. This prevents integer columns from appearing
-            // where Sigma expects a logical/boolean value.
+            // Pre-expand same-view ${field_ref} references before passing SQL to the converter:
+            //   • yesno refs  → (BOOLEAN_EXPR)  so they work as logical values in If/And/Or
+            //   • other refs  → [Display Name]  so label-based names are used correctly
+            // Note: [Mixed Case Name] tokens survive lookConvertExpression's ALL_CAPS regex
+            // without being re-converted, so pre-expanded bracket refs are safe.
             function expandYesnoRefs(sql) {
-                if (!yesnoExprMap.size) return sql;
+                if (!yesnoExprMap.size && !fieldDisplayMap.size) return sql;
                 return sql.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, n) => {
-                    const expr = yesnoExprMap.get(n.toLowerCase());
-                    return expr !== undefined ? `(${expr})` : match;
+                    const lname = n.toLowerCase();
+                    const yesnoExpr = yesnoExprMap.get(lname);
+                    if (yesnoExpr !== undefined) return `(${yesnoExpr})`;
+                    const displayName = fieldDisplayMap.get(lname);
+                    if (displayName !== undefined) return `[${displayName}]`;
+                    return match; // ${TABLE} and other non-dimension refs pass through
                 });
             }
 
