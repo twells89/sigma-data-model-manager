@@ -11939,10 +11939,12 @@ explores:
         function lookSqlToSigmaRules(sql, tableName) {
             // Strip ${TABLE}. and resolve ${view.field} and ${field_name} (same-view refs)
             // Bare ${field_name} refs are uppercased so lookConvertExpression wraps them as [Display Name]
+            // Also collapse whitespace (including newlines from multi-line SQL blocks) to single spaces.
             let expr = sql
                 .replace(/\$\{TABLE\}\./gi, '')
                 .replace(/\$\{[^.}]+\.([^}]+)\}/g, (_, f) => f.toUpperCase())
                 .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, n) => n.toUpperCase())
+                .replace(/[\r\n]+\s*/g, ' ')
                 .trim();
 
             // ── Pattern 1: COLUMN = 1  (yesno boolean flag) ───────────────────
@@ -11950,6 +11952,14 @@ explores:
             {
                 const m = expr.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(\d+)$/i);
                 if (m) return `${lookColRef(m[1])} = ${m[2]}`;
+            }
+
+            // ── Pattern 1b: COLUMN OP number (numeric comparison) ─────────────
+            // e.g. NET_REVENUE >= 500  →  [Net Revenue] >= 500
+            // e.g. DISCOUNT_PCT > 0    →  [Discount Pct] > 0
+            {
+                const m = expr.match(/^([A-Z_][A-Z0-9_]*)\s*(>=|<=|!=|<>|>|<)\s*(-?\d+(?:\.\d+)?)$/i);
+                if (m) return `${lookColRef(m[1])} ${m[2] === '<>' ? '!=' : m[2]} ${m[3]}`;
             }
 
             // ── Pattern 2: ROUND(expr, n) ──────────────────────────────────────
@@ -11985,7 +11995,19 @@ explores:
                 if (m) {
                     const args = splitTopLevelArgs(m[1]).map(a => {
                         a = a.trim();
+                        // String literal → double-quoted
                         if (/^'[^']*'$/.test(a)) return `"${a.slice(1,-1)}"`;
+                        // CAST(x AS VARCHAR|TEXT|STRING|CHAR) → Text(x)
+                        {
+                            const cm = a.match(/^CAST\s*\((.+?)\s+AS\s+(?:VARCHAR|TEXT|STRING|CHAR)\s*(?:\(\d+\))?\s*\)$/i);
+                            if (cm) {
+                                const inner = cm[1].trim();
+                                return `Text(${/^[A-Z_][A-Z0-9_]*$/i.test(inner) ? lookColRef(inner) : inner})`;
+                            }
+                        }
+                        // Nested CASE → recurse through case converter
+                        if (/^CASE\b/i.test(a)) return lookConvertCase(a) || a;
+                        // Simple column name
                         if (/^[A-Z_][A-Z0-9_]*$/i.test(a)) return lookColRef(a);
                         return a;
                     });
