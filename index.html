@@ -11700,10 +11700,14 @@ explores:
             // quoted placeholder, then restore the original SQL after parsing.
             const sqlPlaceholders = {};
             let phIdx = 0;
-            text = text.replace(/\bsql\s*:([\s\S]*?);;/g, (match, sqlContent) => {
+            // Pre-extract sql:, sql_start:, and sql_end: blocks.
+            // sql_start/sql_end are also SQL expressions but were previously left to the
+            // tokenizer, which splits "${TABLE}.COL" into two tokens joined with a space,
+            // breaking column-name extraction for duration dimension_groups.
+            text = text.replace(/\b(sql(?:_start|_end)?)\s*:([\s\S]*?);;/g, (match, keyName, sqlContent) => {
                 const key = `__SQLPH${phIdx++}__`;
                 sqlPlaceholders[key] = sqlContent.trim();
-                return `sql: "${key}" ;;`;
+                return `${keyName}: "${key}" ;;`;
             });
 
             const tokens = [];
