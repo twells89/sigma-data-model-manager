@@ -11984,6 +11984,29 @@ explores:
                 }
             }
 
+            // ── Pattern 1b-bracket: [Display Name] OP number ─────────────────
+            // Handles cases where expandFieldRefs already converted to bracket form
+            // e.g. [Discount %] >= 25  →  [Discount %] >= 25
+            {
+                const m = expr.match(/^(\[[^\]]+\])\s*(>=|<=|!=|<>|>|<|=)\s*(-?\d+(?:\.\d+)?)$/i);
+                if (m) return `${m[1]} ${m[2] === '<>' ? '!=' : m[2]} ${m[3]}`;
+            }
+
+            // ── Pattern 1c-bracket: [Display Name] IN ('val1', 'val2', ...) ──
+            // Handles bracket-form LHS after expandFieldRefs expansion
+            // e.g. [Loyalty Tier] IN ('Gold', 'Silver') → In([Loyalty Tier], "Gold", "Silver")
+            {
+                const m = expr.match(/^(\[[^\]]+\])\s+IN\s*\(([^)]+)\)$/i);
+                if (m) {
+                    const vals = splitTopLevelArgs(m[2]).map(v => {
+                        v = v.trim();
+                        if (/^'[^']*'$/.test(v)) return `"${v.slice(1, -1)}"`;
+                        return v;
+                    });
+                    return `In(${m[1]}, ${vals.join(', ')})`;
+                }
+            }
+
             // ── Pattern 2: ROUND(expr, n) ──────────────────────────────────────
             // First convert any NULLIF inside, then wrap in Round()
             if (/^ROUND\s*\(/i.test(expr)) {
@@ -12153,7 +12176,8 @@ explores:
             });
 
             // 2. Convert EXPR IN (a, b, c) → In(EXPR, a, b, c)
-            expr = expr.replace(/([\w\]\)]+(?:\([^)]*\))?)\s+IN\s*\(([^)]+)\)/gi, (_, lhs, list) => {
+            // LHS can be a bracket-form [Display Name] or a word/call expression
+            expr = expr.replace(/(\[[^\]]+\]|[\w\]\)]+(?:\([^)]*\))?)\s+IN\s*\(([^)]+)\)/gi, (_, lhs, list) => {
                 return `In(${lhs}, ${list})`;
             });
 
