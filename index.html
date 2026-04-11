@@ -2278,33 +2278,61 @@
         <aside class="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
-                    <div class="logo-icon" id="logoIcon" style="cursor: pointer;" title="Click 5 times to enable developer mode"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36" aria-label="Origami crane logo">
+                    <div class="logo-icon" id="logoIcon" style="cursor: pointer;" title="Click 5 times to enable developer mode"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36" aria-label="Origami osprey logo">
                         <defs>
                             <clipPath id="logo-crane-clip">
                                 <rect width="36" height="36" rx="10"/>
                             </clipPath>
                             <linearGradient id="logo-crane-bg" x1="0" y1="0" x2="1" y2="1">
-                                <stop offset="0%" stop-color="#003d52"/>
-                                <stop offset="100%" stop-color="#005f7a"/>
+                                <stop offset="0%" stop-color="#002d3f"/>
+                                <stop offset="100%" stop-color="#004055"/>
                             </linearGradient>
                         </defs>
-                        <g clip-path="url(#logo-crane-clip)">
+                        <g clip-path="url(#logo-crane-clip)" stroke="#002040" stroke-width="0.7" stroke-linejoin="round">
                             <!-- Background -->
-                            <rect width="36" height="36" fill="url(#logo-crane-bg)"/>
-                            <!-- Head / beak — points upper-left, lightest facet -->
-                            <polygon points="12,3 20,7 18,17" fill="rgba(255,255,255,0.96)"/>
-                            <!-- Left wing upper face -->
-                            <polygon points="2,17 20,7 18,17" fill="rgba(255,255,255,0.82)"/>
-                            <!-- Left wing lower fold -->
-                            <polygon points="2,17 18,17 9,22" fill="rgba(255,255,255,0.50)"/>
-                            <!-- Right wing upper face -->
-                            <polygon points="34,17 20,7 18,17" fill="rgba(255,255,255,0.82)"/>
-                            <!-- Right wing lower fold -->
-                            <polygon points="34,17 18,17 27,22" fill="rgba(255,255,255,0.50)"/>
-                            <!-- Body — connects wing folds, tapers to tail -->
-                            <polygon points="18,17 9,22 15,27 21,27 27,22" fill="rgba(255,255,255,0.66)"/>
-                            <!-- Tail — narrow triangle pointing down -->
-                            <polygon points="15,27 21,27 18,33" fill="rgba(255,255,255,0.34)"/>
+                            <rect width="36" height="36" fill="url(#logo-crane-bg)" stroke="none"/>
+                            <!--
+                              Osprey in hover/hunting position, viewed from slightly above-front.
+                              Key: wings kink UP to the carpal joint then DOWN to the tip — the
+                              distinctive osprey "M" silhouette. 8 origami facets, each a different
+                              teal shade to simulate folded paper catching light differently.
+
+                              Vertices (named):
+                                beak  = (11,6)   head-beak tip, upper-left
+                                htop  = (19,3)   head crown
+                                hrite = (24,8)   head right
+                                neck  = (18,13)  neck/body junction
+
+                                cl    = (7,11)   LEFT carpal joint  (wing kinks UP+OUT here)
+                                tl    = (2,20)   left wing tip      (then DOWN+OUT)
+                                ll    = (11,21)  left wing lower-inner edge
+
+                                cr    = (29,11)  RIGHT carpal joint
+                                tr    = (34,20)  right wing tip
+                                lr    = (25,21)  right wing lower-inner edge
+
+                                bl    = (14,23)  body left
+                                br    = (22,23)  body right
+                                btl   = (15,29)  body-tail left
+                                btr   = (21,29)  body-tail right
+                                ttip  = (18,34)  tail tip
+                            -->
+                            <!-- Head beak-side — lightest, most forward-facing -->
+                            <polygon points="11,6 19,3 18,13"      fill="#c2f0fb"/>
+                            <!-- Head right-side -->
+                            <polygon points="19,3 24,8 18,13"      fill="#90dff2"/>
+                            <!-- Left inner wing — from neck up-and-out to carpal -->
+                            <polygon points="18,13 7,11 11,21 14,23" fill="#45c4d8"/>
+                            <!-- Left outer wing — carpal down-and-out to tip (the kink fold) -->
+                            <polygon points="7,11 2,20 11,21"      fill="#1eaabe"/>
+                            <!-- Right inner wing — mirror -->
+                            <polygon points="18,13 29,11 25,21 22,23" fill="#45c4d8"/>
+                            <!-- Right outer wing — mirror kink fold -->
+                            <polygon points="29,11 34,20 25,21"    fill="#1eaabe"/>
+                            <!-- Body -->
+                            <polygon points="18,13 14,23 15,29 21,29 22,23" fill="#0d8ba4"/>
+                            <!-- Tail — narrow, receding -->
+                            <polygon points="15,29 21,29 18,34"    fill="#096b80"/>
                         </g>
                     </svg></div>
                     <span class="logo-text">Data Model Manager</span>
