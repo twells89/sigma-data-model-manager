@@ -17812,25 +17812,26 @@ models:
             const m = _findMatches[_findIdx];
             const editor = document.getElementById('jsonEditor');
 
-            // Compute scroll target before any DOM changes so clientHeight is stable.
+            // Compute the scroll that centers the match line in the viewport.
+            // Include paddingTop so the first lines aren't offset by 20px.
+            // Add lh/2 so the middle of the match line lands at the middle of the viewport.
             const cs = getComputedStyle(editor);
             const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4 || 20;
+            const pt = parseFloat(cs.paddingTop) || 0;
             const linesBefore = editor.value.substring(0, m.start).split('\n').length - 1;
-            const targetScroll = Math.max(0, linesBefore * lh - editor.clientHeight / 2);
+            const targetScroll = Math.max(0, pt + linesBefore * lh + lh / 2 - editor.clientHeight / 2);
 
             document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
 
-            // Select the match. Chrome: no auto-scroll. Firefox: queues a deferred auto-scroll.
-            editor.focus({ preventScroll: true });
+            // Set selection on the *unfocused* textarea — no auto-scroll side effects
+            // from either Chrome or Firefox. The selection is preserved so when the user
+            // dismisses find and clicks into the editor the cursor lands at the match.
             editor.setSelectionRange(m.start, m.end);
 
-            // Set scroll ONLY in setTimeout — fires after Chrome's layout pass and after
-            // Firefox's deferred auto-scroll from setSelectionRange, overriding both cleanly.
-            setTimeout(() => {
-                editor.scrollTop = targetScroll;
-                _updateBackdrop();
-                document.getElementById('findInput').focus({ preventScroll: true });
-            }, 0);
+            // Set scroll directly. No focus(), no setTimeout, no race against browser
+            // deferred-scroll behavior. The find input retains focus throughout.
+            editor.scrollTop = targetScroll;
+            _updateBackdrop();
         }
 
         function findNext() { _jumpToMatch(_findIdx + 1); }
