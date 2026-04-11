@@ -13225,7 +13225,25 @@ ${cleanedSql}`;
                 // Strip any remaining Liquid tags
                 rawSql = rawSql.replace(/\{%-?\s*[^%]+\s*-?%\}/g, '/* REMOVED: LookML liquid tag */');
 
-                // 2. Resolve ${view_name.SQL_TABLE_NAME} using uploaded view files
+                // 2. Convert Snowflake cast shorthand col::TYPE → CAST(col AS TYPE).
+                //    Sigma rewrites ::TYPE syntax as TO_DATE(CAST(...)), TO_VARCHAR(CAST(...)), etc.,
+                //    which Snowflake rejects when the inner type matches the outer function
+                //    (e.g. TO_DATE(CAST(col AS DATE)) fails because TO_DATE doesn't accept DATE).
+                //    ANSI CAST() syntax is left alone by Sigma's dialect rewriter.
+                //    Handles table.column::TYPE and bare column::TYPE; skips string literals.
+                const castConversions = [];
+                rawSql = rawSql.replace(
+                    /(?<!['"\\])([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*::\s*([A-Za-z_]\w*)/g,
+                    (match, expr, typ) => {
+                        castConversions.push(`${expr}::${typ} → CAST(${expr} AS ${typ})`);
+                        return `CAST(${expr} AS ${typ})`;
+                    }
+                );
+                if (castConversions.length > 0) {
+                    warnings.push(`ℹ️ "${viewName}" derived table SQL: converted ${castConversions.length} Snowflake cast shorthand(s) to ANSI CAST() to prevent Sigma from wrapping them in TO_DATE()/TO_VARCHAR() (which causes save errors): ${castConversions.join(', ')}`);
+                }
+
+                // 3. Resolve ${view_name.SQL_TABLE_NAME} using uploaded view files
                 rawSql = rawSql.replace(/\$\{(\w+)\.SQL_TABLE_NAME\}/gi, (match, refViewName) => {
                     const refView = lookProject.views[refViewName];
                     if (!refView) {
@@ -17234,6 +17252,7 @@ models:
     <li><b>sql_table_name with Liquid</b> — If a view's <code>sql_table_name</code> uses Liquid to switch tables dynamically (e.g. by environment), the converter strips the Liquid and uses whatever static text remains. Verify the warehouse path after conversion.</li>
     <li><b>Unsupported SQL functions</b> — Dimension and measure <code>sql:</code> expressions containing Snowflake-specific functions without Sigma equivalents (<code>FLATTEN</code>, <code>LATERAL</code>, <code>QUALIFY</code>, <code>PIVOT</code>, <code>UNPIVOT</code>, <code>GENERATOR</code>, <code>TABLESAMPLE</code>, <code>OBJECT_CONSTRUCT</code>, <code>ARRAY_CONSTRUCT</code>) are automatically <b>skipped with a warning</b>. The column is omitted from the output — add it manually in the Sigma UI after saving.</li>
     <li><b>Derived tables without SQL</b> — If a <code>derived_table</code> block exists but contains no <code>sql:</code> statement, a Custom SQL element is still created with a blank SQL body and a warning is shown. Add the SQL manually in the JSON editor before saving to Sigma.</li>
+    <li><b>Snowflake cast shorthand (<code>::TYPE</code>) in derived table SQL</b> — Sigma rewrites <code>col::DATE</code> as <code>TO_DATE(CAST(col AS DATE))</code> when saving, which Snowflake rejects (TO_DATE does not accept a DATE argument). The converter automatically converts all <code>identifier::TYPE</code> patterns in derived table SQL to ANSI <code>CAST(identifier AS TYPE)</code> syntax, which Sigma's rewriter leaves alone. A conversion notice appears in the warnings panel when this occurs.</li>
 </ul>
 
 <div class="help-links">
