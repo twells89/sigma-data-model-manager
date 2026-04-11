@@ -17793,27 +17793,20 @@ models:
             const m = _findMatches[_findIdx];
             const editor = document.getElementById('jsonEditor');
 
-            // 1. Focus with preventScroll so the browser doesn't auto-scroll the page
-            //    or editor before we've set our own scroll position.
+            // Compute scroll target before any DOM changes so clientHeight is stable.
+            const cs = getComputedStyle(editor);
+            const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4 || 20;
+            const linesBefore = editor.value.substring(0, m.start).split('\n').length - 1;
+            const targetScroll = Math.max(0, linesBefore * lh - editor.clientHeight / 2);
+
+            document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
+
+            // Select the match. Chrome: no auto-scroll. Firefox: queues a deferred auto-scroll.
             editor.focus({ preventScroll: true });
             editor.setSelectionRange(m.start, m.end);
 
-            // 2. Manually scroll to center the match.
-            //    Read scrollTop first — Firefox bug #1425107 silently drops the write otherwise.
-            const cs = getComputedStyle(editor);
-            const lh = parseFloat(cs.lineHeight) ||
-                       parseFloat(cs.fontSize) * 1.2 || 20;
-            const linesBefore = editor.value.substring(0, m.start).split('\n').length - 1;
-            const targetScroll = Math.max(0, linesBefore * lh - editor.clientHeight / 2);
-            void editor.scrollTop; // read before write (Firefox #1425107)
-            editor.scrollTop = targetScroll;
-
-            document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
-            _updateBackdrop();
-
-            // 3. After the current event loop turn, re-enforce the scroll position and
-            //    re-sync the backdrop. setSelectionRange can trigger a deferred browser
-            //    auto-scroll that fires asynchronously and would desync the backdrop.
+            // Set scroll ONLY in setTimeout — fires after Chrome's layout pass and after
+            // Firefox's deferred auto-scroll from setSelectionRange, overriding both cleanly.
             setTimeout(() => {
                 editor.scrollTop = targetScroll;
                 _updateBackdrop();
