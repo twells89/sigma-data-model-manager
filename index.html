@@ -2860,9 +2860,14 @@ How it works:
                         </div>
                     </details>
 
-                    <div class="dbt-convert-row">
-                        <button class="btn btn-primary" style="flex: 1;" id="lookConvertBtn" onclick="runLookConversion()">
-                            🔍 Convert to Sigma JSON
+                    <div class="dbt-convert-row" style="gap: 8px;">
+                        <button class="btn btn-primary" style="flex: 1;" id="lookConvertBtn" onclick="runLookConversion()"
+                            title="Convert the selected explore to a Sigma data model">
+                            🔍 Convert Explore
+                        </button>
+                        <button class="btn btn-secondary" style="flex: 1;" id="lookBatchBtn" onclick="runLookBatchConversion()"
+                            title="Convert all explores into one combined data model — shared views (date_dim, store_dim, etc.) are deduplicated into single elements with relationships wired from each fact table">
+                            🗂 All Explores
                         </button>
                     </div>
                 </div>
@@ -13007,6 +13012,183 @@ ${cleanedSql}`;
             showToast(`Converted explore "${exploreName}" → ${elemCount} element${elemCount!==1?'s':''}${ctrlCount ? `, ${ctrlCount} control${ctrlCount!==1?'s':''}` : ''}`, 'success');
         }
 
+        // ── Batch: convert ALL explores into one combined data model ─────────────
+        // Shared views (date_dim, store_dim, etc.) are deduplicated — each physical
+        // view becomes exactly one Sigma element regardless of how many explores use it.
+        // one_to_many / many_to_many joins are skipped (batch mode is relationships-only);
+        // use single-explore mode with strategy=joins for those.
+        async function runLookBatchConversion() {
+            const allExploreNames = Object.keys(lookProject.explores);
+            if (allExploreNames.length === 0) {
+                showToast('No explores loaded — upload a .model.lkml file first', 'warning'); return;
+            }
+
+            _usedIds.clear();
+            const batchBtn = document.getElementById('lookBatchBtn');
+            if (batchBtn) { batchBtn.disabled = true; batchBtn.textContent = '⏳ Converting…'; }
+
+            const connectionId = document.getElementById('lookConnectionId').value;
+            state.useFriendlyNames = isConnectionFriendly(connectionId);
+            const warnings = [];
+            { const fnWarn = friendlyNameWarning(); if (fnWarn) warnings.push(fnWarn); }
+
+            // Shared view registry — same physical view → same element across all explores
+            const globalPhysViewMap = {};  // viewName → { element, elementId, colIdMap }
+
+            for (const exploreName of allExploreNames) {
+                const explore = lookProject.explores[exploreName];
+                const baseViewName = explore.from || exploreName;
+                const baseAlias = exploreName;
+                const isBaseView = (name) => name === baseAlias || name === baseViewName;
+
+                const joinsRaw = explore.join
+                    ? (Array.isArray(explore.join) ? explore.join : [explore.join])
+                    : [];
+
+                // Parse joins — skip non-N:1 (physical joins require single-explore mode)
+                const joinDefs = [];
+                joinsRaw.forEach(j => {
+                    const alias = j._name || j.join;
+                    const viewName = j.from || alias;
+                    const rel = (j.relationship || 'many_to_one').toLowerCase();
+
+                    if (rel === 'one_to_many' || rel === 'many_to_many') {
+                        warnings.push(`ℹ [${exploreName}] "${alias}" (${rel}): skipped in batch mode — use single-explore mode for physical joins`);
+                        return;
+                    }
+
+                    const sqlOn = j.sql_on || '';
+                    const keyMatch = sqlOn.match(/\$\{(\w+)\.(\w+)\}\s*=\s*\$\{(\w+)\.(\w+)\}/);
+                    const keys = keyMatch ? [{
+                        leftView: keyMatch[1], leftCol: keyMatch[2].toUpperCase(),
+                        rightView: keyMatch[3], rightCol: keyMatch[4].toUpperCase()
+                    }] : [];
+
+                    if (!keyMatch && sqlOn) {
+                        const isRangeJoin = /\$\{[^}]+\}\s*[><!]|[><!]=?\s*\$\{/.test(sqlOn);
+                        warnings.push(`⚠ [${exploreName}] Join "${alias}": ${isRangeJoin ? 'range join' : 'complex sql_on'} — add relationship manually in Sigma ERD`);
+                    }
+
+                    joinDefs.push({ alias, viewName, keys, rel });
+                });
+
+                // Ensure base element exists (create once, reuse across explores)
+                if (!globalPhysViewMap[baseViewName]) {
+                    globalPhysViewMap[baseViewName] = await lookConvertView(baseViewName, baseViewName, connectionId, warnings);
+                }
+
+                // Ensure each join's physical view element exists
+                for (const j of joinDefs) {
+                    if (!globalPhysViewMap[j.viewName]) {
+                        globalPhysViewMap[j.viewName] = await lookConvertView(j.viewName, j.viewName, connectionId, warnings);
+                    }
+                }
+
+                // Wire N:1 relationships onto the base element
+                const baseEl = globalPhysViewMap[baseViewName].element;
+                if (!baseEl.relationships) baseEl.relationships = [];
+
+                // Build set of already-wired target pairs so role-playing and cross-explore
+                // duplicates don't produce multiple relationships to the same target column
+                const usedTargetCols = new Set(
+                    baseEl.relationships.map(r => `${r.targetElementId}|${r.keys[0]?.targetColumnId}`)
+                );
+
+                for (const j of joinDefs) {
+                    const targetRes = globalPhysViewMap[j.viewName];
+                    if (!targetRes) continue;
+
+                    for (const k of j.keys) {
+                        const isTarget = (name) => name === j.alias || name === j.viewName;
+                        const srcColName = isBaseView(k.leftView) ? k.leftCol : k.rightCol;
+                        const tgtColName = isTarget(k.leftView) ? k.leftCol : k.rightCol;
+                        const srcColId = lookFindColId(globalPhysViewMap[baseViewName], srcColName);
+                        const tgtColId = lookFindColId(targetRes, tgtColName);
+
+                        if (!srcColId || !tgtColId) {
+                            warnings.push(`⚠ [${exploreName}] Relationship "${j.alias}": could not find column IDs for (${srcColName} / ${tgtColName}) — add manually in Sigma ERD`);
+                            continue;
+                        }
+
+                        const pairKey = `${targetRes.elementId}|${tgtColId}`;
+                        if (usedTargetCols.has(pairKey)) {
+                            warnings.push(`ℹ [${exploreName}] Role-playing join "${j.alias}" (→ ${j.viewName}): target column already wired — add this relationship manually in Sigma ERD view`);
+                            continue;
+                        }
+                        usedTargetCols.add(pairKey);
+
+                        baseEl.relationships.push({
+                            id: sigmaShortId(),
+                            targetElementId: targetRes.elementId,
+                            keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
+                            name: j.alias
+                        });
+                    }
+                }
+            }
+
+            // Collect unique elements (deduplication was done by globalPhysViewMap keying on view name)
+            const seenIds = new Set();
+            let allElements = Object.values(globalPhysViewMap).filter(r => {
+                if (seenIds.has(r.elementId)) return false;
+                seenIds.add(r.elementId);
+                return true;
+            }).map(r => r.element);
+
+            // Sort: elements without relationships (dims) first, elements with relationships (facts) last
+            // Sigma spec API requires target element IDs to appear before their relationship sources
+            allElements.sort((a, b) => {
+                const aHasRel = !!(a.relationships && a.relationships.length > 0);
+                const bHasRel = !!(b.relationships && b.relationships.length > 0);
+                if (aHasRel === bHasRel) return 0;
+                return aHasRel ? 1 : -1;
+            });
+
+            // Model name from the loaded model file (strip path and extension)
+            const modelBaseName = (lookProject.modelName || 'combined_model')
+                .replace(/.*[\\/]/, '').replace(/\.model\.lkml$|\.lkml$/, '');
+            const outputJson = {
+                name: modelBaseName,
+                pages: [{
+                    id: sigmaShortId(),
+                    name: 'Page 1',
+                    elements: allElements
+                }]
+            };
+
+            // Render using the same output panel as single-explore mode
+            document.getElementById('lookJsonOutput').value = JSON.stringify(outputJson, null, 2);
+
+            const warnBox = document.getElementById('lookWarningBox');
+            if (warnings.length) {
+                warnBox.style.display = '';
+                document.getElementById('lookWarnCount').textContent =
+                    `⚠ ${warnings.length} warning${warnings.length !== 1 ? 's' : ''}`;
+                document.getElementById('lookWarnDetail').innerHTML =
+                    warnings.map(w => `<div>${w}</div>`).join('');
+                document.getElementById('lookWarnDetail').style.display = 'none';
+                document.getElementById('lookWarnToggle').textContent = '▼ show';
+            } else {
+                warnBox.style.display = 'none';
+            }
+
+            const elemCount = allElements.length;
+            const relCount = allElements.reduce((n, e) => n + (e.relationships?.length || 0), 0);
+            document.getElementById('lookOutputStats').innerHTML = [
+                `<span class="dbt-stat-badge">${allExploreNames.length} explore${allExploreNames.length !== 1 ? 's' : ''}</span>`,
+                `<span class="dbt-stat-badge">${elemCount} element${elemCount !== 1 ? 's' : ''}</span>`,
+                relCount ? `<span class="dbt-stat-badge" style="color:var(--success);">${relCount} relationship${relCount !== 1 ? 's' : ''}</span>` : '',
+                warnings.length ? `<span class="dbt-stat-badge" style="color:var(--warning);">${warnings.length} warning${warnings.length !== 1 ? 's' : ''}</span>` : ''
+            ].filter(Boolean).join('');
+
+            ['lookCopyBtn', 'lookLoadBtn', 'lookSaveBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+            if (batchBtn) { batchBtn.disabled = false; batchBtn.textContent = '🗂 All Explores'; }
+            showToast(`Batch converted ${allExploreNames.length} explores → ${elemCount} element${elemCount !== 1 ? 's' : ''}`, 'success');
+        }
+
         function toggleLookWarnings() {
             const detail = document.getElementById('lookWarnDetail');
             const toggle = document.getElementById('lookWarnToggle');
@@ -17018,7 +17200,7 @@ models:
     <li><b>Tier dimensions</b> → Bucketed <code>If()</code> calculated columns (e.g. "0 to 99", "100 to 499", "500 or Above")</li>
     <li><b>Yesno dimensions</b> → Boolean calculated columns with "(T/F)" suffix</li>
     <li><b>Measures</b> → Sigma metrics (sum, count, count_distinct, average, min, max, median)</li>
-    <li><b>Explore joins</b> → Sigma relationships</li>
+    <li><b>Explore joins</b> → Sigma relationships; use <b>Convert Explore</b> for a single explore or <b>All Explores</b> to batch-convert all explores at once into one combined data model — shared views (e.g. <code>date_dim</code>, <code>store_dim</code>) are deduplicated into a single element with relationships wired from each fact table. One-to-many and many-to-many joins are skipped in batch mode (use single-explore mode for those).</li>
     <li><b>Dimension groups (type:time)</b> → Expanded into individual columns per timeframe (DateTrunc / DatePart), all grouped into a folder named after the group. Supported standard timeframes: raw, date, week, month, quarter, year, hour, minute, day_of_week, day_of_month, week_of_year, month_num, quarter_of_year, hour_of_day. Binned timeframes (e.g. <code>minute15</code>, <code>hour4</code>) use <code>DateAdd + Floor</code> arithmetic. Fiscal timeframes (<code>fiscal_year</code>, <code>fiscal_quarter_of_year</code>, etc.) are skipped with a warning — they require <code>fiscal_month_offset</code> from the model-level config, which is not available in view files.</li>
     <li><b>Dimension groups (type:duration)</b> → <code>DateDiff()</code> columns per interval (day, week, month, quarter, year, hour, minute, second), grouped into a folder named after the group</li>
     <li><b>datatype: epoch</b> → <code>DateFromUnix()</code> wrapper applied automatically to all timeframe and duration formulas</li>
