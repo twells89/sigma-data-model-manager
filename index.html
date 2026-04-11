@@ -13358,7 +13358,7 @@ ${cleanedSql}`;
                         if (yd.sql && !lookIsComplexSql(yd.sql)) {
                             const stripped = lookStripSql(yd.sql) || yd._name;
                             const physCol = stripped.split('.').pop().replace(/"/g, '').toUpperCase();
-                            displayName = tableName === 'Custom SQL' ? physCol : sigmaDisplayName(physCol);
+                            displayName = sigmaDisplayName(physCol);
                         } else {
                             displayName = yd.label || sigmaDisplayName(yd._name);
                         }
