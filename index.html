@@ -13225,22 +13225,34 @@ ${cleanedSql}`;
                 // Strip any remaining Liquid tags
                 rawSql = rawSql.replace(/\{%-?\s*[^%]+\s*-?%\}/g, '/* REMOVED: LookML liquid tag */');
 
-                // 2. Convert Snowflake cast shorthand col::TYPE → CAST(col AS TYPE).
-                //    Sigma rewrites ::TYPE syntax as TO_DATE(CAST(...)), TO_VARCHAR(CAST(...)), etc.,
-                //    which Snowflake rejects when the inner type matches the outer function
-                //    (e.g. TO_DATE(CAST(col AS DATE)) fails because TO_DATE doesn't accept DATE).
-                //    ANSI CAST() syntax is left alone by Sigma's dialect rewriter.
-                //    Handles table.column::TYPE and bare column::TYPE; skips string literals.
+                // 2. Rewrite Snowflake cast shorthand to Sigma-safe equivalents.
+                //    Sigma rewrites BOTH col::DATE and CAST(col AS DATE) to
+                //    TO_DATE(CAST(col AS DATE)), which Snowflake rejects because
+                //    TO_DATE does not accept a DATE argument.
+                //    For DATE/TIMESTAMP: use TRY_TO_DATE(TO_VARCHAR(col)) —
+                //      Sigma does not rewrite TRY_TO_DATE calls, and
+                //      TO_VARCHAR(col) safely produces a parseable string for any type.
+                //    For all other types: CAST(col AS TYPE) is sufficient
+                //      (Sigma wraps those as TO_VARCHAR/TO_NUMBER which are valid).
                 const castConversions = [];
                 rawSql = rawSql.replace(
                     /(?<!['"\\])([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*::\s*([A-Za-z_]\w*)/g,
                     (match, expr, typ) => {
-                        castConversions.push(`${expr}::${typ} → CAST(${expr} AS ${typ})`);
-                        return `CAST(${expr} AS ${typ})`;
+                        const typU = typ.toUpperCase();
+                        let replacement;
+                        if (typU === 'DATE') {
+                            replacement = `TRY_TO_DATE(TO_VARCHAR(${expr}))`;
+                        } else if (typU === 'DATETIME' || typU.startsWith('TIMESTAMP')) {
+                            replacement = `TRY_TO_TIMESTAMP(TO_VARCHAR(${expr}))`;
+                        } else {
+                            replacement = `CAST(${expr} AS ${typ})`;
+                        }
+                        castConversions.push(`${expr}::${typ} → ${replacement}`);
+                        return replacement;
                     }
                 );
                 if (castConversions.length > 0) {
-                    warnings.push(`ℹ️ "${viewName}" derived table SQL: converted ${castConversions.length} Snowflake cast shorthand(s) to ANSI CAST() to prevent Sigma from wrapping them in TO_DATE()/TO_VARCHAR() (which causes save errors): ${castConversions.join(', ')}`);
+                    warnings.push(`ℹ️ "${viewName}" derived table SQL: rewrote ${castConversions.length} Snowflake cast shorthand(s) to Sigma-compatible equivalents (Sigma wraps ::DATE/CAST(…AS DATE) with TO_DATE() which Snowflake rejects): ${castConversions.join(', ')}`);
                 }
 
                 // 3. Resolve ${view_name.SQL_TABLE_NAME} using uploaded view files
@@ -17252,7 +17264,7 @@ models:
     <li><b>sql_table_name with Liquid</b> — If a view's <code>sql_table_name</code> uses Liquid to switch tables dynamically (e.g. by environment), the converter strips the Liquid and uses whatever static text remains. Verify the warehouse path after conversion.</li>
     <li><b>Unsupported SQL functions</b> — Dimension and measure <code>sql:</code> expressions containing Snowflake-specific functions without Sigma equivalents (<code>FLATTEN</code>, <code>LATERAL</code>, <code>QUALIFY</code>, <code>PIVOT</code>, <code>UNPIVOT</code>, <code>GENERATOR</code>, <code>TABLESAMPLE</code>, <code>OBJECT_CONSTRUCT</code>, <code>ARRAY_CONSTRUCT</code>) are automatically <b>skipped with a warning</b>. The column is omitted from the output — add it manually in the Sigma UI after saving.</li>
     <li><b>Derived tables without SQL</b> — If a <code>derived_table</code> block exists but contains no <code>sql:</code> statement, a Custom SQL element is still created with a blank SQL body and a warning is shown. Add the SQL manually in the JSON editor before saving to Sigma.</li>
-    <li><b>Snowflake cast shorthand (<code>::TYPE</code>) in derived table SQL</b> — Sigma rewrites <code>col::DATE</code> as <code>TO_DATE(CAST(col AS DATE))</code> when saving, which Snowflake rejects (TO_DATE does not accept a DATE argument). The converter automatically converts all <code>identifier::TYPE</code> patterns in derived table SQL to ANSI <code>CAST(identifier AS TYPE)</code> syntax, which Sigma's rewriter leaves alone. A conversion notice appears in the warnings panel when this occurs.</li>
+    <li><b>Snowflake cast shorthand (<code>::TYPE</code>) in derived table SQL</b> — Sigma rewrites both <code>col::DATE</code> and <code>CAST(col AS DATE)</code> as <code>TO_DATE(CAST(col AS DATE))</code> when saving, which Snowflake rejects because <code>TO_DATE</code> does not accept a DATE argument. The converter automatically rewrites <code>::DATE</code> to <code>TRY_TO_DATE(TO_VARCHAR(col))</code> and <code>::TIMESTAMP</code> to <code>TRY_TO_TIMESTAMP(TO_VARCHAR(col))</code> — functions Sigma does not touch. Other <code>::TYPE</code> casts become <code>CAST(col AS TYPE)</code>. A warning appears in the output panel listing each rewritten cast.</li>
 </ul>
 
 <div class="help-links">
@@ -17736,12 +17748,18 @@ models:
         }
 
         function closeFindReplace() {
+            const editor = document.getElementById('jsonEditor');
             document.getElementById('findReplaceOverlay').style.display = 'none';
+            // Place cursor at the last navigated match before clearing state.
+            if (_findMatches.length > 0 && _findIdx >= 0) {
+                const m = _findMatches[_findIdx];
+                editor.setSelectionRange(m.start, m.end);
+            }
             _findMatches = [];
             _findIdx = -1;
             document.getElementById('findCount').textContent = '';
             document.getElementById('editorBackdrop').innerHTML = '';
-            document.getElementById('jsonEditor').focus();
+            editor.focus();
         }
 
         // Render all match highlights into the backdrop div.
@@ -17823,13 +17841,11 @@ models:
 
             document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
 
-            // Set selection on the *unfocused* textarea — no auto-scroll side effects
-            // from either Chrome or Firefox. The selection is preserved so when the user
-            // dismisses find and clicks into the editor the cursor lands at the match.
-            editor.setSelectionRange(m.start, m.end);
-
-            // Set scroll directly. No focus(), no setTimeout, no race against browser
-            // deferred-scroll behavior. The find input retains focus throughout.
+            // Scroll directly. No focus(), no setSelectionRange(), no setTimeout.
+            // setSelectionRange() on a textarea (even unfocused) can trigger a deferred
+            // auto-scroll in Safari/Firefox that fires after our scrollTop assignment and
+            // overrides it. The backdrop's .cur mark provides all visual feedback needed.
+            // The cursor position is restored to the last match when find is closed.
             editor.scrollTop = targetScroll;
             _updateBackdrop();
         }
