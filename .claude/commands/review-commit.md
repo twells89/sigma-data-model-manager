@@ -53,10 +53,44 @@ Trace through these LookML fields mentally and confirm the output formula looks 
 5. `promo_length` (duration group, intervals: day/week)
    Expected: two columns with `DateDiff("day", [Start Date], [End Date])` etc. — no `[TABLE]` refs
 
-## Step 6 — Verdict
+## Step 6 — In-tool documentation check
+The tool has a help modal with per-converter tabs in the `HELP_CONTENT` JavaScript object
+(around line 16830). Each tab has consistent sections: "What Gets Converted", "Known
+Limitations", and sometimes "Expression Conversion". Inline tooltips (`title=` attrs) and
+`placeholder=` text also serve as docs.
+
+Determine which converter(s) the diff touches (LookML, dbt, Snowflake, Tableau, Power BI,
+Alteryx, Omni, Atlan). Then for each affected converter:
+
+**A. "What Gets Converted" accuracy**
+Read the relevant `HELP_CONTENT` tab section. Does it accurately describe what the
+converter now handles? If a new pattern was added (e.g. `IN` operator support, duration
+groups, yesno expansion), it should be listed here or in "Expression Conversion".
+
+**B. "Known Limitations" honesty**
+If a limitation was just fixed (e.g. "IN operator not supported" after Pattern 1c was
+added), it must be removed or updated. If a new known limitation was introduced, it must
+be added.
+
+**C. Overview tab Key Capabilities**
+If a capability was added that is broadly applicable (new converter source, new formula
+type, new workflow feature), check that the Overview tab's "Key Capabilities" or
+"General Workflow" section reflects it.
+
+**D. Inline tooltip/placeholder coverage**
+If new UI controls were added (buttons, inputs, dropdowns), check they have meaningful
+`title=` or `placeholder=` text. If an existing button's behavior changed, check its
+`title=` still accurately describes what it does.
+
+**E. Verdict on docs**
+- **Docs OK** — help content accurately reflects current behavior
+- **Docs need update** — list exactly what is stale or missing and where (line numbers
+  if possible), then make the updates before committing
+
+## Step 7 — Final verdict
 Report one of:
-- **PASS** — safe to commit, summarize what was reviewed
-- **FAIL** — list specific issues found, do NOT commit, suggest fixes
+- **PASS** — code and docs are both correct; safe to commit
+- **FAIL** — list specific issues found (code or docs); do NOT commit; suggest fixes
 - **WARN** — commit is likely safe but flag items to monitor
 
 Only after a PASS verdict should you proceed with `git commit`.

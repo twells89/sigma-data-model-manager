@@ -46,6 +46,17 @@ auto-assigns names via its own friendly naming.
 5. `is premium customer [IS PREMIUM CUSTOMER]` not found — means Pattern 1c failed
    for a bracket-form IN expression
 
+## In-tool documentation locations
+- **Help modal content**: `HELP_CONTENT` JS object (~line 16830). One key per converter tab:
+  `overview`, `tableau`, `pbi`, `lookml`, `dbt`, `snow`, `alteryx`, `contract`, `omni`, `ai`, `api`, `mcp`.
+  Each tab has "What Gets Converted", "Known Limitations", and optional "Expression Conversion" sections.
+- **Inline tooltips**: `title=` attributes on buttons and controls throughout the HTML.
+- **Placeholders**: `placeholder=` on form inputs and textareas.
+- **Converter panel instructions**: "How to get files" `<strong>` blocks in each converter's left column.
+
+When converter behavior changes, the corresponding `HELP_CONTENT` tab must be updated in the same commit.
+The `/review-commit` command enforces this (Step 6).
+
 ## Test files
 - `/Users/tjwells/Desktop/Converter Files/Looker/promo_dim_view.lkml`
 - `/Users/tjwells/Desktop/Converter Files/Looker/monthly_summary_derived_view.lkml`
