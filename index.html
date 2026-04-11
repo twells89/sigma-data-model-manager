@@ -3753,7 +3753,7 @@ PRODUCT_NAME
                     state.dataModels = (state.dataModels || []).filter(m => m.dataModelId !== id);
                     if (state.selectedModel?.dataModelId === id) {
                         state.selectedModel = null;
-                        document.getElementById('jsonEditor').value = '';
+                        setEditorRaw('');
                         document.getElementById('editorTitle').textContent = 'Select a data model';
                         ['undoBtn','redoBtn','findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(bid => {
                             const el = document.getElementById(bid);
@@ -5124,7 +5124,7 @@ PRODUCT_NAME
                 if (state.selectedModel?.dataModelId === dataModelId) {
                     state.selectedModel = null;
                     state.isNewModel = false;
-                    document.getElementById('jsonEditor').value = '';
+                    setEditorRaw('');
                     document.getElementById('editorTitle').textContent = 'Select a data model';
                     ['undoBtn','redoBtn','findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => {
                         const el = document.getElementById(id);
@@ -5269,6 +5269,34 @@ PRODUCT_NAME
             if (prev && prev !== editor.value) _pushUndo(prev);
             // Auto-refresh panels if open
             if (document.getElementById('treePanel')?.style.display !== 'none') buildTreeView();
+            _refreshFindState();
+        }
+
+        // Set raw string content (already serialised) and refresh all dependent state.
+        // Use this instead of direct editor.value = val assignments so that line
+        // numbers and find/replace highlights stay in sync when content changes.
+        function setEditorRaw(val) {
+            const editor = document.getElementById('jsonEditor');
+            editor.value = val;
+            updateLineNumbers();
+            _refreshFindState();
+        }
+
+        // If the find overlay is open, re-run the search against the current editor
+        // content so highlights and match positions reflect the new text.
+        // If it is closed (or has no search term), clear any stale match state.
+        function _refreshFindState() {
+            const overlay = document.getElementById('findReplaceOverlay');
+            if (!overlay || overlay.style.display === 'none') {
+                // Overlay closed — ensure stale backdrop is wiped
+                _findMatches = [];
+                _findIdx = -1;
+                const backdrop = document.getElementById('editorBackdrop');
+                if (backdrop) backdrop.innerHTML = '';
+                return;
+            }
+            // Overlay open — re-run search so positions match the new content
+            runFind();
         }
 
         // Format the editor content in current mode
@@ -9281,7 +9309,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 _updateModeToggleUI();
                 setEditorContent(obj);
             } catch(e) {
-                document.getElementById('jsonEditor').value = val;
+                setEditorRaw(val);
             }
             state.isNewModel = true;
             state.selectedModel = null;
@@ -10601,7 +10629,7 @@ relationships:
                 _updateModeToggleUI();
                 setEditorContent(obj);
             } catch(e) {
-                document.getElementById('jsonEditor').value = val;
+                setEditorRaw(val);
             }
             state.isNewModel = true;
             state.selectedModel = null;
@@ -11401,7 +11429,7 @@ explores:
                 _updateModeToggleUI();
                 setEditorContent(obj);
             } catch(e) {
-                document.getElementById('jsonEditor').value = val;
+                setEditorRaw(val);
             }
             state.isNewModel = true;
             state.selectedModel = null;
@@ -14970,7 +14998,7 @@ ${cleanedSql}`;
                 _updateModeToggleUI();
                 setEditorContent(obj);
             } catch(e) {
-                document.getElementById('jsonEditor').value = val;
+                setEditorRaw(val);
             }
             state.isNewModel = true; state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from Tableau (unsaved)';
@@ -15678,7 +15706,7 @@ ${cleanedSql}`;
                 _updateModeToggleUI();
                 setEditorContent(obj);
             } catch (e) {
-                document.getElementById('jsonEditor').value = val;
+                setEditorRaw(val);
             }
             state.isNewModel = true;
             state.selectedModel = null;
@@ -15714,7 +15742,7 @@ ${cleanedSql}`;
                 _updateModeToggleUI();
                 setEditorContent(obj);
             } catch(e) {
-                document.getElementById('jsonEditor').value = val;
+                setEditorRaw(val);
             }
             state.isNewModel = true;
             state.selectedModel = null;
@@ -16626,7 +16654,7 @@ view: date_dim {
                 _updateModeToggleUI();
                 setEditorContent(obj);
             } catch(e) {
-                document.getElementById('jsonEditor').value = val;
+                setEditorRaw(val);
             }
             state.isNewModel = true; state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from Alteryx (unsaved)';
@@ -16996,7 +17024,7 @@ view: date_dim {
                 _updateModeToggleUI();
                 setEditorContent(obj);
             } catch(e) {
-                document.getElementById('jsonEditor').value = val;
+                setEditorRaw(val);
             }
             state.isNewModel = true; state.selectedModel = null;
             document.getElementById('editorTitle').textContent = 'Converted from Atlan Data Contract (unsaved)';
