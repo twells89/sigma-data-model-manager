@@ -17583,7 +17583,7 @@ models:
             const term = document.getElementById('findInput').value;
             const countEl = document.getElementById('findCount');
             _findMatches = [];
-            if (!term) { countEl.textContent = ''; return; }
+            if (!term) { countEl.textContent = ''; _updateBackdrop(); return; }
             const text = document.getElementById('jsonEditor').value;
             try {
                 let pattern = _findRegexOn ? term : term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
