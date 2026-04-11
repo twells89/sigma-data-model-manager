@@ -76,13 +76,9 @@
         .logo-icon {
             width: 36px;
             height: 36px;
-            background: linear-gradient(135deg, var(--accent), #8b5cf6);
-            border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: 700;
-            font-size: 18px;
             transition: transform 0.1s ease;
         }
         
@@ -2282,7 +2278,35 @@
         <aside class="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
-                    <div class="logo-icon" id="logoIcon" style="cursor: pointer;" title="Click 5 times to enable developer mode">Σ</div>
+                    <div class="logo-icon" id="logoIcon" style="cursor: pointer;" title="Click 5 times to enable developer mode"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36" aria-label="Origami crane logo">
+                        <defs>
+                            <clipPath id="logo-crane-clip">
+                                <rect width="36" height="36" rx="10"/>
+                            </clipPath>
+                            <linearGradient id="logo-crane-bg" x1="0" y1="0" x2="1" y2="1">
+                                <stop offset="0%" stop-color="#003d52"/>
+                                <stop offset="100%" stop-color="#005f7a"/>
+                            </linearGradient>
+                        </defs>
+                        <g clip-path="url(#logo-crane-clip)">
+                            <!-- Background -->
+                            <rect width="36" height="36" fill="url(#logo-crane-bg)"/>
+                            <!-- Head / beak — points upper-left, lightest facet -->
+                            <polygon points="12,3 20,7 18,17" fill="rgba(255,255,255,0.96)"/>
+                            <!-- Left wing upper face -->
+                            <polygon points="2,17 20,7 18,17" fill="rgba(255,255,255,0.82)"/>
+                            <!-- Left wing lower fold -->
+                            <polygon points="2,17 18,17 9,22" fill="rgba(255,255,255,0.50)"/>
+                            <!-- Right wing upper face -->
+                            <polygon points="34,17 20,7 18,17" fill="rgba(255,255,255,0.82)"/>
+                            <!-- Right wing lower fold -->
+                            <polygon points="34,17 18,17 27,22" fill="rgba(255,255,255,0.50)"/>
+                            <!-- Body — connects wing folds, tapers to tail -->
+                            <polygon points="18,17 9,22 15,27 21,27 27,22" fill="rgba(255,255,255,0.66)"/>
+                            <!-- Tail — narrow triangle pointing down -->
+                            <polygon points="15,27 21,27 18,33" fill="rgba(255,255,255,0.34)"/>
+                        </g>
+                    </svg></div>
                     <span class="logo-text">Data Model Manager</span>
                 </div>
                 <div class="logo-subtitle">Direct Sigma Integration <span class="badge beta">Standalone</span><span class="badge" id="devModeBadge" style="display: none; margin-left: 8px; background: rgba(255, 123, 114, 0.15); color: #ff7b72;">DEV</span></div>
