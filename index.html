@@ -49,7 +49,9 @@
         .app-container {
             display: grid;
             grid-template-columns: 320px 1fr;
-            min-height: 100vh;
+            grid-template-rows: 100vh;
+            height: 100vh;
+            overflow: hidden;
         }
         
         /* Sidebar */
@@ -58,7 +60,8 @@
             border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
-            overflow: visible;
+            overflow: hidden;
+            height: 100vh;
         }
         
         .sidebar-header {
@@ -17864,6 +17867,19 @@ models:
             // Cursor position is restored to the last match when find is closed.
             editor.scrollTop = targetScroll;
             if (backdrop) backdrop.scrollTop = targetScroll;
+
+            // Reposition the find overlay so it doesn't cover the current match.
+            // The overlay is normally at top-right; if the match lands in the top
+            // quarter of the viewport (where the overlay sits), move the overlay
+            // to the bottom-right instead.
+            const overlay = document.getElementById('findReplaceOverlay');
+            if (overlay && cur) {
+                const matchVisualTop = cur.offsetTop - targetScroll; // px from editor top
+                const overlayHeight = overlay.offsetHeight || 120;
+                const inOverlayZone = matchVisualTop < overlayHeight + 20;
+                overlay.style.top = inOverlayZone ? 'auto' : '12px';
+                overlay.style.bottom = inOverlayZone ? '12px' : 'auto';
+            }
         }
 
         function findNext() { _jumpToMatch(_findIdx + 1); }
