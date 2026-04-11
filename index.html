@@ -17829,25 +17829,41 @@ models:
             _findIdx = ((idx % _findMatches.length) + _findMatches.length) % _findMatches.length;
             const m = _findMatches[_findIdx];
             const editor = document.getElementById('jsonEditor');
-
-            // Compute the scroll that centers the match line in the viewport.
-            // Include paddingTop so the first lines aren't offset by 20px.
-            // Add lh/2 so the middle of the match line lands at the middle of the viewport.
-            const cs = getComputedStyle(editor);
-            const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4 || 20;
-            const pt = parseFloat(cs.paddingTop) || 0;
-            const linesBefore = editor.value.substring(0, m.start).split('\n').length - 1;
-            const targetScroll = Math.max(0, pt + linesBefore * lh + lh / 2 - editor.clientHeight / 2);
+            const backdrop = document.getElementById('editorBackdrop');
 
             document.getElementById('findCount').textContent = `${_findIdx + 1} / ${_findMatches.length}`;
 
-            // Scroll directly. No focus(), no setSelectionRange(), no setTimeout.
-            // setSelectionRange() on a textarea (even unfocused) can trigger a deferred
-            // auto-scroll in Safari/Firefox that fires after our scrollTop assignment and
-            // overrides it. The backdrop's .cur mark provides all visual feedback needed.
-            // The cursor position is restored to the last match when find is closed.
-            editor.scrollTop = targetScroll;
+            // Strategy: render the backdrop (which places <mark.cur> in the DOM at the
+            // correct content position), then read mark.cur's offsetTop to get the exact
+            // pixel distance from the backdrop top to the match — no font-metric guessing.
+            // Reset backdrop.scrollTop to 0 first so offsetTop reflects absolute content
+            // position (offsetTop is not affected by scrollTop, but belt-and-suspenders).
+            if (backdrop) backdrop.scrollTop = 0;
             _updateBackdrop();
+
+            const cur = backdrop ? backdrop.querySelector('mark.cur') : null;
+            let targetScroll;
+            if (cur) {
+                // cur.offsetTop = px from backdrop top edge (incl. padding) to mark.
+                // Center it in the viewport.
+                const cs = getComputedStyle(editor);
+                const lh = parseFloat(cs.lineHeight) || 20;
+                targetScroll = Math.max(0, cur.offsetTop - editor.clientHeight / 2 + lh / 2);
+            } else {
+                // Fallback: line-count arithmetic (no mark found, e.g. text >300 KB).
+                const cs = getComputedStyle(editor);
+                const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4 || 20;
+                const pt = parseFloat(cs.paddingTop) || 0;
+                const linesBefore = editor.value.substring(0, m.start).split('\n').length - 1;
+                targetScroll = Math.max(0, pt + linesBefore * lh + lh / 2 - editor.clientHeight / 2);
+            }
+
+            // No focus(), no setSelectionRange() — both can trigger deferred browser
+            // auto-scroll (especially Safari/Firefox) that fires after this assignment
+            // and overrides it. The backdrop .cur mark provides all visual feedback.
+            // Cursor position is restored to the last match when find is closed.
+            editor.scrollTop = targetScroll;
+            if (backdrop) backdrop.scrollTop = targetScroll;
         }
 
         function findNext() { _jumpToMatch(_findIdx + 1); }
