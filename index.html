@@ -6992,7 +6992,7 @@ FORMULA REFERENCE RULES
 - Warehouse columns in element formulas: [TABLE_NAME/Display Name]  (TABLE_NAME = last segment of path)
 - Calculated column formulas:            [Display Name]              (NO table prefix)
 - Metric formulas:                       [Display Name]              (NO table prefix)
-- Custom SQL columns:                    [Custom SQL/COLUMN_ALIAS]
+- Custom SQL columns:                    [Custom SQL/Column Alias]  (Title Case, NOT ALL_CAPS)
 - Join output columns:                   [TABLE_NAME/Display Name]
 - Union output columns:                  [Union of 2 Sources/Column Name]
 - NEVER use dot notation like [table.col] — always slash [TABLE/Col]
@@ -7671,6 +7671,9 @@ Brief explanation of what was generated and how it will be applied.
 CRITICAL RULES:
 - Never ask the user for information you can derive from the model context above.
 - For descriptions: infer meaning from column names and formulas — write clear, concise business descriptions (1 sentence each).
+- FORMULA SYNTAX — TYPE CASTS: Never use SQL type cast syntax like ::DATE, ::TIMESTAMP, ::VARCHAR. Sigma uses function calls: Date([Col]), Datetime([Col]), Text([Col]), Int([Col]), Number([Col]). Example: Date([Order Date Key]) — NOT [Order Date Key]::date.
+- FORMULA SYNTAX — COLUMN NAMES: Column references must use the EXACT display name shown in the model context above (Title Case, e.g. [Net Revenue], [Order Channel]). Never use ALL_CAPS names like [NET_REVENUE] or snake_case like [net_revenue] — the Sigma API will reject these.
+- FORMULA SYNTAX — BRACKETS: Always use single brackets [Column Name]. NEVER use double brackets [[Column Name]] — the Sigma API will return a formula validation error.
 - The JSON must be a targeted patch snippet, not the entire model.
 - Only use column IDs that exist in the model context above.
 - OUTPUT FORMAT (MANDATORY): ALWAYS wrap your JSON output in the pages structure with the EXACT element ID from the context above:
@@ -10934,14 +10937,12 @@ metrics:
             let expr = sql.trim();
 
             // 1. Field reference substitution
-            // ${TABLE}.col → [SOURCE_TABLE/Display Col] for warehouse-table,
-            //               → [Custom SQL/COL_ALIAS] for SQL elements (raw uppercase alias)
+            // ${TABLE}.col → [SOURCE_TABLE/Display Col] for both warehouse-table and Custom SQL
             const isCustomSql = (tableName === 'Custom SQL');
-            expr = expr.replace(/\$\{TABLE\}\.(\w+)/g, (_, col) =>
-                isCustomSql
-                    ? `[Custom SQL/${col.toUpperCase()}]`
-                    : `[${tableName}/${sigmaDisplayName(col)}]`
-            );
+            expr = expr.replace(/\$\{TABLE\}\.(\w+)/g, (_, col) => {
+                const elemName = isCustomSql ? 'Custom SQL' : tableName;
+                return `[${elemName}/${sigmaDisplayName(col)}]`;
+            });
             // ${view.field} → [Display Field] (cross-view, simplified)
             expr = expr.replace(/\$\{(\w+)\.(\w+)\}/g, (_, _v, field) =>
                 `[${sigmaDisplayName(field)}]`
@@ -10951,15 +10952,28 @@ metrics:
                 `[${sigmaDisplayName(field)}]`
             );
 
+            // 1b. Snowflake ::TYPE cast syntax → Sigma type conversion functions
+            //     e.g. [Col]::DATE → Date([Col]), word::VARCHAR → Text(word)
+            expr = expr.replace(/(\[[^\]]+\]|\w+)\s*::\s*(\w+)/gi, (_, val, typ) => {
+                const t = typ.toUpperCase();
+                if (t === 'DATE')                                    return `Date(${val})`;
+                if (t.startsWith('TIMESTAMP') || t === 'DATETIME')  return `Datetime(${val})`;
+                if (t === 'VARCHAR' || t === 'STRING' || t === 'TEXT' || t === 'CHAR') return `Text(${val})`;
+                if (t === 'INTEGER' || t === 'INT' || t === 'BIGINT' || t === 'SMALLINT') return `Int(${val})`;
+                if (t === 'FLOAT' || t === 'DOUBLE' || t === 'NUMERIC' || t === 'DECIMAL' || t === 'NUMBER') return `Number(${val})`;
+                if (t === 'BOOLEAN') return `Boolean(${val})`;
+                return val; // Unknown cast — strip ::TYPE
+            });
+
             // 2. Single-quoted string literals → double-quoted
             expr = expr.replace(/'([^']*)'/g, '"$1"');
 
-            // 3. expr IN (a, b, c) → (expr = a Or expr = b Or expr = c)
+            // 3. expr IN (a, b, c) → In(expr, a, b, c)  [Sigma native function]
             //    Match: word/bracket expr possibly with one function call, then IN (...)
             expr = expr.replace(/(\w+(?:\([^)]*\))?|\[[^\]]+\])\s+IN\s+\(([^)]+)\)/gi,
                 (_, lhs, items) => {
                     const vals = items.split(',').map(v => v.trim());
-                    return '(' + vals.map(v => `${lhs} = ${v}`).join(' Or ') + ')';
+                    return `In(${lhs}, ${vals.join(', ')})`;
                 }
             );
 
@@ -11124,7 +11138,7 @@ metrics:
                 function addCol(fieldName, formula, label) {
                     const id = sigmaInodeId(fieldName.toUpperCase());
                     colIdMap[fieldName.toUpperCase()] = id;
-                    const col = { id, formula: formula || (view.derived_table ? `[Custom SQL/${fieldName.toUpperCase()}]` : sigmaColFormula(path[path.length - 1] || tableName, fieldName)) };
+                    const col = { id, formula: formula || (view.derived_table ? `[Custom SQL/${sigmaDisplayName(fieldName)}]` : sigmaColFormula(path[path.length - 1] || tableName, fieldName)) };
                     if (label) col.name = label;
                     element.columns.push(col);
                     element.order.push(id);
@@ -14851,44 +14865,24 @@ ${cleanedSql}`;
                     }
                 }
 
-                // ── Drop cross-element column references (links are deprecated) ──
-                // Sigma "links" (- link/ syntax) are being deprecated and the API cannot create them.
-                // Drop any calculated column that references a column from another element, and warn.
-                const globalColMap = {};
-                for (const el of elements) {
-                    for (const c of (el.columns || [])) {
-                        const fm = c.formula.match(/\[([^\/\]]+)\/([^\]]+)\]$/);
-                        if (fm) globalColMap[fm[2].toUpperCase()] = { elId: el.id, displayName: fm[2] };
-                    }
-                }
+                // ── Drop deprecated link syntax column references ──
+                // Sigma "- link/" syntax is deprecated and the API cannot create them.
+                // Only drop columns that explicitly use the deprecated link pattern in their formula.
+                // Do NOT remove columns that merely reference a column that also exists in a related
+                // element — Sigma can resolve [Simple Name] refs via relationships at query time.
 
                 for (const el of elements) {
-                    const localNames = new Set();
-                    for (const c of (el.columns || [])) {
-                        if (c.name) localNames.add(c.name.toUpperCase());
-                        const fm = c.formula.match(/\/([^\]]+)\]$/);
-                        if (fm) localNames.add(fm[1].toUpperCase());
-                    }
-
-                    // Check calculated columns for cross-element refs and remove them
+                    // Check calculated columns for explicit deprecated link syntax and remove them
                     for (let i = (el.columns || []).length - 1; i >= 0; i--) {
                         const c = el.columns[i];
                         if (!c.name || !c.formula) continue;
-                        if (c.formula.match(/^\[[\w_]+\//)) continue; // warehouse formula
-                        const refs = c.formula.match(/\[([^\]\/]+)\]/g) || [];
-                        let hasCrossRef = false;
-                        for (const ref of refs) {
-                            const rn = ref.replace(/^\[|\]$/g, '').toUpperCase();
-                            if (localNames.has(rn) || rn === 'TRUE' || rn === 'FALSE') continue;
-                            const ge = globalColMap[rn];
-                            if (ge && ge.elId !== el.id) { hasCrossRef = true; break; }
-                        }
-                        if (hasCrossRef) {
-                            warnings.push(`⚠ Removed "${c.name}" — references columns from related tables. Add manually in Sigma UI using linked columns.`);
+                        if (c.formula.match(/^\[[\w_]+\//)) continue; // warehouse formula — skip
+                        // Only flag explicit deprecated link syntax: [Table/Col - link/Display Name]
+                        if (/ - link\//i.test(c.formula)) {
+                            warnings.push(`⚠ Removed "${c.name}" — uses deprecated link syntax. Add manually in Sigma UI using linked columns.`);
                             const colId = c.id;
                             el.columns.splice(i, 1);
                             if (el.order) { const oi = el.order.indexOf(colId); if (oi >= 0) el.order.splice(oi, 1); }
-                            // Remove from any folder items; prune now-empty folders
                             if (el.folders) {
                                 for (const folder of el.folders) {
                                     const fi = folder.items.indexOf(colId);
@@ -14903,25 +14897,16 @@ ${cleanedSql}`;
                                 }
                                 if (el.folders.length === 0) delete el.folders;
                             }
-                            localNames.delete(c.name.toUpperCase());
                         }
                     }
 
-                    // Check metrics too
+                    // Metrics with deprecated link syntax → remove (same rule as columns)
                     if (el.metrics) {
                         for (let i = el.metrics.length - 1; i >= 0; i--) {
                             const m = el.metrics[i];
                             if (!m.formula) continue;
-                            const refs = m.formula.match(/\[([^\]\/]+)\]/g) || [];
-                            let hasCrossRef = false;
-                            for (const ref of refs) {
-                                const rn = ref.replace(/^\[|\]$/g, '').toUpperCase();
-                                if (localNames.has(rn) || rn === 'TRUE' || rn === 'FALSE') continue;
-                                const ge = globalColMap[rn];
-                                if (ge && ge.elId !== el.id) { hasCrossRef = true; break; }
-                            }
-                            if (hasCrossRef) {
-                                warnings.push(`⚠ Removed metric "${m.name}" — references columns from related tables. Add manually in Sigma UI.`);
+                            if (/ - link\//i.test(m.formula)) {
+                                warnings.push(`⚠ Removed metric "${m.name}" — uses deprecated link syntax. Add manually in Sigma UI.`);
                                 el.metrics.splice(i, 1);
                             }
                         }
