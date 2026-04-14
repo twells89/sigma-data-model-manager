@@ -11167,6 +11167,31 @@ metrics:
                 'success'
             );
 
+            // Auto-detect database/schema from sql_table_name values and pre-fill override fields
+            const _dbEl  = document.getElementById('omniDatabase');
+            const _schEl = document.getElementById('omniSchema');
+            if (!_dbEl.value && !_schEl.value) {
+                const _sqlPaths = _omniViews
+                    .filter(v => v.sql_table_name && !v.derived_table)
+                    .map(v => v.sql_table_name.replace(/"/g, '').trim()
+                        .split('.').map(s => s.trim().toUpperCase()).filter(Boolean));
+                const _fullPaths = _sqlPaths.filter(p => p.length >= 3);
+                if (_fullPaths.length > 0) {
+                    const _counts = {};
+                    _fullPaths.forEach(p => { const k = `${p[0]}|${p[1]}`; _counts[k] = (_counts[k] || 0) + 1; });
+                    const [_db, _sch] = Object.entries(_counts).sort((a, b) => b[1] - a[1])[0][0].split('|');
+                    _dbEl.value = _db;
+                    _schEl.value = _sch;
+                } else {
+                    const _twoPaths = _sqlPaths.filter(p => p.length === 2);
+                    if (_twoPaths.length > 0) {
+                        const _schCounts = {};
+                        _twoPaths.forEach(p => { _schCounts[p[0]] = (_schCounts[p[0]] || 0) + 1; });
+                        _schEl.value = Object.entries(_schCounts).sort((a, b) => b[1] - a[1])[0][0];
+                    }
+                }
+            }
+
             runOmniConversion();
         }
 
@@ -11294,11 +11319,11 @@ metrics:
             let expr = sql.trim();
 
             // 1. Field reference substitution
-            // ${TABLE}.col → [SOURCE_TABLE/Display Col] for both warehouse-table and Custom SQL
+            // ${TABLE}.col → [TABLE/Display Col] for warehouse-table, [Display Col] for SQL elements
             const isCustomSql = (tableName === 'Custom SQL');
             expr = expr.replace(/\$\{TABLE\}\.(\w+)/g, (_, col) => {
-                const elemName = isCustomSql ? 'Custom SQL' : tableName;
-                return `[${elemName}/${sigmaDisplayName(col)}]`;
+                if (isCustomSql) return `[${sigmaDisplayName(col)}]`;
+                return `[${tableName}/${sigmaDisplayName(col)}]`;
             });
             // ${view.field} → [Display Field] (cross-view, simplified)
             expr = expr.replace(/\$\{(\w+)\.(\w+)\}/g, (_, _v, field) =>
@@ -11495,7 +11520,12 @@ metrics:
                 function addCol(fieldName, formula, label) {
                     const id = sigmaInodeId(fieldName.toUpperCase());
                     colIdMap[fieldName.toUpperCase()] = id;
-                    const col = { id, formula: formula || (view.derived_table ? `[Custom SQL/${sigmaDisplayName(fieldName)}]` : sigmaColFormula(path[path.length - 1] || tableName, fieldName)) };
+                    // For SQL elements: passthrough columns need no formula (Sigma reads the SQL output
+                    // directly). Only set a formula when one is explicitly provided (calculated fields).
+                    // For warehouse-table elements: always generate the [TABLE/Col] passthrough formula.
+                    const col = { id };
+                    const resolvedFormula = formula || (view.derived_table ? null : sigmaColFormula(path[path.length - 1] || tableName, fieldName));
+                    if (resolvedFormula) col.formula = resolvedFormula;
                     if (label) col.name = label;
                     element.columns.push(col);
                     element.order.push(id);
