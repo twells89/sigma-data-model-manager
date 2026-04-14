@@ -13506,10 +13506,29 @@ explores:
             }
         }
 
+        // ── Recursively resolve ${view_name.SQL_TABLE_NAME} refs in a raw string ─
+        // Follows the chain until a literal table name is found, with cycle guard.
+        function lookResolveTableRef(raw, views, visited) {
+            if (!raw || !views) return raw;
+            visited = visited || new Set();
+            return raw.replace(/\$\{(\w+)\.SQL_TABLE_NAME\}/gi, (match, refViewName) => {
+                if (visited.has(refViewName)) return match; // cycle guard
+                const refView = views[refViewName];
+                if (!refView) return match;
+                if (refView.derived_table !== undefined) return match; // PDT — can't resolve statically
+                const next = (refView.sql_table_name || '').trim().replace(/;;\s*$/, '').trim();
+                if (!next) return match;
+                visited.add(refViewName);
+                return lookResolveTableRef(next, views, visited);
+            });
+        }
+
         // ── Extract sql_table_name path array from a view block ───────────────
-        function lookExtractPath(view) {
-            const raw = (view.sql_table_name || view.from || '').trim().replace(/`/g, '');
+        function lookExtractPath(view, views) {
+            let raw = (view.sql_table_name || view.from || '').trim().replace(/`/g, '');
             if (!raw) return [];
+            // Resolve any ${other_view.SQL_TABLE_NAME} references before splitting
+            if (views) raw = lookResolveTableRef(raw, views, new Set([view.name || '']));
             return raw.split('.').map(p => p.trim().toUpperCase()).filter(Boolean);
         }
 
@@ -14844,7 +14863,7 @@ ${cleanedSql}`;
                     warnings.push(`ℹ️ "${viewName}" derived table SQL: rewrote ${castConversions.length} Snowflake cast shorthand(s) to Sigma-compatible equivalents (Sigma wraps ::DATE/CAST(…AS DATE) with TO_DATE() which Snowflake rejects): ${castConversions.join(', ')}`);
                 }
 
-                // 3. Resolve ${view_name.SQL_TABLE_NAME} using uploaded view files
+                // 3. Resolve ${view_name.SQL_TABLE_NAME} using uploaded view files (handles multi-hop chains)
                 rawSql = rawSql.replace(/\$\{(\w+)\.SQL_TABLE_NAME\}/gi, (match, refViewName) => {
                     const refView = lookProject.views[refViewName];
                     if (!refView) {
@@ -14855,8 +14874,10 @@ ${cleanedSql}`;
                         warnings.push(`ℹ "${viewName}" SQL: "${refViewName}" is a PDT — its materialized table name cannot be resolved statically. Update the placeholder.`);
                         return `/* TODO: PDT table for "${refViewName}" */`;
                     }
-                    const path = (refView.sql_table_name || '').trim().replace(/;;\s*$/, '').trim();
-                    if (path) {
+                    let path = (refView.sql_table_name || '').trim().replace(/;;\s*$/, '').trim();
+                    // Recursively resolve if the referenced view's sql_table_name is itself a reference
+                    if (path) path = lookResolveTableRef(path, lookProject.views, new Set([viewName, refViewName]));
+                    if (path && !path.includes('${')) {
                         warnings.push(`✅ Resolved \${${refViewName}.SQL_TABLE_NAME} → ${path}`);
                         return path;
                     }
@@ -14883,7 +14904,7 @@ ${cleanedSql}`;
                     warnings.push(`⚠ View "${viewName}" has a derived_table block but no sql was found — SQL statement left blank. Add your SQL manually in the JSON editor before saving.`);
                 }
             } else {
-                const path = lookExtractPath(view);
+                const path = lookExtractPath(view, lookProject.views);
                 tableName = (path[path.length - 1] || viewName).toUpperCase();
                 element = {
                     id: elementId,
