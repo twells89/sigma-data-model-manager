@@ -346,11 +346,16 @@
         }
         
         /* Data Models Explorer */
-        .models-section {
+        .sidebar-scroll {
             flex: 1;
+            overflow-y: auto;
+            min-height: 0;
+        }
+
+        .models-section {
             display: flex;
             flex-direction: column;
-            overflow: hidden;
+            min-height: 300px;
         }
         
         .models-header {
@@ -1437,7 +1442,7 @@
             flex: 1;
             display: flex;
             flex-direction: column;
-            overflow: hidden;
+            overflow-y: auto;
             padding: 20px;
             gap: 12px;
         }
@@ -2348,6 +2353,7 @@
                 <div class="logo-subtitle">Direct Sigma Integration <span class="badge beta">Standalone</span><span class="badge" id="devModeBadge" style="display: none; margin-left: 8px; background: rgba(255, 123, 114, 0.15); color: #ff7b72;">DEV</span></div>
             </div>
             
+            <div class="sidebar-scroll">
             <div class="credentials-section">
                 <div class="section-title">API Credentials</div>
                 
@@ -2477,6 +2483,7 @@
                         <p>Connect to Sigma to view your data models</p>
                     </div>
                 </div>
+            </div>
             </div>
             <div class="status-bar">
                 <div class="status-indicator" id="statusIndicator"></div>
