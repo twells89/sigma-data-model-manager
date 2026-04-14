@@ -5928,6 +5928,8 @@ KNOWN SIGMA API ISSUES YOU CAN FIX:
 7. Circular references between calculated columns → break the cycle
 8. folderId "00000000-0000-0000-0000-000000000000" → remove it
 9. Relationships missing "relationshipType" → add "relationshipType": "N:1" to every relationship object
+10. SQL elements (source.kind === "sql") with [Custom SQL/Column Name] formulas on columns → strip the "Custom SQL/" prefix to leave just [Column Name]. Sigma resolves columns on SQL elements by relative name — the "Custom SQL/" table qualifier is not valid and will cause a "dependency not found" error.
+11. Duplicate passthrough + calculated columns: if an element has both a formula-less passthrough column AND a calculated column for the same logical field (e.g. both [TABLE/Order size band] and a formula column named "Order Size Band"), remove the passthrough — it references a column that doesn't exist in the warehouse (it's a calculated field, not a warehouse column).
 
 WHAT YOU CANNOT FIX (flag these):
 - Column formulas referencing warehouse columns that may not exist (e.g. [TABLE/Customer Name] when the real column might be FIRST_NAME + LAST_NAME). You do NOT know the actual warehouse schema. If a column name looks like it could be wrong (doesn't follow standard naming, uses a generic name like "Customer Name" instead of something specific), REMOVE it and add a comment in the name field noting it was removed.
