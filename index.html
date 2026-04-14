@@ -1553,9 +1553,13 @@
             background: rgba(250, 166, 26, 0.08);
             border: 1px solid rgba(250, 166, 26, 0.25);
             border-radius: 8px;
-            font-size: 12px;
+            font-size: 11px;
             color: var(--warning);
             flex-shrink: 0;
+            max-height: 120px;
+            overflow-y: auto;
+            padding: 6px 10px;
+            line-height: 1.4;
         }
         .look-warn-header {
             display: flex;
@@ -2607,6 +2611,8 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                             <option value="alteryx">⚙️ Alteryx (.yxmd)</option>
                             <option value="contract">📝 Atlan Data Contract</option>
                             <option value="omni">🌐 Omni Analytics</option>
+                            <option value="qlik">🔮 Qlik Sense</option>
+                            <option value="ssas" class="dev-mode-only" style="display:none">🧊 SSAS/MSAS Cube</option>
                         </select>
                     </div>
 
@@ -2863,14 +2869,14 @@ How it works:
                         </div>
                     </details>
 
-                    <div class="dbt-convert-row" style="gap: 8px;">
-                        <button class="btn btn-primary" style="flex: 1;" id="lookConvertBtn" onclick="runLookConversion()"
+                    <div style="display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;">
+                        <button class="btn btn-primary" style="width: 100%;" id="lookConvertBtn" onclick="runLookConversion()"
                             title="Convert the selected explore to a Sigma data model">
                             🔍 Convert Explore
                         </button>
-                        <button class="btn btn-secondary" style="flex: 1;" id="lookBatchBtn" onclick="runLookBatchConversion()"
+                        <button class="btn btn-secondary btn-small" style="width: 100%; font-size: 11px;" id="lookBatchBtn" onclick="runLookBatchConversion()"
                             title="Convert all explores into one combined data model — shared views (date_dim, store_dim, etc.) are deduplicated into single elements with relationships wired from each fact table">
-                            🗂 All Explores
+                            🗂 Convert All Explores
                         </button>
                     </div>
                 </div>
@@ -3381,6 +3387,206 @@ How it works:
                     </div>
                 </div>
                 <!-- ── End Omni Analytics Panel ──────────────────────────────────── -->
+
+                <!-- Qlik Sense Converter Panel -->
+                <div class="converter-panel" id="subPanelQlik">
+
+                    <!-- Left: Input + Config -->
+                    <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Qlik Data Model</span>
+                            <button class="btn-example" onclick="loadQlikExample()">Load example</button>
+                        </div>
+
+                        <div id="qlikDropZone" class="lookml-drop-zone"
+                             onclick="document.getElementById('qlikFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleQlikDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">🔮</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop Qlik metadata JSON here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">REST API export · or paste below</div>
+                        </div>
+                        <input type="file" id="qlikFileInput" accept=".json" style="display:none" onchange="handleQlikFileInput(event)">
+
+                        <div id="qlikFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Connection</label>
+                            <select id="qlikConnectionId" class="form-input" style="font-size: 12px;">
+                                <option value="">— Connect to Sigma to load —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="qlikDatabase" placeholder="e.g. ANALYTICS" style="font-size: 12px;">
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Schema override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="qlikSchema" placeholder="e.g. PUBLIC" style="font-size: 12px;">
+                        </div>
+
+                        <div class="dbt-badge-row" id="qlikInputStats"></div>
+
+                        <textarea id="qlikJsonInput" style="flex: 1; min-height: 80px; font-size: 11px; resize: none;"
+                                  placeholder="Or paste Qlik metadata JSON here...
+
+Supported formats:
+• REST API:  GET /api/v1/apps/{id}/data/metadata
+• Engine API:  { qtr: [ { qName, qFields } ] }
+• Extended:  { appName, tables, masterMeasures, masterDimensions }"></textarea>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" id="qlikConvertBtn" onclick="runQlikConversion()">
+                                🔮 Convert to Sigma JSON
+                            </button>
+                        </div>
+
+                        <div style="font-size: 10px; color: var(--text-muted); padding: 0 4px; line-height: 1.4;">
+                            <strong>How to get metadata:</strong><br>
+                            • <b>REST API</b>: <code style="font-size:9px;">GET /api/v1/apps/{appId}/data/metadata</code><br>
+                            • <b>Qlik CLI</b>: <code style="font-size:9px;">qlik app data metadata get --app-id {id}</code><br>
+                            • <b>Master items</b>: Add <code style="font-size:9px;">masterMeasures</code> / <code style="font-size:9px;">masterDimensions</code> arrays for metrics
+                        </div>
+                    </div>
+
+                    <!-- Right: Sigma JSON Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copyQlikOutput()" id="qlikCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadQlikOutputToEditor()" id="qlikLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="qlikWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="qlikJsonOutput" readonly placeholder="Convert a Qlik data model to see the Sigma JSON here...
+
+How it works:
+• tables → Sigma elements (one per Qlik table)
+• fields → Sigma columns with display names
+• shared field names → inferred relationships (Qlik associations)
+• masterMeasures → Sigma metrics with formula conversion
+• masterDimensions → Sigma calculated columns
+• Set analysis, Aggr() → warnings with Sigma guidance"></textarea>
+
+                        <div class="dbt-badge-row" id="qlikOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="qlikLoadAndSave()" id="qlikSaveBtn" disabled>
+                                💾 Load &amp; Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <!-- ── End Qlik Sense Panel ───────────────────────────────────────── -->
+
+                <!-- SSAS / MSAS Cube Converter Panel (dev mode only) -->
+                <div class="converter-panel dev-mode-only" id="subPanelSsas" style="display:none">
+
+                    <!-- Left: Input + Config -->
+                    <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">SSAS/MSAS Cube JSON</span>
+                            <button class="btn-example" onclick="loadSsasExample()">Load example</button>
+                        </div>
+
+                        <div id="ssasDropZone" class="lookml-drop-zone"
+                             onclick="document.getElementById('ssasFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleSsasDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">🧊</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop SSAS Cube JSON here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">SQL Server Management Studio export · or paste below</div>
+                        </div>
+                        <input type="file" id="ssasFileInput" accept=".json" style="display:none" onchange="handleSsasFileInput(event)">
+
+                        <div id="ssasFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Connection</label>
+                            <select id="ssasConnectionId" class="form-input" style="font-size: 12px;">
+                                <option value="">— Connect to Sigma to load —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="ssasDatabase" placeholder="e.g. ANALYTICS" style="font-size: 12px;">
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Schema override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="ssasSchema" placeholder="e.g. dbo" style="font-size: 12px;">
+                        </div>
+
+                        <div class="dbt-badge-row" id="ssasInputStats"></div>
+
+                        <textarea id="ssasJsonInput" style="flex: 1; min-height: 80px; font-size: 11px; resize: none;"
+                                  placeholder="Or paste SSAS cube JSON here...
+
+Supported format:
+• SQL Server Management Studio:
+  Right-click cube → Script Cube as → CREATE To → File
+  Then convert XML to JSON (e.g. with xmltodict)
+• { &quot;Cube&quot;: { &quot;ID&quot;, &quot;Name&quot;, &quot;Dimensions&quot;, &quot;MeasureGroups&quot;, &quot;Kpis&quot;, ... } }"></textarea>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" id="ssasConvertBtn" onclick="runSsasConversion()">
+                                🧊 Convert to Sigma JSON
+                            </button>
+                        </div>
+
+                        <div style="font-size: 10px; color: var(--text-muted); padding: 0 4px; line-height: 1.4;">
+                            <strong>What gets converted:</strong><br>
+                            • <b>MeasureGroups</b> → Sigma fact elements with metrics<br>
+                            • <b>Dimensions</b> → Sigma dimension elements with columns<br>
+                            • <b>KPIs</b> → Value + Goal metrics (status/trend documented)<br>
+                            • <b>Hierarchies</b> → <code style="font-size:9px;">RaggedHierarchy()</code> column stubs + warnings<br>
+                            • <b>Dynamic sets</b> → <code style="font-size:9px;">MovingSum</code> / <code style="font-size:9px;">DateLookback</code> guidance<br>
+                            • <b>Perspectives</b> → documented as workbook page suggestions
+                        </div>
+                    </div>
+
+                    <!-- Right: Sigma JSON Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copySsasOutput()" id="ssasCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadSsasOutputToEditor()" id="ssasLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="ssasWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="ssasJsonOutput" readonly placeholder="Convert an SSAS cube JSON to see the Sigma model here...
+
+How it works:
+• MeasureGroups → fact elements (one per measure group)
+• Dimensions → dimension elements (one per cube dimension)
+• Measures → Sigma metrics (Sum/Count/Avg/Min/Max/CountDistinct)
+• KPIs → Value metric + Goal metric + status description
+• Hierarchies → RaggedHierarchy() column placeholders + warnings
+• Dynamic sets (rolling periods) → MovingSum/DateLookback guidance
+• Relationships inferred from MeasureGroup dimension key columns
+• Parent-child dimensions → warning (needs warehouse-layer recursive CTE)"></textarea>
+
+                        <div class="dbt-badge-row" id="ssasOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="ssasLoadAndSave()" id="ssasSaveBtn" disabled>
+                                💾 Load &amp; Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <!-- ── End SSAS/MSAS Panel ───────────────────────────────────────────── -->
 
                 </div>
                 <!-- ── End Converters Container ─────────────────────────────────── -->
@@ -5299,6 +5505,33 @@ PRODUCT_NAME
             runFind();
         }
 
+        // Set raw string content (already serialised) and refresh all dependent state.
+        // Use this instead of direct editor.value = val assignments so that line
+        // numbers and find/replace highlights stay in sync when content changes.
+        function setEditorRaw(val) {
+            const editor = document.getElementById('jsonEditor');
+            editor.value = val;
+            updateLineNumbers();
+            _refreshFindState();
+        }
+
+        // If the find overlay is open, re-run the search against the current editor
+        // content so highlights and match positions reflect the new text.
+        // If it is closed (or has no search term), clear any stale match state.
+        function _refreshFindState() {
+            const overlay = document.getElementById('findReplaceOverlay');
+            if (!overlay || overlay.style.display === 'none') {
+                // Overlay closed — ensure stale backdrop is wiped
+                _findMatches = [];
+                _findIdx = -1;
+                const backdrop = document.getElementById('editorBackdrop');
+                if (backdrop) backdrop.innerHTML = '';
+                return;
+            }
+            // Overlay open — re-run search so positions match the new content
+            runFind();
+        }
+
         // Format the editor content in current mode
         function onEditorInput() {
             const val = document.getElementById('jsonEditor').value.trim();
@@ -5961,7 +6194,7 @@ ${JSON.stringify(failedJson, null, 2)}`;
         async function populateConverterConnections() {
             if (!state.accessToken) return;
             const connections = await fetchConnectionsList();
-            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId'];
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'qlikConnectionId', 'ssasConnectionId'];
             targetIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (!sel) return;
@@ -8852,8 +9085,8 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         }
 
         function switchConverter(format) {
-            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni'];
-            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni' };
+            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Qlik', 'Ssas'];
+            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', qlik: 'Qlik', ssas: 'Ssas' };
             const target = map[format] || 'Dbt';
             panels.forEach(p => {
                 const el = document.getElementById('subPanel' + p);
@@ -8920,6 +9153,106 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 sum_boolean:    `CountIf([${dn}])`,
             };
             return map[agg?.toLowerCase()] || `Sum([${dn}])`;
+        }
+
+        // ── Format Utilities (shared across all converters) ─────────────────
+
+        // Map LookML/Omni value_format_name to a Sigma format object.
+        function _lookFormatNameToSigma(name) {
+            if (!name) return null;
+            const n = name.toLowerCase().trim();
+            const map = {
+                decimal_0:  { kind: 'number', formatString: ',.0f' },
+                decimal_1:  { kind: 'number', formatString: ',.1f' },
+                decimal_2:  { kind: 'number', formatString: ',.2f' },
+                decimal_3:  { kind: 'number', formatString: ',.3f' },
+                decimal_4:  { kind: 'number', formatString: ',.4f' },
+                id:         { kind: 'number', formatString: ',.0f' },
+                usd:        { kind: 'number', formatString: '$,.2f', currencySymbol: '$' },
+                usd_0:      { kind: 'number', formatString: '$,.0f', currencySymbol: '$' },
+                usd_1:      { kind: 'number', formatString: '$,.1f', currencySymbol: '$' },
+                eur:        { kind: 'number', formatString: '$,.2f', currencySymbol: '€' },
+                gbp:        { kind: 'number', formatString: '$,.2f', currencySymbol: '£' },
+                percent:    { kind: 'number', formatString: ',.2%' },
+                percent_0:  { kind: 'number', formatString: ',.0%' },
+                percent_1:  { kind: 'number', formatString: ',.1%' },
+                percent_2:  { kind: 'number', formatString: ',.2%' },
+                percent_3:  { kind: 'number', formatString: ',.3%' },
+                percent_4:  { kind: 'number', formatString: ',.4%' },
+            };
+            return map[n] || null;
+        }
+
+        // Map an Excel-style format string (Power BI formatMask / LookML value_format)
+        // to a Sigma format object.  Returns null for patterns we can't reliably convert.
+        function _excelFormatToSigma(mask) {
+            if (!mask || /^(General|Text|@)$/i.test(mask.trim())) return null;
+            const m = mask.trim();
+            // Percentage: 0%, 0.0%, 0.00%, #,##0.0%, etc.
+            const pctMatch = m.match(/^[#,]*0(\.0+)?%$/);
+            if (pctMatch) {
+                const decimals = pctMatch[1] ? pctMatch[1].length - 1 : 0;
+                return { kind: 'number', formatString: `,.${decimals}%` };
+            }
+            // Currency: $#,0.00  $#,##0  £#,##0.00  €#,##0  etc.
+            const currMatch = m.match(/^([$£€¥])([#,0]+)(\.0+)?$/);
+            if (currMatch) {
+                const sym = currMatch[1];
+                const decimals = currMatch[3] ? currMatch[3].length - 1 : 0;
+                const hasGroup = currMatch[2].includes(',');
+                return { kind: 'number', formatString: `${hasGroup ? '$,' : '$'}.${decimals}f`, currencySymbol: sym };
+            }
+            // Plain number: #,##0  #,##0.00  0.00  0  etc.
+            const numMatch = m.match(/^[#,]*0(\.0+)?$/);
+            if (numMatch) {
+                const decimals = numMatch[1] ? numMatch[1].length - 1 : 0;
+                const hasGroup = m.includes(',');
+                return { kind: 'number', formatString: `${hasGroup ? ',' : ''}.${decimals}f` };
+            }
+            return null;
+        }
+
+        // Infer a Sigma format object from a formula string and display name.
+        // Priority order (first match wins):
+        //   1. Ratio pattern (agg / agg)        → percent  ,.2%
+        //   2. Name keywords for %               → percent  ,.2%
+        //   3. Name keywords for currency        → currency $,.2f
+        //   4. Count / CountDistinct (not ratio) → integer  ,.0f
+        // Returns null when no rule matches (omit format object from output).
+        function _inferSigmaFormat(formula, displayName) {
+            if (!formula) return null;
+            const f = formula.trim();
+            const n = (displayName || '').toLowerCase();
+
+            // Rule 0: Formula is already in 0–100 percent scale (e.g. LookML sql: ... * 100).
+            // Applying ,.2% would multiply by 100 a second time (6,233% instead of 62.33%).
+            // Use a plain numeric format with a literal % suffix instead.
+            const alreadyPctScale = /\*\s*100\b/.test(f);
+            if (alreadyPctScale && /\b(rate|margin|pct|percent|ratio|share|mix)\b|%/.test(n)) {
+                return { kind: 'number', formatString: ',.2f', suffix: '%' };
+            }
+
+            // Rule 1: Ratio pattern — two aggregation calls divided
+            if (/^[A-Za-z]+\s*\([^)]+\)\s*\/\s*[A-Za-z]+\s*\([^)]+\)$/.test(f)) {
+                return { kind: 'number', formatString: ',.2%' };
+            }
+
+            // Rule 2: Percent name keywords
+            if (/\b(rate|margin|pct|percent|ratio|share|mix)\b|%/.test(n)) {
+                return { kind: 'number', formatString: ',.2%' };
+            }
+
+            // Rule 3: Currency name keywords
+            if (/\b(revenue|sales|profit|cost|spend|amount|discounts?|price|value)\b/.test(n)) {
+                return { kind: 'number', formatString: '$,.2f', currencySymbol: '$' };
+            }
+
+            // Rule 4: Count functions → integer
+            if (/^Count(?:Distinct|If|DistinctIf)?\s*\(/.test(f)) {
+                return { kind: 'number', formatString: ',.0f' };
+            }
+
+            return null;
         }
 
         // ── Snowflake Semantic View Converter ──────────────────────────────
@@ -9014,7 +9347,10 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                         } else {
                             const id = sigmaShortId();
                             colIdMap[semantic] = id;
-                            element.columns.push({ id, formula, name: sigmaDisplayName(semantic) });
+                            const _snowDimFmt = _inferSigmaFormat(formula, sigmaDisplayName(semantic));
+                            const _snowDimCol = { id, formula, name: sigmaDisplayName(semantic) };
+                            if (_snowDimFmt) _snowDimCol.format = _snowDimFmt;
+                            element.columns.push(_snowDimCol);
                             element.order.push(id);
                         }
                     }
@@ -9034,7 +9370,10 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                         } else {
                             const id = sigmaShortId();
                             colIdMap[semantic] = id;
-                            element.columns.push({ id, formula, name: sigmaDisplayName(semantic) });
+                            const _snowTimeFmt = _inferSigmaFormat(formula, sigmaDisplayName(semantic));
+                            const _snowTimeCol = { id, formula, name: sigmaDisplayName(semantic) };
+                            if (_snowTimeFmt) _snowTimeCol.format = _snowTimeFmt;
+                            element.columns.push(_snowTimeCol);
                             element.order.push(id);
                         }
                     }
@@ -9048,11 +9387,12 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 addColById(physical, semantic);
                 if (autoMetrics && !snowIsIndicator(col)) {
                     if (physical.endsWith('_KEY') || physical.endsWith('_CODE')) continue;
-                    element.metrics.push({
-                        id: sigmaShortId(),
-                        formula: 'Sum([' + sigmaDisplayName(physical) + '])',
-                        name: sigmaDisplayName(semantic || physical)
-                    });
+                    const _snowFormula = 'Sum([' + sigmaDisplayName(physical) + '])';
+                    const _snowName = sigmaDisplayName(semantic || physical);
+                    const _snowFmt = _inferSigmaFormat(_snowFormula, _snowName);
+                    const _snowMetric = { id: sigmaShortId(), formula: _snowFormula, name: _snowName };
+                    if (_snowFmt) _snowMetric.format = _snowFmt;
+                    element.metrics.push(_snowMetric);
                 }
             }
             // 4. FK join columns — use physical name (these come from relationship foreign_key arrays
@@ -10030,7 +10370,10 @@ relationships:
                         }
                         const id = sigmaShortId();
                         colIdMap[semantic] = id;
-                        element.columns.push({ id, formula, name: sigmaDisplayName(dim.name) });
+                        const _dbtExprFmt = _inferSigmaFormat(formula, sigmaDisplayName(dim.name));
+                        const _dbtExprCol = { id, formula, name: sigmaDisplayName(dim.name) };
+                        if (_dbtExprFmt) _dbtExprCol.format = _dbtExprFmt;
+                        element.columns.push(_dbtExprCol);
                         element.order.push(id);
                         continue;
                     }
@@ -10052,11 +10395,12 @@ relationships:
                     ? dbtBuildMeasureFormulaWithFilter(measure, measure.filter)
                     : dbtBuildMeasureFormula(measure);
 
-                element.metrics.push({
-                    id: sigmaShortId(),
-                    formula: formulaObj.formula,
-                    name: sigmaDisplayName(measure.name)
-                });
+                const _dbtFormula1 = formulaObj.formula;
+                const _dbtName1 = sigmaDisplayName(measure.name);
+                const _dbtFmt1 = _inferSigmaFormat(_dbtFormula1, _dbtName1);
+                const _dbtMetric1 = { id: sigmaShortId(), formula: _dbtFormula1, name: _dbtName1 };
+                if (_dbtFmt1) _dbtMetric1.format = _dbtFmt1;
+                element.metrics.push(_dbtMetric1);
                 // Store full formula object so metrics can stack filters on top
                 allMeasuresByModel[measure.name] = {
                     agg: measure.agg,
@@ -10205,7 +10549,12 @@ relationships:
                         null;
                     const src = primaryMeasureName && allMeasuresByModel[primaryMeasureName];
                     const targetId = (src && src.elementId) || (elements[0] && elements[0].id);
-                    if (targetId) result.push({ targetElementId: targetId, metric: { id: sigmaShortId(), formula, name } });
+                    if (targetId) {
+                        const _dbtMetric2 = { id: sigmaShortId(), formula, name };
+                        const _dbtFmt2 = _inferSigmaFormat(formula, name);
+                        if (_dbtFmt2) _dbtMetric2.format = _dbtFmt2;
+                        result.push({ targetElementId: targetId, metric: _dbtMetric2 });
+                    }
                 }
             }
             return result;
@@ -11252,11 +11601,16 @@ metrics:
 
                     const metricId = sigmaInodeId(name.toUpperCase());
                     colIdMap[name.toUpperCase()] = metricId;
-                    element.metrics.push({
+                    const _omniMetric = {
                         id: metricId,
                         name: measure.label || sigmaDisplayName(name),
                         formula
-                    });
+                    };
+                    const _omniFmt = (measure.value_format_name ? _lookFormatNameToSigma(measure.value_format_name) : null)
+                        || (measure.value_format ? _excelFormatToSigma(measure.value_format) : null)
+                        || _inferSigmaFormat(formula, _omniMetric.name);
+                    if (_omniFmt) _omniMetric.format = _omniFmt;
+                    element.metrics.push(_omniMetric);
                 }
 
                 if (element.metrics && element.metrics.length === 0) delete element.metrics;
@@ -11459,6 +11813,1153 @@ explores:
 
         async function omniLoadAndSave() {
             loadOmniOutputToEditor();
+            if (!state.accessToken) {
+                showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning');
+                return;
+            }
+            openSaveLocationModal();
+        }
+
+        // ── Qlik Sense Converter ────────────────────────────────────────────
+
+        let _qlikModel = null; // parsed Qlik metadata JSON
+
+        function handleQlikFileInput(event) {
+            const file = event.target.files[0];
+            if (file) processQlikFile(file);
+        }
+
+        function handleQlikDrop(event) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('drag-over');
+            const file = event.dataTransfer.files[0];
+            if (file) processQlikFile(file);
+        }
+
+        async function processQlikFile(file) {
+            if (!file.name.toLowerCase().endsWith('.json')) {
+                showToast('❌ Please provide a .json file', 'error');
+                return;
+            }
+            try {
+                const text = await file.text();
+                const parsed = JSON.parse(text);
+                _qlikModel = parsed;
+
+                const { tables, masterMeasures, masterDimensions } = _qlikParseInput(parsed);
+                const fieldCount = tables.reduce((n, t) => n + (t.fields || []).length, 0);
+
+                document.getElementById('qlikFileList').innerHTML =
+                    `<div style="display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-tertiary);border-radius:6px;font-size:11px;"><span>🔮</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${file.name}">${file.name}</span><span style="color:var(--text-muted);flex-shrink:0;">${tables.length} tables · ${fieldCount} fields</span></div>`;
+
+                document.getElementById('qlikInputStats').innerHTML = [
+                    `<span class="dbt-stat-badge dimensions">${tables.length} table${tables.length !== 1 ? 's' : ''}</span>`,
+                    fieldCount ? `<span class="dbt-stat-badge">${fieldCount} fields</span>` : '',
+                    masterMeasures.length ? `<span class="dbt-stat-badge measures">${masterMeasures.length} measures</span>` : '',
+                    masterDimensions.length ? `<span class="dbt-stat-badge dimensions">${masterDimensions.length} dimensions</span>` : ''
+                ].filter(Boolean).join('');
+
+                // Pre-populate database / schema overrides if the file includes them
+                if (parsed.database) document.getElementById('qlikDatabase').value = parsed.database;
+                if (parsed.schema)   document.getElementById('qlikSchema').value   = parsed.schema;
+
+                document.getElementById('qlikConvertBtn').disabled = false;
+                showToast(`Loaded ${file.name}: ${tables.length} tables`, 'success');
+            } catch (e) {
+                showToast('❌ Failed to parse JSON: ' + e.message, 'error');
+                _qlikModel = null;
+            }
+        }
+
+        // Normalise the various Qlik input formats into a common structure
+        function _qlikParseInput(raw) {
+            let tables = [], masterMeasures = [], masterDimensions = [], appName = '';
+
+            // Engine API GetTablesAndKeys response: { qtr: [ { qName, qFields } ] }
+            if (Array.isArray(raw.qtr)) {
+                appName = raw.appName || raw.qAppId || 'Qlik App';
+                tables = raw.qtr.map(t => ({
+                    name: t.qName || '',
+                    noOfRows: t.qNoOfRows || 0,
+                    fields: (t.qFields || []).map(f => ({
+                        name: f.qName || '',
+                        distinctValueCount: f.qnTotalDistinctValues || f.qnPresentDistinctValues || 0,
+                        noOfRows: f.qnRows || t.qNoOfRows || 0,
+                        keyType: f.qKeyType || 'FACT',
+                        isSystem: (f.qName || '').startsWith('$')
+                    }))
+                }));
+                masterMeasures = raw.masterMeasures || [];
+                masterDimensions = raw.masterDimensions || [];
+            }
+            // REST API /data/metadata or extended format: { tables: [...] }
+            else if (Array.isArray(raw.tables)) {
+                appName = raw.appName || raw.appId || 'Qlik App';
+                tables = raw.tables.map(t => ({
+                    name: t.name || t.qName || '',
+                    noOfRows: t.noOfRows || t.qNoOfRows || 0,
+                    fields: (t.fields || t.qFields || []).map(f => ({
+                        name: f.name || f.qName || '',
+                        distinctValueCount: f.distinctValueCount || f.qDistinctCount || f.qnTotalDistinctValues || 0,
+                        noOfRows: t.noOfRows || t.qNoOfRows || 0,
+                        keyType: f.keyType || f.qKeyType || 'FACT',
+                        isSystem: f.isSystem || (f.name || f.qName || '').startsWith('$') || false,
+                        isHidden: f.isHidden || false
+                    }))
+                }));
+                masterMeasures = raw.masterMeasures || [];
+                masterDimensions = raw.masterDimensions || [];
+            }
+
+            return { tables, masterMeasures, masterDimensions, appName };
+        }
+
+        function loadQlikExample() {
+            const example = {
+                appName: 'Sales Analytics',
+                tables: [
+                    {
+                        name: 'Orders', noOfRows: 50000,
+                        fields: [
+                            { name: 'OrderID',     distinctValueCount: 50000 },
+                            { name: 'CustomerID',  distinctValueCount: 2500  },
+                            { name: 'ProductID',   distinctValueCount: 300   },
+                            { name: 'OrderDate',   distinctValueCount: 730   },
+                            { name: 'OrderAmount', distinctValueCount: 48000 },
+                            { name: 'Quantity',    distinctValueCount: 50    }
+                        ]
+                    },
+                    {
+                        name: 'Customers', noOfRows: 2500,
+                        fields: [
+                            { name: 'CustomerID',   distinctValueCount: 2500 },
+                            { name: 'CustomerName', distinctValueCount: 2500 },
+                            { name: 'Region',       distinctValueCount: 8    },
+                            { name: 'Segment',      distinctValueCount: 3    }
+                        ]
+                    },
+                    {
+                        name: 'Products', noOfRows: 300,
+                        fields: [
+                            { name: 'ProductID',   distinctValueCount: 300 },
+                            { name: 'ProductName', distinctValueCount: 300 },
+                            { name: 'Category',    distinctValueCount: 10  },
+                            { name: 'UnitPrice',   distinctValueCount: 200 }
+                        ]
+                    }
+                ],
+                masterMeasures: [
+                    { title: 'Total Revenue',    description: 'Sum of all order amounts', expr: 'Sum([OrderAmount])' },
+                    { title: 'Order Count',      expr: 'Count([OrderID])' },
+                    { title: 'Avg Order Value',  expr: 'Avg([OrderAmount])' },
+                    { title: 'Unique Customers', expr: 'CountDistinct([CustomerID])' }
+                ],
+                masterDimensions: [
+                    { title: 'Order Size', fieldDef: "=If([OrderAmount] > 1000, 'Large', 'Standard')" }
+                ]
+            };
+            document.getElementById('qlikJsonInput').value = JSON.stringify(example, null, 2);
+            _qlikModel = example;
+            const { tables, masterMeasures, masterDimensions } = _qlikParseInput(example);
+            const fieldCount = tables.reduce((n, t) => n + (t.fields || []).length, 0);
+            document.getElementById('qlikInputStats').innerHTML = [
+                `<span class="dbt-stat-badge dimensions">${tables.length} tables</span>`,
+                `<span class="dbt-stat-badge">${fieldCount} fields</span>`,
+                `<span class="dbt-stat-badge measures">${masterMeasures.length} measures</span>`,
+                `<span class="dbt-stat-badge dimensions">${masterDimensions.length} dimensions</span>`
+            ].join('');
+            document.getElementById('qlikConvertBtn').disabled = false;
+            showToast('Loaded Sales Analytics example', 'success');
+        }
+
+        // Translate a Qlik expression to Sigma formula syntax
+        function qlikExprToSigma(expr, warnings, name) {
+            if (!expr || !expr.trim()) return null;
+            let f = expr.trim();
+            // Strip leading = sign (common in Qlik dimension definitions)
+            if (f.startsWith('=')) f = f.slice(1).trim();
+
+            // ── Patterns that cannot be converted → warn and skip ──────────
+            if (/\{\s*[\$1][^}]*\}/.test(f)) {
+                if (warnings) warnings.push(`⚠ "${name}": uses Qlik Set Analysis. In Sigma, use SumIf/CountIf with a condition argument instead.`);
+                return null;
+            }
+            if (/\bAggr\s*\(/i.test(f)) {
+                if (warnings) warnings.push(`⚠ "${name}": uses Aggr() — no direct Sigma equivalent. Use grouped metrics or groupings in Sigma instead.`);
+                return null;
+            }
+            if (/\bDual\s*\(/i.test(f)) {
+                if (warnings) warnings.push(`⚠ "${name}": uses Dual() — Qlik-specific function. Simplify to a text or numeric expression in Sigma.`);
+                return null;
+            }
+            if (/\bGet(?:Field)?(?:Selections?|CurrentSelections?|PossibleCount|SelectedCount|AlternativeCount|ExcludedCount)\s*\(/i.test(f)) {
+                if (warnings) warnings.push(`⚠ "${name}": uses a Qlik selection-state function. These have no Sigma equivalent.`);
+                return null;
+            }
+            if (/\bClass\s*\(/i.test(f)) {
+                if (warnings) warnings.push(`⚠ "${name}": uses Class() (Qlik data binning). In Sigma, use If() ranges for bucketing.`);
+                return null;
+            }
+            if (/\bRange(?:Sum|Avg|Min|Max|Count|Stdev|Mode|Skew|Kurtosis|Correl|Fractile)\s*\(/i.test(f)) {
+                if (warnings) warnings.push(`⚠ "${name}": uses a Qlik Range aggregation function. No direct Sigma equivalent.`);
+                return null;
+            }
+
+            // ── Aggregation tweaks ──────────────────────────────────────────
+            // Only([Field]) → [Field]  (single-value selector)
+            f = f.replace(/\bOnly\s*\(\s*(\[[^\]]+\])\s*\)/gi, '$1');
+            // MinString / MaxString → Min / Max
+            f = f.replace(/\bMinString\s*\(/gi, 'Min(');
+            f = f.replace(/\bMaxString\s*\(/gi, 'Max(');
+
+            // ── Numeric functions ───────────────────────────────────────────
+            f = f.replace(/\bFabs\s*\(/gi, 'Abs(');
+            f = f.replace(/\bFrac\s*\(\s*([^)]+)\)/gi, '$1 - Trunc($1)');
+            f = f.replace(/\bSqrt\s*\(/gi, 'Sqrt(');
+            f = f.replace(/\bPow\s*\(\s*([^,]+),\s*([^)]+)\)/gi, 'Power($1, $2)');
+            f = f.replace(/\bLog10\s*\(/gi, 'Log10(');
+            f = f.replace(/\bLog\s*\(/gi, 'Ln(');
+            f = f.replace(/\bExp\s*\(/gi, 'Exp(');
+            f = f.replace(/\bCeil\s*\(/gi, 'Ceiling(');
+            f = f.replace(/\bFmod\s*\(\s*([^,]+),\s*([^)]+)\)/gi, 'Mod($1, $2)');
+            f = f.replace(/\bDiv\s*\(\s*([^,]+),\s*([^)]+)\)/gi, 'Trunc($1 / $2)');
+
+            // ── String functions ─────────────────────────────────────────────
+            f = f.replace(/\bSubStringCount\s*\(/gi, 'RegexpCount(');
+            f = f.replace(/\bIndex\s*\(\s*([^,]+),\s*([^,)]+)(?:,\s*([^)]+))?\)/gi,
+                (m, s, sub, occ) => occ ? `IndexOf(${s}, ${sub}, ${occ})` : `IndexOf(${s}, ${sub})`);
+            f = f.replace(/\bLTrim\s*\(/gi, 'Ltrim(');
+            f = f.replace(/\bRTrim\s*\(/gi, 'Rtrim(');
+            f = f.replace(/\bRepeat\s*\(/gi, 'Repeat(');
+            // Concat([Field]) → ListAgg([Field])
+            f = f.replace(/\bConcat\s*\(/gi, 'ListAgg(');
+            // Num(x, fmt) → strip format arg, keep value (warn when format arg present)
+            f = f.replace(/\bNum\s*\(\s*([^,)]+)(,([^)]+))?\)/gi, (m, val, hasComma, fmt) => {
+                if (hasComma && warnings) warnings.push(`⚠ "${name}": Num() format argument "${(fmt||'').trim()}" stripped — set number format manually in Sigma.`);
+                return val.trim();
+            });
+            // Text([Field]) → ToString([Field])
+            f = f.replace(/\bText\s*\(/gi, 'ToString(');
+            // Date$([Field]) → ToString([Field])  (returns date as text)
+            f = f.replace(/\bDate\$\s*\(/gi, 'ToString(');
+
+            // ── Conditional / type-check functions ──────────────────────────
+            f = f.replace(/\bIsNum\s*\(/gi, 'IsNumber(');
+            f = f.replace(/\bIsText\s*\(\s*([^)]+)\)/gi, '!IsNumber($1)');
+            f = f.replace(/\bNull\s*\(\s*\)/gi, 'null');
+
+            // ── Date/time functions ─────────────────────────────────────────
+            f = f.replace(/\bWeekDay\s*\(/gi, 'Weekday(');
+            // YearToDate([Field]) → Year([Field]) = Year(Today())
+            f = f.replace(/\bYearToDate\s*\(\s*([^)]+)\)/gi, (m, field) => {
+                if (warnings) warnings.push(`⚠ "${name}": YearToDate() approximated as Year(${field.trim()}) = Year(Today()) — verify range in Sigma.`);
+                return `Year(${field}) = Year(Today())`;
+            });
+
+            // ── Single-quotes → double-quotes (Qlik uses ', Sigma uses ") ──
+            f = f.replace(/'([^']*)'/g, '"$1"');
+
+            return f.trim();
+        }
+
+        function runQlikConversion() {
+            // Allow driving from the paste textarea when no file was dropped
+            const pasteVal = document.getElementById('qlikJsonInput').value.trim();
+            if (!_qlikModel && pasteVal) {
+                try {
+                    _qlikModel = JSON.parse(pasteVal);
+                } catch (e) {
+                    showToast('❌ Invalid JSON: ' + e.message, 'error');
+                    return;
+                }
+            }
+            if (!_qlikModel) {
+                showToast('Load a Qlik metadata file or paste JSON first', 'warning');
+                return;
+            }
+
+            const btn = document.getElementById('qlikConvertBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Converting…';
+
+            try {
+                _usedIds.clear();
+                const connectionId = document.getElementById('qlikConnectionId').value.trim() || '<CONNECTION_ID>';
+                state.useFriendlyNames = isConnectionFriendly(connectionId);
+                const dbOverride = document.getElementById('qlikDatabase').value.trim().toUpperCase();
+                const schOverride = document.getElementById('qlikSchema').value.trim().toUpperCase();
+                const warnings = [];
+                { const fnWarn = friendlyNameWarning(); if (fnWarn) warnings.push(fnWarn); }
+
+                const { tables, masterMeasures, masterDimensions, appName } = _qlikParseInput(_qlikModel);
+                const modelName = _qlikModel.appName || _qlikModel.appId || appName || 'Qlik App';
+
+                if (!tables.length) {
+                    showToast('❌ No tables found in input. Check the JSON format.', 'error');
+                    return;
+                }
+
+                // Skip system tables: $-prefix and synthetic key tables (%Name%)
+                const userTables = tables.filter(t =>
+                    t.name && !t.name.startsWith('$') && !/^%.*%$/.test(t.name)
+                );
+                if (userTables.length < tables.length) {
+                    warnings.push(`ℹ ${tables.length - userTables.length} system table(s) skipped ($… and %%name%% synthetic key tables).`);
+                }
+
+                // ── Pass 1: Build Sigma elements from tables ────────────────
+                const elements = [];
+                const tableElementMap = {}; // tableName → { elementId, colMap, element, rowCount, fields }
+
+                for (const t of userTables) {
+                    const elementId = sigmaShortId();
+                    const columns = [];
+                    const order = [];
+                    const colMap = {};
+
+                    const visibleFields = (t.fields || []).filter(f =>
+                        f.name && !f.isSystem && !f.isHidden && !f.name.startsWith('$')
+                    );
+
+                    for (const f of visibleFields) {
+                        const displayName = sigmaDisplayName(f.name);
+                        const colId = sigmaShortId();
+                        columns.push({ id: colId, formula: `[${t.name}/${displayName}]` });
+                        order.push(colId);
+                        colMap[f.name] = { colId, displayName };
+                    }
+
+                    const pathParts = [];
+                    if (dbOverride)  pathParts.push(dbOverride);
+                    if (schOverride) pathParts.push(schOverride);
+                    pathParts.push(t.name.toUpperCase());
+
+                    const element = {
+                        id: elementId,
+                        kind: 'table',
+                        name: sigmaDisplayName(t.name),
+                        source: { connectionId, kind: 'warehouse-table', path: pathParts },
+                        columns,
+                        order: [...order]
+                    };
+
+                    elements.push(element);
+                    tableElementMap[t.name] = { elementId, colMap, element, rowCount: t.noOfRows || 0, fields: t.fields || [] };
+                }
+
+                // Flat map: warehouse field name → Sigma display name, used to
+                // rewrite bracket refs in metric / calc-column formulas so they match
+                // the display names used when building element columns (same pattern as PBI).
+                const qlikColToDisplayName = {};
+                for (const info of Object.values(tableElementMap)) {
+                    for (const [fieldName, colInfo] of Object.entries(info.colMap)) {
+                        qlikColToDisplayName[fieldName] = colInfo.displayName;
+                    }
+                }
+
+                // ── Pass 2: Infer relationships from shared field names ─────
+                // In Qlik, tables sharing a field name are automatically associated.
+                const fieldToTables = {};
+                for (const t of userTables) {
+                    for (const f of (t.fields || []).filter(f => f.name && !f.name.startsWith('$'))) {
+                        if (!fieldToTables[f.name]) fieldToTables[f.name] = [];
+                        fieldToTables[f.name].push(t.name);
+                    }
+                }
+
+                const createdRels = new Set(); // prevent duplicate relationships
+                for (const [fieldName, tableNames] of Object.entries(fieldToTables)) {
+                    if (tableNames.length < 2) continue;
+
+                    if (tableNames.length > 2) {
+                        warnings.push(`⚠ Field "${fieldName}" links ${tableNames.length} tables (${tableNames.join(', ')}). Complex association — review relationships in Sigma.`);
+                    }
+
+                    for (let i = 0; i < tableNames.length - 1; i++) {
+                        for (let j = i + 1; j < tableNames.length; j++) {
+                            const infoA = tableElementMap[tableNames[i]];
+                            const infoB = tableElementMap[tableNames[j]];
+                            if (!infoA || !infoB) continue;
+
+                            const relKey = [infoA.elementId, infoB.elementId].sort().join('|') + '|' + fieldName;
+                            if (createdRels.has(relKey)) continue;
+                            createdRels.add(relKey);
+
+                            // Determine direction: one side = PK (high cardinality ratio), many side = FK
+                            const aField = infoA.fields.find(f => f.name === fieldName);
+                            const bField = infoB.fields.find(f => f.name === fieldName);
+                            const aRows = infoA.rowCount || 0;
+                            const bRows = infoB.rowCount || 0;
+                            const aDistinct = aField ? (aField.distinctValueCount || 0) : 0;
+                            const bDistinct = bField ? (bField.distinctValueCount || 0) : 0;
+                            const aRatio = aRows > 0 && aDistinct > 0 ? aDistinct / aRows : 0;
+                            const bRatio = bRows > 0 && bDistinct > 0 ? bDistinct / bRows : 0;
+
+                            // Only create a relationship if at least one side looks like a PK
+                            // (≥90% distinct values). This filters out generic shared names like
+                            // CITY, STATE, REGION, IS_ACTIVE that appear in multiple tables but
+                            // are NOT join keys. When no distinct-count info is available (both
+                            // ratios are 0) we fall back to creating the relationship anyway.
+                            const hasPkSide = aRatio >= 0.9 || bRatio >= 0.9;
+                            const noInfo    = aRatio === 0 && bRatio === 0;
+                            if (!hasPkSide && !noInfo) continue;
+
+                            // toInfo = PK (one) side, fromInfo = FK (many) side
+                            let fromInfo, toInfo;
+                            if (aRatio >= bRatio) {
+                                toInfo   = infoA; // A has higher cardinality = PK side
+                                fromInfo = infoB;
+                            } else {
+                                toInfo   = infoB;
+                                fromInfo = infoA;
+                            }
+
+                            const fromColInfo = fromInfo.colMap[fieldName];
+                            const toColInfo   = toInfo.colMap[fieldName];
+                            if (!fromColInfo || !toColInfo) continue;
+
+                            if (!fromInfo.element.relationships) fromInfo.element.relationships = [];
+                            fromInfo.element.relationships.push({
+                                id: sigmaShortId(),
+                                targetElementId: toInfo.elementId,
+                                keys: [{ sourceColumnId: fromColInfo.colId, targetColumnId: toColInfo.colId }]
+                            });
+                        }
+                    }
+                }
+
+                // ── Pass 2b: Explicit relationships (different FK/PK names) ──
+                // Supports: { relationships: [{ fromTable, fromField, toTable, toField }] }
+                // Used when Qlik LOAD script aliases a column for association purposes
+                // (e.g. ORDER_STORE_KEY AS STORE_KEY) but the warehouse column keeps its name.
+                for (const rel of (_qlikModel.relationships || [])) {
+                    const fromInfo = tableElementMap[rel.fromTable];
+                    const toInfo   = tableElementMap[rel.toTable];
+                    if (!fromInfo || !toInfo) continue;
+
+                    const fromColInfo = fromInfo.colMap[rel.fromField];
+                    const toColInfo   = toInfo.colMap[rel.toField];
+                    if (!fromColInfo || !toColInfo) {
+                        warnings.push(`⚠ Explicit relationship ${rel.fromTable}.${rel.fromField} → ${rel.toTable}.${rel.toField}: column not found, skipped.`);
+                        continue;
+                    }
+
+                    // Deduplicate against auto-detected relationships
+                    const relKey = [fromInfo.elementId, toInfo.elementId].sort().join('|') + '|' + rel.fromField;
+                    if (createdRels.has(relKey)) continue;
+                    createdRels.add(relKey);
+
+                    if (!fromInfo.element.relationships) fromInfo.element.relationships = [];
+                    fromInfo.element.relationships.push({
+                        id: sigmaShortId(),
+                        targetElementId: toInfo.elementId,
+                        keys: [{ sourceColumnId: fromColInfo.colId, targetColumnId: toColInfo.colId }]
+                    });
+                }
+
+                // ── Pass 3: Master measures → Sigma metrics ─────────────────
+                const measuresByElement = {};
+                elements.forEach(e => { measuresByElement[e.id] = []; });
+
+                for (const m of masterMeasures) {
+                    const title   = m.title || m.qTitle || 'Metric';
+                    const exprRaw = m.expr  || m.qDef   || m.expression || '';
+                    const desc    = m.description || m.qDescription || '';
+
+                    let sigmaFormula = qlikExprToSigma(exprRaw, warnings, title);
+                    if (!sigmaFormula) continue;
+
+                    // Rewrite [WAREHOUSE_NAME] → [Display Name] to match how element
+                    // columns were created (same pattern as the PBI converter)
+                    sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m, colName) =>
+                        qlikColToDisplayName[colName] ? `[${qlikColToDisplayName[colName]}]` : m
+                    );
+
+                    // Attach to the element whose fields appear in the expression
+                    let bestElementId = elements[0]?.id;
+                    outer:
+                    for (const [tName, info] of Object.entries(tableElementMap)) {
+                        for (const fn of Object.keys(info.colMap)) {
+                            const dn = info.colMap[fn].displayName;
+                            if (sigmaFormula.includes(`[${dn}]`) || sigmaFormula.includes(`[${fn}]`)) {
+                                bestElementId = info.elementId;
+                                break outer;
+                            }
+                        }
+                    }
+
+                    if (!measuresByElement[bestElementId]) measuresByElement[bestElementId] = [];
+                    const metric = { id: sigmaShortId(), formula: sigmaFormula, name: title };
+                    if (desc) metric.description = desc;
+                    const _qFmt = _inferSigmaFormat(sigmaFormula, title);
+                    if (_qFmt) metric.format = _qFmt;
+                    measuresByElement[bestElementId].push(metric);
+                }
+
+                for (const el of elements) {
+                    const metrics = measuresByElement[el.id];
+                    if (metrics && metrics.length) el.metrics = metrics;
+                }
+
+                // ── Pass 4: Calculated master dimensions → columns ──────────
+                for (const d of masterDimensions) {
+                    const title   = d.title || d.qTitle || 'Dimension';
+                    const exprRaw = d.fieldDef || d.qFieldDef || d.expr || d.expression || '';
+
+                    // Skip plain field references (non-calculated)
+                    const isCalc = exprRaw.trim().startsWith('=') ||
+                        /\b(If|Sum|Count|Avg|Concat|Year|Month|Day|Left|Right|Upper|Lower|Trim)\s*\(/i.test(exprRaw);
+                    if (!isCalc) continue;
+
+                    let sigmaFormula = qlikExprToSigma(exprRaw, warnings, title);
+                    if (!sigmaFormula) continue;
+
+                    // Rewrite [WAREHOUSE_NAME] → [Display Name] to match element columns
+                    sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m, colName) =>
+                        qlikColToDisplayName[colName] ? `[${qlikColToDisplayName[colName]}]` : m
+                    );
+
+                    const targetEl = elements[0];
+                    if (!targetEl) continue;
+                    const colId = sigmaShortId();
+                    const _qlikFmt = _inferSigmaFormat(sigmaFormula, title);
+                    const _qlikCol = { id: colId, formula: sigmaFormula, name: title };
+                    if (_qlikFmt) _qlikCol.format = _qlikFmt;
+                    targetEl.columns.push(_qlikCol);
+                    targetEl.order.push(colId);
+                }
+
+                // ── Build output ────────────────────────────────────────────
+                const sigma = {
+                    name: sigmaDisplayName(modelName),
+                    pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
+                };
+
+                document.getElementById('qlikJsonOutput').value = JSON.stringify(sigma, null, 2);
+
+                // Warnings
+                const warnBox = document.getElementById('qlikWarningBox');
+                if (warnings.length) {
+                    warnBox.style.display = '';
+                    warnBox.innerHTML = warnings.map(w => {
+                        const escaped = w.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                        return '<div>' + escaped + '</div>';
+                    }).join('');
+                } else {
+                    warnBox.style.display = 'none';
+                }
+
+                // Stats
+                const ec = elements.length;
+                const cc = elements.reduce((n, e) => n + (e.columns  || []).length, 0);
+                const mc = elements.reduce((n, e) => n + (e.metrics  || []).length, 0);
+                const rc = elements.reduce((n, e) => n + (e.relationships || []).length, 0);
+                const wc = warnings.length;
+                document.getElementById('qlikOutputStats').innerHTML = [
+                    `<span class="dbt-stat-badge">${ec} element${ec !== 1 ? 's' : ''}</span>`,
+                    cc ? `<span class="dbt-stat-badge">${cc} column${cc !== 1 ? 's' : ''}</span>` : '',
+                    mc ? `<span class="dbt-stat-badge measures">${mc} metric${mc !== 1 ? 's' : ''}</span>` : '',
+                    rc ? `<span class="dbt-stat-badge entities">${rc} relationship${rc !== 1 ? 's' : ''}</span>` : '',
+                    wc ? `<span class="dbt-stat-badge" style="color:var(--warning);">${wc} warning${wc !== 1 ? 's' : ''}</span>` : ''
+                ].filter(Boolean).join('');
+
+                ['qlikCopyBtn', 'qlikLoadBtn', 'qlikSaveBtn'].forEach(id => {
+                    document.getElementById(id).disabled = false;
+                });
+
+                showToast(`Converted "${sigmaDisplayName(modelName)}" → ${ec} element${ec !== 1 ? 's' : ''}${mc ? ', ' + mc + ' metric' + (mc !== 1 ? 's' : '') : ''}`, 'success');
+
+            } catch (e) {
+                showToast('Conversion error: ' + e.message, 'error');
+                if (_isDevMode()) console.error(e);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔮 Convert to Sigma JSON';
+            }
+        }
+
+        function copyQlikOutput() {
+            const val = document.getElementById('qlikJsonOutput').value;
+            if (!val) return;
+            navigator.clipboard.writeText(val).then(() => showToast('Copied to clipboard', 'success'));
+        }
+
+        function loadQlikOutputToEditor() {
+            const val = document.getElementById('qlikJsonOutput').value;
+            if (!val) return;
+            try {
+                const obj = JSON.parse(val);
+                editorMode = 'json';
+                _updateModeToggleUI();
+                setEditorContent(obj);
+            } catch (e) {
+                setEditorRaw(val);
+            }
+            state.isNewModel = true;
+            state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from Qlik Sense (unsaved)';
+            ['findBtn', 'treeViewBtn', 'formatBtn', 'diffBtn', 'copyBtn', 'saveBtn', 'aiBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+            enableEditorModeToggle();
+            switchEditorTab('json');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
+        }
+
+        async function qlikLoadAndSave() {
+            loadQlikOutputToEditor();
+            if (!state.accessToken) {
+                showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning');
+                return;
+            }
+            openSaveLocationModal();
+        }
+
+        // ── SSAS / MSAS Cube Converter ──────────────────────────────────────
+
+        let _ssasModel = null;
+
+        function handleSsasFileInput(event) {
+            const file = event.target.files[0];
+            if (file) processSsasFile(file);
+        }
+
+        function handleSsasDrop(event) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('drag-over');
+            const file = event.dataTransfer.files[0];
+            if (file) processSsasFile(file);
+        }
+
+        async function processSsasFile(file) {
+            if (!file.name.toLowerCase().endsWith('.json')) {
+                showToast('❌ Please provide a .json file', 'error'); return;
+            }
+            try {
+                const text = await file.text();
+                const parsed = JSON.parse(text);
+                _ssasModel = parsed;
+                document.getElementById('ssasJsonInput').value = '';
+
+                const cube = parsed.Cube || parsed;
+                const mgs  = _ssasArr(cube.MeasureGroups?.MeasureGroup);
+                const dims = _ssasArr(cube.Dimensions?.Dimension);
+                const allMeasures = mgs.flatMap(mg => _ssasArr(mg.Measures?.Measure));
+                const kpis = _ssasArr(cube.Kpis?.Kpi);
+
+                document.getElementById('ssasFileList').innerHTML =
+                    `<div style="display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-tertiary);border-radius:6px;font-size:11px;">
+                        <span>🧊</span>
+                        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+                        <span style="color:var(--text-muted);flex-shrink:0;">${mgs.length} measure groups · ${allMeasures.length} measures</span>
+                    </div>`;
+
+                document.getElementById('ssasInputStats').innerHTML = [
+                    `<span class="dbt-stat-badge dimensions">${dims.length} dimension${dims.length !== 1 ? 's' : ''}</span>`,
+                    `<span class="dbt-stat-badge metrics">${allMeasures.length} measure${allMeasures.length !== 1 ? 's' : ''}</span>`,
+                    `<span class="dbt-stat-badge">${mgs.length} measure group${mgs.length !== 1 ? 's' : ''}</span>`,
+                    kpis.length ? `<span class="dbt-stat-badge">${kpis.length} KPI${kpis.length !== 1 ? 's' : ''}</span>` : '',
+                ].filter(Boolean).join('');
+
+            } catch(e) { showToast('Error reading file: ' + e.message, 'error'); }
+        }
+
+        // Ensure value is always an array (handles XML→JSON single-object vs array quirk)
+        function _ssasArr(val) {
+            if (!val) return [];
+            if (Array.isArray(val)) return val;
+            return [val];
+        }
+
+        // Walk a possibly-nested Source chain to find the innermost ColumnBinding
+        function _ssasBinding(src) {
+            if (!src) return null;
+            // May have: src.Source.Source or src.Source or just src
+            const inner = src.Source?.Source || src.Source || src;
+            if (inner && (inner['@xsi:type'] === 'ColumnBinding' || inner.ColumnID)) return inner;
+            return null;
+        }
+
+        // Convert a measure's AggregateFunction + column binding to a Sigma formula
+        function _ssasMeasureFormula(measure) {
+            const aggRaw = (measure.AggregateFunction || 'Sum').trim().toLowerCase();
+            const binding = _ssasBinding(measure.Source);
+
+            // RowBinding or no column → count of rows
+            if (!binding || !binding.ColumnID || (measure.Source?.Source?.['@xsi:type'] === 'RowBinding')) {
+                const skip = ['none', 'calculated', 'firstnonempty', 'lastnonempty', 'byaccount'];
+                if (skip.includes(aggRaw)) return null;
+                return 'CountRows()';
+            }
+
+            const display = sigmaDisplayName(binding.ColumnID);
+            const aggMap = {
+                sum: 'Sum', count: 'Count', avg: 'Avg', min: 'Min', max: 'Max',
+                distinctcount: 'CountDistinct', firstchild: 'Min', lastchild: 'Max',
+                byaccount: 'Sum',
+            };
+            const fn = aggMap[aggRaw];
+            if (fn === undefined) return `Sum([${display}])`; // safe default
+            if (!fn) return null; // calculated/none — skip
+            return `${fn}([${display}])`;
+        }
+
+        // Minimal MDX → Sigma expression transpiler
+        function _ssasMdxToSigma(mdx, warnings) {
+            if (!mdx || !mdx.trim()) return null;
+            let expr = mdx.trim();
+
+            // Strip outer parens if the whole expression is wrapped
+            expr = expr.replace(/^\((.+)\)$/, '$1').trim();
+
+            // [Measures].[Name] → [Name]
+            expr = expr.replace(/\[Measures\]\.\[([^\]]+)\]/gi, (_, n) => `[${n}]`);
+
+            // CASE WHEN … THEN … [ELSE …] END → nested If()
+            expr = _sqlCaseToIf(expr);
+
+            // IIF → If
+            expr = expr.replace(/\bIIF\s*\(/gi, 'If(');
+
+            // ISEMPTY → IsNull
+            expr = expr.replace(/\bISEMPTY\s*\(/gi, 'IsNull(');
+
+            // Logical keywords
+            expr = expr.replace(/\bAND\b/g, 'and').replace(/\bOR\b/g, 'or').replace(/\bNOT\b/g, 'Not');
+
+            // Null checks
+            expr = expr.replace(/\bIS\s+EMPTY\b/gi, '= null').replace(/\bIS\s+NULL\b/gi, '= null');
+
+            // Format string → trim to bare expression
+            // [dim].[attr].CurrentMember.MemberValue → [attr]
+            expr = expr.replace(/\[[^\]]+\]\.\[([^\]]+)\]\.(?:CurrentMember\.(?:MemberValue|Name|Key)|CurrentMember)/gi,
+                (_, attr) => `[${sigmaDisplayName(attr)}]`);
+
+            // Warn on MDX-only functions we can't convert
+            const mdxOnlyFns = ['PARALLELPERIOD', 'PERIODSTODATE', 'LASTPERIODS', 'MTD', 'QTD', 'YTD',
+                'STRTOSET', 'STRTOMEMBER', 'CURRENTMEMBER', 'PREVMEMBER', 'NEXTMEMBER',
+                'DESCENDANTS', 'ANCESTORS', 'CHILDREN', 'SIBLINGS', 'MEMBERS', 'CROSSJOIN'];
+            for (const fn of mdxOnlyFns) {
+                if (new RegExp('\\b' + fn + '\\b', 'i').test(expr)) {
+                    if (warnings) warnings.push(`⚠ MDX function "${fn}" not auto-converted — review formula manually`);
+                    break;
+                }
+            }
+
+            return expr || null;
+        }
+
+        function loadSsasExample() {
+            // A minimal representative cube JSON
+            const example = {
+                Cube: {
+                    ID: 'Sales Cube', Name: 'Sales Cube',
+                    Dimensions: { Dimension: [
+                        { ID: 'Date', Name: 'Date',
+                          Attributes: { Attribute: [
+                              { AttributeID: 'Date', AttributeHierarchyVisible: 'true' },
+                              { AttributeID: 'Month', AttributeHierarchyVisible: 'true' },
+                              { AttributeID: 'Quarter', AttributeHierarchyVisible: 'true' },
+                              { AttributeID: 'Year', AttributeHierarchyVisible: 'true' },
+                          ]},
+                          Hierarchies: { Hierarchy: { HierarchyID: 'Calendar' } }
+                        },
+                        { ID: 'Product', Name: 'Product',
+                          Attributes: { Attribute: [
+                              { AttributeID: 'Product Key' },
+                              { AttributeID: 'Product Name' },
+                              { AttributeID: 'Category' },
+                              { AttributeID: 'Subcategory' },
+                          ]},
+                          Hierarchies: { Hierarchy: { HierarchyID: 'Product Hierarchy' } }
+                        }
+                    ]},
+                    MeasureGroups: { MeasureGroup: [
+                        { ID: 'Sales', Name: 'Sales',
+                          Measures: { Measure: [
+                              { ID: 'Internet Sales Amount', Name: 'Internet Sales Amount',
+                                AggregateFunction: 'Sum', FormatString: '$#,##0.00',
+                                Source: { Source: { '@xsi:type': 'ColumnBinding', TableID: 'FactInternetSales', ColumnID: 'SalesAmount' } }
+                              },
+                              { ID: 'Order Count', Name: 'Order Count',
+                                AggregateFunction: 'Count', FormatString: '#,0',
+                                Source: { Source: { '@xsi:type': 'RowBinding', TableID: 'FactInternetSales' } }
+                              },
+                          ]},
+                          Dimensions: { Dimension: [
+                              { CubeDimensionID: 'Date', Attributes: { Attribute: {
+                                  AttributeID: 'Date', Type: 'Granularity',
+                                  KeyColumns: { KeyColumn: { Source: { '@xsi:type': 'ColumnBinding', TableID: 'FactInternetSales', ColumnID: 'OrderDateKey' } } }
+                              }}},
+                              { CubeDimensionID: 'Product', Attributes: { Attribute: {
+                                  AttributeID: 'Product Key', Type: 'Granularity',
+                                  KeyColumns: { KeyColumn: { Source: { '@xsi:type': 'ColumnBinding', TableID: 'FactInternetSales', ColumnID: 'ProductKey' } } }
+                              }}},
+                          ]}
+                        }
+                    ]},
+                    Kpis: { Kpi: {
+                        ID: 'Revenue KPI', Name: 'Revenue KPI',
+                        AssociatedMeasureGroupID: 'Sales',
+                        Value: '[Measures].[Internet Sales Amount]',
+                        Goal: '2500000',
+                        Status: 'CASE WHEN [Measures].[Internet Sales Amount] >= 2500000 THEN 1 WHEN [Measures].[Internet Sales Amount] >= 2000000 THEN 0 ELSE -1 END',
+                        StatusGraphic: 'Traffic Light', TrendGraphic: 'Status Arrow - Ascending'
+                    }}
+                }
+            };
+            _ssasModel = example;
+            document.getElementById('ssasJsonInput').value = JSON.stringify(example, null, 2);
+            document.getElementById('ssasFileList').innerHTML = '';
+            document.getElementById('ssasInputStats').innerHTML =
+                '<span class="dbt-stat-badge dimensions">2 dimensions</span>' +
+                '<span class="dbt-stat-badge metrics">2 measures</span>' +
+                '<span class="dbt-stat-badge">1 measure group</span>' +
+                '<span class="dbt-stat-badge">1 KPI</span>';
+        }
+
+        function runSsasConversion() {
+            const btn = document.getElementById('ssasConvertBtn');
+            btn.disabled = true; btn.textContent = '⏳ Converting…';
+
+            try {
+                // Resolve input
+                let raw = _ssasModel;
+                if (!raw) {
+                    const txt = document.getElementById('ssasJsonInput').value.trim();
+                    if (!txt) { showToast('Paste or upload an SSAS cube JSON first', 'warning'); return; }
+                    try { raw = JSON.parse(txt); } catch(e) { showToast('Invalid JSON: ' + e.message, 'error'); return; }
+                }
+
+                const cube = raw.Cube || raw;
+                const cubeName = cube.Name || cube.ID || 'SSAS Cube';
+                const connectionId = document.getElementById('ssasConnectionId').value.trim() || '<CONNECTION_ID>';
+                const dbOverride  = document.getElementById('ssasDatabase').value.trim().toUpperCase();
+                const schOverride = document.getElementById('ssasSchema').value.trim();
+                state.useFriendlyNames = isConnectionFriendly(connectionId);
+
+                const warnings = [], elements = [];
+                { const fnWarn = friendlyNameWarning(); if (fnWarn) warnings.push(fnWarn); }
+                warnings.push('ℹ Dimension table paths use the logical DimensionID from the cube JSON (e.g. "Date", "Recy_Material"). The physical warehouse table names are defined in the database-level dimension objects, which are not included in a cube-only export. Update each dimension element\'s source path with the actual table name after import.');
+
+                const cubeDims    = _ssasArr(cube.Dimensions?.Dimension);
+                const measureGroups = _ssasArr(cube.MeasureGroups?.MeasureGroup);
+                const kpis        = _ssasArr(cube.Kpis?.Kpi);
+                const calcs       = _ssasArr(cube.Calculations?.Calculation);
+                const perspectives = _ssasArr(cube.Perspectives?.Perspective);
+                const mdxCmds     = _ssasArr(cube.MdxScripts?.MdxScript)
+                    .flatMap(s => _ssasArr(s.Commands?.Command))
+                    .map(c => c.Text || '').join('\n');
+
+                // ── 1. Dimension elements ───────────────────────────────────
+                const dimElMap = {}; // dimensionId → { elementId, element }
+
+                for (const dim of cubeDims) {
+                    const dimId   = dim.ID || dim.DimensionID || '';
+                    const dimName = dim.Name || dimId;
+                    if (!dimId) continue;
+
+                    const attrs  = _ssasArr(dim.Attributes?.Attribute);
+                    const hiers  = _ssasArr(dim.Hierarchies?.Hierarchy);
+
+                    // Dimension physical table name is not in the cube JSON (it's in the
+                    // database-level dimension objects). Use DimensionID as a placeholder —
+                    // the user should update this with the actual warehouse table name.
+                    const tableName = dimId.replace(/\s+/g, '_');
+                    const path = [dbOverride, schOverride, tableName].filter(Boolean);
+
+                    const elementId = sigmaShortId();
+                    const columns = [], order = [];
+
+                    for (const attr of attrs) {
+                        const attrId = attr.AttributeID || attr.ID || '';
+                        if (!attrId) continue;
+                        // Skip if both hierarchy flags are explicitly disabled
+                        if (attr.AttributeHierarchyEnabled === 'false' &&
+                            attr.AttributeHierarchyVisible  === 'false') continue;
+
+                        const colKey  = attrId.toUpperCase().replace(/\s+/g, '_');
+                        const display = sigmaDisplayName(attrId.replace(/\s+/g, '_'));
+                        const colId   = sigmaInodeId(colKey);
+                        columns.push({ id: colId, formula: `[${path[path.length - 1] || tableName}/${display}]` });
+                        order.push(colId);
+                    }
+
+                    // Hierarchies — emit RaggedHierarchy placeholder where levels can be inferred
+                    for (const hier of hiers) {
+                        const hierId = hier.HierarchyID || hier.ID || '';
+                        if (!hierId) continue;
+
+                        // Build a RaggedHierarchy using visible attributes as levels
+                        const visibleAttrs = attrs.filter(a =>
+                            a.AttributeHierarchyEnabled !== 'false' &&
+                            a.AttributeHierarchyVisible !== 'false'
+                        );
+
+                        if (visibleAttrs.length >= 2) {
+                            const levelRefs = visibleAttrs
+                                .map(a => `[${sigmaDisplayName((a.AttributeID || a.ID || '').replace(/\s+/g, '_'))}]`)
+                                .join(', ');
+                            const hierColId = sigmaShortId();
+                            const hierFormula = `RaggedHierarchy(${levelRefs})`;
+                            const _ssasHierFmt = _inferSigmaFormat(hierFormula, hierId);
+                            const _ssasHierCol = { id: hierColId, formula: hierFormula, name: hierId };
+                            if (_ssasHierFmt) _ssasHierCol.format = _ssasHierFmt;
+                            columns.push(_ssasHierCol);
+                            order.push(hierColId);
+                            warnings.push(`ℹ Hierarchy "${hierId}" (${dimName}) → RaggedHierarchy() created from ${visibleAttrs.length} attributes. Verify level order matches your business hierarchy.`);
+                        } else {
+                            warnings.push(`⚠ Hierarchy "${hierId}" (${dimName}) — fewer than 2 visible attributes; RaggedHierarchy() not generated. Add levels manually.`);
+                        }
+                    }
+
+                    const el = {
+                        id: elementId, kind: 'table', name: dimName,
+                        source: { connectionId, kind: 'warehouse-table', path },
+                        columns, metrics: [], order,
+                        description: `Dimension table path uses logical ID "${tableName}" — update with actual warehouse table name.`,
+                    };
+                    elements.push(el);
+                    dimElMap[dimId] = { elementId, element: el };
+                }
+
+                // ── 2. Fact elements from measure groups ────────────────────
+                const mgElMap = {}; // mgId → element, for KPI attachment
+
+                for (const mg of measureGroups) {
+                    const mgId   = mg.ID   || '';
+                    const mgName = mg.Name || mgId;
+                    const measures = _ssasArr(mg.Measures?.Measure);
+
+                    // Infer fact table via majority vote across all measure source TableIDs.
+                    // Preserves original casing from the file (e.g. "Recy_factScrapPurchases").
+                    const tableFreq = {};
+                    for (const m of measures) {
+                        const src = m.Source?.Source || m.Source;
+                        const t = src?.TableID;
+                        if (t) tableFreq[t] = (tableFreq[t] || 0) + 1;
+                    }
+                    const factTable = Object.entries(tableFreq).sort((a, b) => b[1] - a[1])[0]?.[0]
+                        || mgId.replace(/\s+/g, '_');
+
+                    const path = [dbOverride, schOverride, factTable].filter(Boolean);
+                    const elementId = sigmaShortId();
+                    const metrics = [];
+
+                    for (const m of measures) {
+                        const mName = m.Name || m.ID || '';
+                        if (!mName) continue;
+                        if (m.Visible === 'false') continue;
+
+                        const formula = _ssasMeasureFormula(m);
+                        if (!formula) {
+                            warnings.push(`⚠ Measure "${mName}" (${m.AggregateFunction || 'None'} aggregation) skipped — complex or calculated. Add manually in Sigma.`);
+                            continue;
+                        }
+
+                        const metric = { id: sigmaShortId(), formula, name: mName };
+
+                        // Format: explicit first, then infer
+                        const fmt = (m.FormatString && m.FormatString !== 'General')
+                            ? _excelFormatToSigma(m.FormatString) : null;
+                        const inferred = _inferSigmaFormat(formula, mName);
+                        if (fmt || inferred) metric.format = fmt || inferred;
+
+                        // Display folder → description prefix
+                        const parts = [];
+                        if (m.Description) parts.push(m.Description);
+                        if (m.DisplayFolder) parts.push('Folder: ' + m.DisplayFolder);
+                        if (parts.length) metric.description = parts.join(' | ');
+
+                        metrics.push(metric);
+                    }
+
+                    // Relationships: MeasureGroup.Dimensions → dim elements
+                    const relationships = [];
+                    for (const mgDim of _ssasArr(mg.Dimensions?.Dimension)) {
+                        const cubeDimId = mgDim.CubeDimensionID || '';
+                        const dimInfo = dimElMap[cubeDimId];
+                        if (!dimInfo) continue;
+
+                        // Find Granularity attribute → FK column in fact table
+                        const dimAttrs = _ssasArr(mgDim.Attributes?.Attribute);
+                        const grainAttr = dimAttrs.find(a => a.Type === 'Granularity') || dimAttrs[0];
+                        if (!grainAttr) continue;
+
+                        const fkBinding = _ssasBinding(grainAttr.KeyColumns?.KeyColumn || grainAttr.KeyColumns);
+                        if (!fkBinding?.ColumnID) continue;
+
+                        const fkDisplay = sigmaDisplayName(fkBinding.ColumnID);
+                        const attrId    = grainAttr.AttributeID || '';
+                        const pkDisplay = sigmaDisplayName(attrId.replace(/\s+/g, '_') || fkBinding.ColumnID);
+
+                        relationships.push({
+                            target: dimInfo.elementId,
+                            type:   'many-to-one',
+                            keys:   [{ from: fkDisplay, to: pkDisplay }],
+                        });
+                    }
+
+                    const factEl = {
+                        id: elementId, kind: 'table', name: mgName,
+                        source: { connectionId, kind: 'warehouse-table', path },
+                        columns: [], metrics, order: [],
+                        ...(relationships.length ? { relationships } : {}),
+                    };
+                    elements.push(factEl);
+                    mgElMap[mgId] = factEl;
+                }
+
+                // ── 3. KPIs → Value + Goal metrics ─────────────────────────
+                for (const kpi of kpis) {
+                    const kpiName  = kpi.Name || kpi.ID || 'KPI';
+                    const assocId  = kpi.AssociatedMeasureGroupID || '';
+                    const targetEl = mgElMap[assocId]
+                        || Object.values(mgElMap)[0]
+                        || elements.find(e => e.metrics?.length > 0);
+                    if (!targetEl) continue;
+
+                    // Value
+                    if (kpi.Value) {
+                        const valFm = _ssasMdxToSigma(kpi.Value, warnings);
+                        if (valFm) {
+                            const vm = { id: sigmaShortId(), formula: valFm, name: kpiName };
+                            const vf = _inferSigmaFormat(valFm, kpiName);
+                            if (vf) vm.format = vf;
+                            const statusHint = [
+                                kpi.StatusGraphic ? 'Status: ' + kpi.StatusGraphic : '',
+                                kpi.TrendGraphic  ? 'Trend: '  + kpi.TrendGraphic  : '',
+                            ].filter(Boolean).join(' · ');
+                            if (statusHint) vm.description = 'KPI · ' + statusHint;
+                            targetEl.metrics.push(vm);
+                        }
+                    }
+
+                    // Goal
+                    if (kpi.Goal) {
+                        const goalFm = _ssasMdxToSigma(kpi.Goal, warnings);
+                        if (goalFm) {
+                            const gm = { id: sigmaShortId(), formula: goalFm, name: kpiName + ' Goal' };
+                            const gf = _inferSigmaFormat(goalFm, kpiName + ' Goal');
+                            if (gf) gm.format = gf;
+                            targetEl.metrics.push(gm);
+                        }
+                    }
+
+                    // Status/Trend → guidance
+                    if (kpi.Status) {
+                        warnings.push(`ℹ KPI "${kpiName}" Status (${kpi.StatusGraphic || 'graphic'}) → in Sigma, use a KPI chart with comparison direction (higher/lower is better). Status MDX: ${String(kpi.Status).slice(0, 80)}`);
+                    }
+                }
+
+                // ── 4. MDX dynamic sets → window function guidance ──────────
+                const dynSetRx = /CREATE\s+(?:DYNAMIC\s+)?SET\s+(?:CURRENTCUBE\.)?\[([^\]]+)\]\s+AS\s+([\s\S]+?)(?=(?:CREATE\s+(?:DYNAMIC\s+)?SET)|;?\s*$)/gi;
+                let dsm;
+                while ((dsm = dynSetRx.exec(mdxCmds)) !== null) {
+                    const setName = dsm[1];
+                    const setDef  = dsm[2].trim();
+                    const isRolling = /LASTPERIODS|PERIODSTODATE|TAIL|PARALLELPERIOD|MTD|QTD|YTD/i.test(setDef);
+                    const suggestion = isRolling
+                        ? 'Use MovingSum([metric], N, 0) or DateLookback([date], Today(), N, "month") for rolling windows.'
+                        : 'Recreate as a filter control or Top-N ranked filter in Sigma.';
+                    warnings.push(`⚠ Dynamic Set "${setName}" → ${suggestion} MDX: ${setDef.slice(0, 80)}${setDef.length > 80 ? '…' : ''}`);
+                }
+
+                // ── 5. Calculated members → partial conversion ──────────────
+                for (const calc of calcs) {
+                    const cName = calc.Name || calc.ID || '';
+                    const formula = calc.Formula || calc.Expression || '';
+                    if (!cName || !formula) continue;
+                    const converted = _ssasMdxToSigma(formula, null);
+                    warnings.push(`ℹ Calculated member "${cName}" → ${converted ? 'partially converted: ' + converted.slice(0, 80) : 'MDX not auto-converted'}. Review manually.`);
+                }
+
+                // ── 6. Perspectives → documentation ────────────────────────
+                for (const p of perspectives) {
+                    const pName = p.Name || p.ID || 'Perspective';
+                    const pDims = _ssasArr(p.Dimensions?.Dimension).length;
+                    const pMgs  = _ssasArr(p.MeasureGroups?.MeasureGroup).length;
+                    warnings.push(`ℹ Perspective "${pName}" (${pDims} dimension${pDims !== 1 ? 's' : ''}, ${pMgs} measure group${pMgs !== 1 ? 's' : ''}) → consider a separate workbook page or data model for this audience subset.`);
+                }
+
+                // ── Finalize ────────────────────────────────────────────────
+                // Clean up empty arrays
+                for (const el of elements) {
+                    if (!(el.columns?.length)) delete el.columns;
+                    if (!(el.metrics?.length)) delete el.metrics;
+                    if (!el.columns && !el.metrics) { el.columns = []; }
+                    if (!(el.order?.length)) delete el.order;
+                }
+
+                const model = { name: cubeName, pages: [{ elements }] };
+                const outputJson = JSON.stringify(model, null, 2);
+
+                document.getElementById('ssasJsonOutput').value = outputJson;
+                ['ssasCopyBtn', 'ssasLoadBtn', 'ssasSaveBtn'].forEach(id => {
+                    document.getElementById(id).disabled = false;
+                });
+
+                const factEls = elements.filter(e => e.metrics?.length > 0);
+                const dimEls  = elements.filter(e => !e.metrics?.length);
+                const totalM  = elements.reduce((n, e) => n + (e.metrics?.length || 0), 0);
+                const totalC  = elements.reduce((n, e) => n + (e.columns?.length || 0), 0);
+
+                document.getElementById('ssasOutputStats').innerHTML = [
+                    `<span class="dbt-stat-badge">${factEls.length} fact element${factEls.length !== 1 ? 's' : ''}</span>`,
+                    `<span class="dbt-stat-badge dimensions">${dimEls.length} dimension${dimEls.length !== 1 ? 's' : ''}</span>`,
+                    `<span class="dbt-stat-badge metrics">${totalM} metric${totalM !== 1 ? 's' : ''}</span>`,
+                    `<span class="dbt-stat-badge">${totalC} column${totalC !== 1 ? 's' : ''}</span>`,
+                ].join('');
+
+                const warnBox = document.getElementById('ssasWarningBox');
+                if (warnings.length > 0) {
+                    warnBox.style.display = 'block';
+                    warnBox.innerHTML = `<strong>⚠ ${warnings.length} conversion note${warnings.length !== 1 ? 's' : ''}:</strong><br>` +
+                        warnings.map(w => `<div style="margin-top:4px;padding-left:8px;">${escapeHtml(w)}</div>`).join('');
+                } else {
+                    warnBox.style.display = 'none';
+                }
+
+                showToast(`Converted: ${elements.length} elements, ${totalM} metrics, ${totalC} columns`, 'success');
+
+            } catch(e) {
+                showToast('Conversion error: ' + e.message, 'error');
+                console.error('SSAS conversion error:', e);
+            } finally {
+                btn.disabled = false; btn.textContent = '🧊 Convert to Sigma JSON';
+            }
+        }
+
+        function copySsasOutput() {
+            const val = document.getElementById('ssasJsonOutput').value;
+            if (!val) return;
+            navigator.clipboard.writeText(val).then(() => showToast('Copied to clipboard', 'success'));
+        }
+
+        function loadSsasOutputToEditor() {
+            const val = document.getElementById('ssasJsonOutput').value;
+            if (!val) return;
+            try {
+                const obj = JSON.parse(val);
+                editorMode = 'json';
+                _updateModeToggleUI();
+                setEditorContent(obj);
+            } catch(e) { setEditorRaw(val); }
+            state.isNewModel = true;
+            state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from SSAS/MSAS Cube (unsaved)';
+            ['findBtn', 'treeViewBtn', 'formatBtn', 'diffBtn', 'copyBtn', 'saveBtn', 'aiBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+            enableEditorModeToggle();
+            switchEditorTab('json');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
+        }
+
+        async function ssasLoadAndSave() {
+            loadSsasOutputToEditor();
             if (!state.accessToken) {
                 showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning');
                 return;
@@ -12609,7 +14110,7 @@ ${cleanedSql}`;
 
             const explore = lookProject.explores[exploreName];
             if (!explore) {
-                if (convertBtn) { convertBtn.disabled = false; convertBtn.textContent = '🔍 Convert to Sigma JSON'; }
+                if (convertBtn) { convertBtn.disabled = false; convertBtn.textContent = '🔍 Convert Explore'; }
                 showToast('Explore not found in project', 'error'); return;
             }
 
@@ -12649,7 +14150,7 @@ ${cleanedSql}`;
 
                 if (!keyMatch && sqlOn) {
                     // Detect range-based joins (>=, <=, >, <) — these can't be Sigma relationships
-                    const isRangeJoin = /\$\{[^}]+\}\s*[><!]|[><!]=?\s*\$\{/.test(sqlOn);
+                    const isRangeJoin = /\$\{[^}]+\}\s*[><]|[><]=?\s*\$\{/.test(sqlOn);
                     if (isRangeJoin) {
                         warnings.push(`⚠ Join "${alias}": uses range-based sql_on (>=, <=, >, <) which cannot be expressed as a Sigma relationship. Recreate this as a filtered join or custom SQL after import.`);
                     } else {
@@ -12961,7 +14462,10 @@ ${cleanedSql}`;
                 if (targetEl) {
                     const rlsId = sigmaShortId();
                     const rlsFormula = `CurrentUserAttributeText("${userAttr}") = [${displayName}]`;
-                    targetEl.columns.push({ id: rlsId, formula: rlsFormula, name: `RLS: ${userAttr}` });
+                    const _lkRlsFmt = _inferSigmaFormat(rlsFormula, `RLS: ${userAttr}`);
+                    const _lkRlsCol = { id: rlsId, formula: rlsFormula, name: `RLS: ${userAttr}` };
+                    if (_lkRlsFmt) _lkRlsCol.format = _lkRlsFmt;
+                    targetEl.columns.push(_lkRlsCol);
                     targetEl.order.push(rlsId);
                     warnings.push(`✅ access_filter "${fieldRef}" → RLS column "RLS: ${userAttr}". Ensure user attribute "${userAttr}" exists in Sigma, then add a True filter on this column.`);
                 }
@@ -13053,7 +14557,7 @@ ${cleanedSql}`;
             ].filter(Boolean).join('');
 
             ['lookCopyBtn','lookLoadBtn','lookSaveBtn'].forEach(id => document.getElementById(id).disabled = false);
-            if (convertBtn) { convertBtn.disabled = false; convertBtn.textContent = '🔍 Convert to Sigma JSON'; }
+            if (convertBtn) { convertBtn.disabled = false; convertBtn.textContent = '🔍 Convert Explore'; }
             showToast(`Converted explore "${exploreName}" → ${elemCount} element${elemCount!==1?'s':''}${ctrlCount ? `, ${ctrlCount} control${ctrlCount!==1?'s':''}` : ''}`, 'success');
         }
 
@@ -13230,7 +14734,7 @@ ${cleanedSql}`;
                 const el = document.getElementById(id);
                 if (el) el.disabled = false;
             });
-            if (batchBtn) { batchBtn.disabled = false; batchBtn.textContent = '🗂 All Explores'; }
+            if (batchBtn) { batchBtn.disabled = false; batchBtn.textContent = '🗂 Convert All Explores'; }
             showToast(`Batch converted ${allExploreNames.length} explores → ${elemCount} element${elemCount !== 1 ? 's' : ''}`, 'success');
         }
 
@@ -13539,9 +15043,14 @@ ${cleanedSql}`;
 
                     const isHiddenDim = d.hidden === true || d.hidden === 'yes';
                     if (sigmaFormula) {
-                        const sqlCol = { id: colId, formula: sigmaFormula, name: d.label || sigmaDisplayName(d._name) };
-                        if (isHiddenDim) sqlCol.hidden = true;
-                        element.columns.push(sqlCol);
+                        const _lkCalcName = d.label || sigmaDisplayName(d._name);
+                        const _lkCalcFmt = (d.value_format_name ? _lookFormatNameToSigma(d.value_format_name) : null)
+                            || (d.value_format ? _excelFormatToSigma(d.value_format) : null)
+                            || _inferSigmaFormat(sigmaFormula, _lkCalcName);
+                        const _lkCalcCol = { id: colId, formula: sigmaFormula, name: _lkCalcName };
+                        if (isHiddenDim) _lkCalcCol.hidden = true;
+                        if (_lkCalcFmt) _lkCalcCol.format = _lkCalcFmt;
+                        element.columns.push(_lkCalcCol);
                         element.order.push(colId);
                         warnings.push(`ℹ "${d._name}" → calculated column. Review: ${sigmaFormula}`);
                     } else {
@@ -13751,8 +15260,10 @@ ${cleanedSql}`;
                         const colName = `${groupName}_${tf.toUpperCase()}`;
                         const colId   = sigmaShortId();
                         colIdMap[colName] = colId;
+                        const _lkTfFmt = _inferSigmaFormat(formula, sigmaDisplayName(colName));
                         const dgBinCol = { id: colId, formula, name: sigmaDisplayName(colName) };
                         if (dgHidden) dgBinCol.hidden = true;
+                        if (_lkTfFmt) dgBinCol.format = _lkTfFmt;
                         element.columns.push(dgBinCol);
                         folderColIds.push(colId);
                         return;
@@ -13766,6 +15277,9 @@ ${cleanedSql}`;
                         formula = prec ? `DateTrunc("${prec}", ${baseRef})` : baseRef;
                     } else if (Object.prototype.hasOwnProperty.call(_DG_PART, tf)) {
                         formula = `DatePart("${_DG_PART[tf]}", ${baseRef})`;
+                        if (tf === 'day_of_week_index') {
+                            warnings.push(`⚠ Dim group "${dg._name}": "day_of_week_index" (0-indexed in LookML) converted as DatePart("weekday") which is 1-indexed in Sigma — subtract 1 from this column if 0-indexed values are required.`);
+                        }
                     } else {
                         warnings.push(`⚠ Dim group "${dg._name}": unknown timeframe "${tf}" — skipped.`);
                         return;
@@ -13852,12 +15366,22 @@ ${cleanedSql}`;
                     }
                     const dn = colLabel(physicalCol);
                     const calcId = sigmaShortId();
+                    const _lkWinFmt = (ms.value_format_name ? _lookFormatNameToSigma(ms.value_format_name) : null)
+                        || (ms.value_format ? _excelFormatToSigma(ms.value_format) : null);
                     if (msType === 'running_total') {
-                        element.columns.push({ id: calcId, formula: `CumulativeSum([${dn}])`, name: msLabel });
-                        warnings.push(`✅ Measure "${ms._name}" (running_total) → calculated column: CumulativeSum([${dn}])`);
+                        const _rtFormula = `CumulativeSum([${dn}])`;
+                        const _rtFmt = _lkWinFmt || _inferSigmaFormat(_rtFormula, msLabel);
+                        const _rtCol = { id: calcId, formula: _rtFormula, name: msLabel };
+                        if (_rtFmt) _rtCol.format = _rtFmt;
+                        element.columns.push(_rtCol);
+                        warnings.push(`✅ Measure "${ms._name}" (running_total) → calculated column: ${_rtFormula}`);
                     } else {
-                        element.columns.push({ id: calcId, formula: `Sum([${dn}]) / GrandTotal(Sum([${dn}]))`, name: msLabel });
-                        warnings.push(`✅ Measure "${ms._name}" (percent_of_total) → calculated column: Sum([${dn}]) / GrandTotal(Sum([${dn}]))`);
+                        const _ptFormula = `Sum([${dn}]) / GrandTotal(Sum([${dn}]))`;
+                        const _ptFmt = _lkWinFmt || _inferSigmaFormat(_ptFormula, msLabel);
+                        const _ptCol = { id: calcId, formula: _ptFormula, name: msLabel };
+                        if (_ptFmt) _ptCol.format = _ptFmt;
+                        element.columns.push(_ptCol);
+                        warnings.push(`✅ Measure "${ms._name}" (percent_of_total) → calculated column: ${_ptFormula}`);
                     }
                     element.order.push(calcId);
                     continue;
@@ -13907,7 +15431,10 @@ ${cleanedSql}`;
                             min: `MinIf([${dn}], ${condition})`,
                         };
                         const formula = condAggMap[msType] || `SumIf([${dn}], ${condition})`;
-                        element.metrics.push({ id: sigmaShortId(), formula, name: msLabel });
+                        const _lkFmt1 = (ms.value_format_name ? _lookFormatNameToSigma(ms.value_format_name) : null) || (ms.value_format ? _excelFormatToSigma(ms.value_format) : null) || _inferSigmaFormat(formula, msLabel);
+                        const _lkM1 = { id: sigmaShortId(), formula, name: msLabel };
+                        if (_lkFmt1) _lkM1.format = _lkFmt1;
+                        element.metrics.push(_lkM1);
                         warnings.push(`✅ Filtered measure "${ms._name}" → ${formula.slice(0, 80)}`);
                         continue;
                     }
@@ -13916,11 +15443,10 @@ ${cleanedSql}`;
                 }
 
                 if (msType === 'count') {
-                    element.metrics.push({
-                        id: sigmaShortId(),
-                        formula: 'Count()',
-                        name: msLabel
-                    });
+                    const _lkFmt2 = (ms.value_format_name ? _lookFormatNameToSigma(ms.value_format_name) : null) || (ms.value_format ? _excelFormatToSigma(ms.value_format) : null) || _inferSigmaFormat('Count()', msLabel);
+                    const _lkM2 = { id: sigmaShortId(), formula: 'Count()', name: msLabel };
+                    if (_lkFmt2) _lkM2.format = _lkFmt2;
+                    element.metrics.push(_lkM2);
                 } else if (msType === 'count_distinct') {
                     const cdCol = physicalCol && physicalCol !== msName ? physicalCol : msName;
                     if (!colIdMap[cdCol]) {
@@ -13929,11 +15455,10 @@ ${cleanedSql}`;
                         element.columns.push({ id: colId, formula: `[${tableName}/${colLabel(cdCol)}]` });
                         element.order.push(colId);
                     }
-                    element.metrics.push({
-                        id: sigmaShortId(),
-                        formula: `CountDistinct([${colLabel(cdCol)}])`,
-                        name: msLabel
-                    });
+                    const _lkFmt3 = (ms.value_format_name ? _lookFormatNameToSigma(ms.value_format_name) : null) || (ms.value_format ? _excelFormatToSigma(ms.value_format) : null) || _inferSigmaFormat(`CountDistinct([${colLabel(cdCol)}])`, msLabel);
+                    const _lkM3 = { id: sigmaShortId(), formula: `CountDistinct([${colLabel(cdCol)}])`, name: msLabel };
+                    if (_lkFmt3) _lkM3.format = _lkFmt3;
+                    element.metrics.push(_lkM3);
                 } else {
                     // Ensure source column exists
                     if (!colIdMap[physicalCol]) {
@@ -13942,11 +15467,11 @@ ${cleanedSql}`;
                         element.columns.push({ id: colId, formula: `[${tableName}/${colLabel(physicalCol)}]` });
                         element.order.push(colId);
                     }
-                    element.metrics.push({
-                        id: sigmaShortId(),
-                        formula: lookSigmaMetric(msType, colLabel(physicalCol)),
-                        name: msLabel
-                    });
+                    const _lkFormula4 = lookSigmaMetric(msType, colLabel(physicalCol));
+                    const _lkFmt4 = (ms.value_format_name ? _lookFormatNameToSigma(ms.value_format_name) : null) || (ms.value_format ? _excelFormatToSigma(ms.value_format) : null) || _inferSigmaFormat(_lkFormula4, msLabel);
+                    const _lkM4 = { id: sigmaShortId(), formula: _lkFormula4, name: msLabel };
+                    if (_lkFmt4) _lkM4.format = _lkFmt4;
+                    element.metrics.push(_lkM4);
                 }
             }
 
@@ -13984,9 +15509,11 @@ ${cleanedSql}`;
             // Range expressions [x,y] or (x,y) — unsupported
             if (/^[\[(]/.test(expr)) return null;
 
-            // Negation: -value or -value1,-value2
+            // Negation: -value or -value1,-value2 (all parts must be negated — mixed is unsupported)
             if (expr.startsWith('-')) {
-                const vals = expr.slice(1).split(/\s*,\s*-?\s*/).map(v => v.replace(/^"|"$/g, '').trim()).filter(Boolean);
+                const parts = expr.split(',').map(v => v.trim());
+                if (parts.some(v => !v.startsWith('-'))) return null;
+                const vals = parts.map(v => v.slice(1).replace(/^"|"$/g, '').trim()).filter(Boolean);
                 return { id: sigmaShortId(), columnId, kind: 'list', mode: 'exclude', values: vals };
             }
 
@@ -14637,7 +16164,10 @@ ${cleanedSql}`;
                                 // Generate bucketed formula: floor-based binning
                                 const binFormula = `Floor(([${srcDisplay}] - ${peg}) / ${binSize}) * ${binSize} + ${peg}`;
                                 const id = sigmaShortId();
-                                factEl.columns.push({ id, formula: binFormula, name: caption });
+                                const _tabFmtBin = _inferSigmaFormat(binFormula, caption);
+                                const _tabBinCol = { id, formula: binFormula, name: caption };
+                                if (_tabFmtBin) _tabBinCol.format = _tabFmtBin;
+                                factEl.columns.push(_tabBinCol);
                                 factEl.order.push(id);
                                 warnings.push('✅ Bin "' + caption + '" → bucketed column (size=' + binSize + ') on [' + srcDisplay + ']');
                                 continue;
@@ -14689,7 +16219,10 @@ ${cleanedSql}`;
                             }
 
                             const id = sigmaShortId();
-                            factEl.columns.push({ id, formula: String(sigmaSetFormula), name: caption });
+                            const _tabSetFmt = _inferSigmaFormat(String(sigmaSetFormula), caption);
+                            const _tabSetCol = { id, formula: String(sigmaSetFormula), name: caption };
+                            if (_tabSetFmt) _tabSetCol.format = _tabSetFmt;
+                            factEl.columns.push(_tabSetCol);
                             setColIds.push(id);
                             warnings.push('✅ Set "' + caption + '" → boolean column: ' + String(sigmaSetFormula).slice(0, 80) + '. Add a filter control on this column in your Sigma workbook.');
                             continue;
@@ -14745,7 +16278,10 @@ ${cleanedSql}`;
                                             }
                                             // Add another calculation to the existing child
                                             const calcId = sigmaShortId();
-                                            existingChild.columns.push({ id: calcId, formula: lod.sigmaAgg, name: caption });
+                                            const _tabFmt4a = _inferSigmaFormat(lod.sigmaAgg, caption);
+                                            const _tabLodCol4a = { id: calcId, formula: lod.sigmaAgg, name: caption };
+                                            if (_tabFmt4a) _tabLodCol4a.format = _tabFmt4a;
+                                            existingChild.columns.push(_tabLodCol4a);
                                             existingChild.order.push(calcId);
                                             existingChild.groupings[0].calculations.push(calcId);
                                         } else {
@@ -14778,7 +16314,10 @@ ${cleanedSql}`;
 
                                             // Add calculation column
                                             const calcId = sigmaShortId();
-                                            childCols.push({ id: calcId, formula: lod.sigmaAgg, name: caption });
+                                            const _tabFmt4b = _inferSigmaFormat(lod.sigmaAgg, caption);
+                                            const _tabLodCol4b = { id: calcId, formula: lod.sigmaAgg, name: caption };
+                                            if (_tabFmt4b) _tabLodCol4b.format = _tabFmt4b;
+                                            childCols.push(_tabLodCol4b);
                                             childOrder.push(calcId);
 
                                             const childEl = {
@@ -14804,7 +16343,10 @@ ${cleanedSql}`;
                                 } else if (lod.lodType === 'FIXED' && lod.dims.length === 0) {
                                     // {FIXED : AGG()} = table-scoped aggregate → becomes a metric
                                     if (!factEl.metrics) factEl.metrics = [];
-                                    factEl.metrics.push({ id: sigmaShortId(), formula: lod.sigmaAgg, name: caption });
+                                    const _tabFmt1 = _inferSigmaFormat(lod.sigmaAgg, caption);
+                                    const _tabM1 = { id: sigmaShortId(), formula: lod.sigmaAgg, name: caption };
+                                    if (_tabFmt1) _tabM1.format = _tabFmt1;
+                                    factEl.metrics.push(_tabM1);
                                     warnings.push('✅ LOD "' + caption + '" (table-scoped FIXED) → metric: ' + lod.sigmaAgg);
                                     continue;
                                 }
@@ -14823,7 +16365,10 @@ ${cleanedSql}`;
                                 if (!factEl.metrics) factEl.metrics = [];
                                 const isCommentOnly = typeof sigmaFormula === 'string' && sigmaFormula.trim().startsWith('/*') && sigmaFormula.trim().endsWith('*/');
                                 if (!isCommentOnly) {
-                                    factEl.metrics.push({ id: sigmaShortId(), formula: sigmaFormula, name: caption });
+                                    const _tabFmt2 = _inferSigmaFormat(sigmaFormula, caption);
+                                    const _tabM2 = { id: sigmaShortId(), formula: sigmaFormula, name: caption };
+                                    if (_tabFmt2) _tabM2.format = _tabFmt2;
+                                    factEl.metrics.push(_tabM2);
                                 } else {
                                     warnings.push('⛔ "' + caption + '" skipped — table calc cannot be saved as metrics. Add manually in Sigma workbook.');
                                 }
@@ -14832,7 +16377,10 @@ ${cleanedSql}`;
                                 if (!factColIdMap[fieldKey.toUpperCase()]) {
                                     const id = sigmaShortId();
                                     factColIdMap[fieldKey.toUpperCase()] = id;
-                                    factEl.columns.push({ id, formula: sigmaFormula, name: caption });
+                                    const _tabFmt3 = _inferSigmaFormat(sigmaFormula, caption);
+                                    const _tabCol3 = { id, formula: sigmaFormula, name: caption };
+                                    if (_tabFmt3) _tabCol3.format = _tabFmt3;
+                                    factEl.columns.push(_tabCol3);
                                     factEl.order.push(id);
                                     warnings.push('ℹ "' + caption + '" → calculated column. Review: ' + sigmaFormula.slice(0,60));
                                 }
@@ -15424,7 +16972,10 @@ ${cleanedSql}`;
                                 const colId = sigmaShortId();
                                 tableColMap[tableName][c.name] = colId;
                                 pbiToSigmaName[c.name] = c.name; // calc cols keep their name
-                                columns.push({ id: colId, formula: sigmaFormula, name: c.name });
+                                const _pbiFmt = _inferSigmaFormat(sigmaFormula, c.name);
+                                const _pbiCol = { id: colId, formula: sigmaFormula, name: c.name };
+                                if (_pbiFmt) _pbiCol.format = _pbiFmt;
+                                columns.push(_pbiCol);
                                 order.push(colId);
                                 warnings.push(`ℹ "${c.name}" → calculated column. Review: ${sigmaFormula.slice(0, 60)}`);
                             } else if (!warnings.some(w => w.includes(c.name))) {
@@ -15444,6 +16995,8 @@ ${cleanedSql}`;
                             });
                             const metric = { id: sigmaShortId(), formula: sigmaFormula, name: m.name };
                             if (m.description) metric.description = m.description;
+                            const _pFmt = (m.formatMask ? _excelFormatToSigma(m.formatMask) : null) || _inferSigmaFormat(sigmaFormula, m.name);
+                            if (_pFmt) metric.format = _pFmt;
                             metrics.push(metric);
                         } else if (!warnings.some(w => w.includes(`"${m.name}"`))) {
                             warnings.push(`⛔ "${m.name}": DAX measure could not be auto-converted. Add manually in Sigma.`);
@@ -15495,6 +17048,8 @@ ${cleanedSql}`;
                                     if (!factEl.metrics) factEl.metrics = [];
                                     const metric = { id: sigmaShortId(), formula: sigmaFormula, name: m.name };
                                     if (m.description) metric.description = m.description;
+                                    const _pFmt2 = (m.formatMask ? _excelFormatToSigma(m.formatMask) : null) || _inferSigmaFormat(sigmaFormula, m.name);
+                                    if (_pFmt2) metric.format = _pFmt2;
                                     factEl.metrics.push(metric);
                                 }
                             }
@@ -15617,7 +17172,10 @@ ${cleanedSql}`;
                             const attrName = 'pbi_' + roleName.replace(/\s+/g, '_');
                             const rlsId = sigmaShortId();
                             const rlsFormula = `CurrentUserAttributeText("${attrName}") = [${sigmaDisplayName(colName)}]`;
-                            targetEl.columns.push({ id: rlsId, formula: rlsFormula, name: `RLS: ${roleName}` });
+                            const _pbiRlsFmt = _inferSigmaFormat(rlsFormula, `RLS: ${roleName}`);
+                            const _pbiRlsCol = { id: rlsId, formula: rlsFormula, name: `RLS: ${roleName}` };
+                            if (_pbiRlsFmt) _pbiRlsCol.format = _pbiRlsFmt;
+                            targetEl.columns.push(_pbiRlsCol);
                             targetEl.order.push(rlsId);
                             warnings.push(`✅ RLS role "${roleName}" → column "RLS: ${roleName}" on ${tableName}. Create user attribute "${attrName}" in Sigma, then add a True filter on this column.`);
                         } else {
@@ -16433,7 +17991,10 @@ view: date_dim {
                             const sigmaFormula = alteryxFormulaToSigma(expr, warnings);
                             if (sigmaFormula) {
                                 const colId = sigmaShortId();
-                                factEl.columns.push({ id: colId, formula: sigmaFormula, name: sigmaDisplayName(fieldName) });
+                                const _altFmt = _inferSigmaFormat(sigmaFormula, sigmaDisplayName(fieldName));
+                                const _altCol = { id: colId, formula: sigmaFormula, name: sigmaDisplayName(fieldName) };
+                                if (_altFmt) _altCol.format = _altFmt;
+                                factEl.columns.push(_altCol);
                                 factEl.order.push(colId);
                                 warnings.push('ℹ Formula "' + fieldName + '" → ' + sigmaFormula.slice(0, 60));
                             } else {
@@ -16455,11 +18016,11 @@ view: date_dim {
                             const formula = alteryxSummarizeToSigma(action, displayName);
                             if (formula && !formula.startsWith('/*')) {
                                 if (!factEl.metrics) factEl.metrics = [];
-                                factEl.metrics.push({
-                                    id: sigmaShortId(),
-                                    formula: formula,
-                                    name: sigmaDisplayName(rename)
-                                });
+                                const _altName = sigmaDisplayName(rename);
+                                const _altFmt = _inferSigmaFormat(formula, _altName);
+                                const _altMetric = { id: sigmaShortId(), formula: formula, name: _altName };
+                                if (_altFmt) _altMetric.format = _altFmt;
+                                factEl.metrics.push(_altMetric);
                                 warnings.push('ℹ Summarize "' + rename + '" → ' + formula.slice(0, 60));
                             } else {
                                 warnings.push('⚠ Summarize "' + rename + '" (' + action + '): not auto-converted');
@@ -16806,11 +18367,12 @@ view: date_dim {
                         if (['decimal', 'numeric', 'number', 'float', 'double', 'integer', 'int', 'bigint'].includes(fType)) {
                             // Skip if it looks like a key column
                             if (!physCol.endsWith('_KEY') && !physCol.endsWith('_ID') && !physCol.endsWith('_CODE') && !fieldDef.primaryKey && !fieldDef.primary_key) {
-                                metrics.push({
-                                    id: sigmaShortId(),
-                                    formula: `Sum([${displayName}])`,
-                                    name: `Total ${displayName}`
-                                });
+                                const _ctFormula = `Sum([${displayName}])`;
+                                const _ctName = `Total ${displayName}`;
+                                const _ctFmt = _inferSigmaFormat(_ctFormula, _ctName);
+                                const _ctMetric = { id: sigmaShortId(), formula: _ctFormula, name: _ctName };
+                                if (_ctFmt) _ctMetric.format = _ctFmt;
+                                metrics.push(_ctMetric);
                             }
                         }
                     }
@@ -17609,6 +19171,83 @@ models:
     <a href="https://docs.omni.co/docs/modeling/measures" target="_blank">Omni Analytics — Measures</a>
 </div>`,
 
+            qlik: `
+<h3>Qlik Sense Converter</h3>
+<p>Converts Qlik Sense data model metadata (from the REST API or Engine API) to Sigma data model JSON. Parses tables, fields, automatically inferred associations (relationships), master measures, and master dimensions.</p>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>Tables</b> → Sigma elements; one element per Qlik data model table</li>
+    <li><b>Fields</b> → Sigma columns with display names (<code>FIELD_NAME</code> → <i>Field Name</i>)</li>
+    <li><b>Associations</b> → Sigma relationships; fields shared between two tables are automatically detected and converted to FK/PK relationships. Direction (one vs. many side) is inferred from row counts and field cardinality.</li>
+    <li><b>Master Measures</b> → Sigma metrics with formula conversion (include a <code>masterMeasures</code> array in your JSON)</li>
+    <li><b>Master Dimensions (calculated)</b> → Sigma calculated columns; plain field references are skipped, calculated expressions are converted</li>
+    <li><b>System tables</b> → Skipped (<code>$</code>-prefix and synthetic key tables like <code>%TableName%</code>)</li>
+    <li><b>System fields</b> → Skipped (<code>$</code>-prefix fields such as <code>$Field</code>)</li>
+</ul>
+
+<h3>How to Get Qlik Metadata</h3>
+<p><b>Option 1 — Qlik Cloud REST API (easiest):</b></p>
+<pre style="background:var(--bg-primary);padding:8px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre-wrap;">GET https://&lt;tenant&gt;.us.qlikcloud.com/api/v1/apps/&lt;appId&gt;/data/metadata
+Authorization: Bearer &lt;API_KEY&gt;</pre>
+<p>Save the response as a <code>.json</code> file and drop it here, or paste directly.</p>
+<p><b>Option 2 — Qlik CLI:</b></p>
+<pre style="background:var(--bg-primary);padding:8px;border-radius:6px;font-size:11px;">qlik app data metadata get --app-id &lt;appId&gt; &gt; metadata.json</pre>
+<p><b>Option 3 — Extended format (adds master items for metrics):</b></p>
+<pre style="background:var(--bg-primary);padding:8px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre-wrap;">{
+  "appName": "My App",
+  "tables": [ /* from /data/metadata */ ],
+  "masterMeasures": [
+    { "title": "Total Sales", "expr": "Sum([Sales Amount])" },
+    { "title": "Order Count", "expr": "Count([OrderID])" }
+  ],
+  "masterDimensions": [
+    { "title": "High Value", "fieldDef": "=If([Revenue] &gt; 10000, 'Yes', 'No')" }
+  ]
+}</pre>
+
+<h3>Expression Conversion</h3>
+<p>Many Qlik functions share Sigma's syntax and convert directly:</p>
+<ul>
+    <li><code>Sum()</code>, <code>Count()</code>, <code>CountDistinct()</code>, <code>Avg()</code>, <code>Min()</code>, <code>Max()</code> → identical</li>
+    <li><code>If(cond, a, b)</code> → <code>If(cond, a, b)</code> (identical)</li>
+    <li><code>Only([Field])</code> → <code>[Field]</code></li>
+    <li><code>Text([Field])</code> → <code>ToString([Field])</code></li>
+    <li><code>IsNum([Field])</code> → <code>IsNumber([Field])</code></li>
+    <li><code>Log([x])</code> → <code>Ln([x])</code> (natural log)</li>
+    <li><code>Fmod(a, b)</code> → <code>Mod(a, b)</code></li>
+    <li>String: <code>Upper()</code>, <code>Lower()</code>, <code>Trim()</code>, <code>Left()</code>, <code>Right()</code>, <code>Len()</code>, <code>Replace()</code>, <code>Concat()</code>, <code>Mid()</code> → same</li>
+    <li>Date/time: <code>Year()</code>, <code>Month()</code>, <code>Day()</code>, <code>Quarter()</code>, <code>Week()</code>, <code>Hour()</code>, <code>Minute()</code>, <code>Second()</code>, <code>Today()</code>, <code>Now()</code> → same</li>
+    <li>Single-quoted strings → double-quoted strings</li>
+</ul>
+
+<h3>Patterns That Generate Warnings</h3>
+<ul>
+    <li><b>Set Analysis</b> — <code>Sum({$&lt;Year={2024}&gt;} [Sales])</code>: Use <code>SumIf([Sales], [Year] = 2024)</code> in Sigma</li>
+    <li><b>Aggr()</b> — Use grouped metrics or groupings in Sigma instead</li>
+    <li><b>Dual()</b> — Qlik-specific; simplify to text or numeric in Sigma</li>
+    <li><b>Class()</b> — Qlik data binning; use <code>If()</code> ranges in Sigma</li>
+    <li><b>Selection-state functions</b> — <code>GetFieldSelections()</code>, <code>GetCurrentSelections()</code> etc. have no Sigma equivalent</li>
+    <li><b>Range functions</b> — <code>RangeSum()</code>, <code>RangeAvg()</code> etc. have no Sigma equivalent</li>
+    <li><b>YearToDate()</b> — Approximated as <code>Year([Field]) = Year(Today())</code></li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li><b>Source paths</b> — The REST API metadata does not include the warehouse database or schema. Use the Database and Schema override fields to set the correct path prefix (e.g. <code>ANALYTICS</code> / <code>PUBLIC</code>).</li>
+    <li><b>Synthetic keys</b> — Qlik creates <code>%SyntheticKey%</code> bridge tables when multiple fields link the same pair of tables. These are filtered out. Review relationships manually if your model has complex many-to-many joins.</li>
+    <li><b>Master items</b> — The <code>/data/metadata</code> endpoint does not return master measures or dimensions. Use the extended JSON format above to include them.</li>
+    <li><b>Set Analysis</b> — Qlik Set Analysis has no direct Sigma equivalent. Expressions using it are skipped with a warning.</li>
+    <li><b>Complex associations</b> — Fields appearing in three or more tables are flagged with warnings; review relationships in Sigma after import.</li>
+</ul>
+
+<div class="help-links">
+    <div class="help-links-title">📚 Resources</div>
+    <a href="https://qlik.dev/apis/rest/apps/" target="_blank">Qlik Cloud REST API — Apps</a>
+    <a href="https://qlik.dev/apis/json-rpc/qix/doc/" target="_blank">Qlik Engine API (JSON-RPC / Enigma.js)</a>
+    <a href="https://help.qlik.com/en-US/cloud-services/Subsystems/Hub/Content/Sense_Hub/DataModeling/data-model-viewer.htm" target="_blank">Qlik — Data Model Viewer</a>
+</div>`,
+
             mcp: `
 <h3>MCP Server — AI-Powered Conversions</h3>
 <p>The same converter logic from this tool is available as a hosted <b>Model Context Protocol (MCP) server</b>. This lets AI agents — like Claude Code, Claude Desktop, Claude.ai, and Cursor — convert data models to Sigma using natural language.</p>
@@ -17665,7 +19304,7 @@ models:
 
         function switchHelpTab(tab) {
             document.querySelectorAll('#helpTabs .help-tab').forEach((t, i) => {
-                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'ai', 'api', 'mcp'];
+                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'qlik', 'ai', 'api', 'mcp'];
                 t.classList.toggle('active', tabs[i] === tab);
             });
             document.getElementById('helpContent').innerHTML = HELP_CONTENT[tab] || '';
@@ -18458,6 +20097,7 @@ models:
                 <button class="help-tab" onclick="switchHelpTab('alteryx')">⚙️ Alteryx</button>
                 <button class="help-tab" onclick="switchHelpTab('contract')">📝 Atlan</button>
                 <button class="help-tab" onclick="switchHelpTab('omni')">🌐 Omni</button>
+                <button class="help-tab" onclick="switchHelpTab('qlik')">🔮 Qlik</button>
                 <button class="help-tab" onclick="switchHelpTab('ai')">🤖 AI Assistant</button>
                 <button class="help-tab" onclick="switchHelpTab('api')">⚙️ API Notes</button>
                 <button class="help-tab" onclick="switchHelpTab('mcp')">🔌 MCP Server</button>
