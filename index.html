@@ -16951,7 +16951,7 @@ ${cleanedSql}`;
                     const order = [];
                     const pbiToSigmaName = {}; // PBI column name → Sigma display name (for formula rewriting)
                     for (const c of (t.columns || [])) {
-                        if (c.type === 'rowNumber' || c.isGenerated) continue;
+                        if (c.type === 'rowNumber' || c.type === 'calculated' || c.isGenerated) continue;
                         const sourceCol = c.sourceColumn || c.name;
                         const displayName = sigmaDisplayName(sourceCol);
                         const colId = sigmaShortId();
