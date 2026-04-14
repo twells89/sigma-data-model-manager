@@ -842,6 +842,10 @@
             color: var(--text-primary);
             resize: none;
             tab-size: 2;
+            overflow-wrap: break-word;
+            /* Always reserve scrollbar gutter so content width stays stable
+               and matches the backdrop's gutter-aware width at all times. */
+            scrollbar-gutter: stable;
         }
         
         .json-editor textarea:focus {
@@ -857,12 +861,21 @@
             font-size: 13px;
             line-height: 1.7;
             white-space: pre-wrap;
-            word-wrap: break-word;
+            overflow-wrap: break-word;
             tab-size: 2;
-            overflow: hidden;
+            /* Use overflow-y: scroll + scrollbar-gutter: stable so the browser always
+               reserves a scrollbar gutter the same width as the textarea's gutter.
+               The scrollbar itself is hidden (pointer-events: none + scrollbar-width: none).
+               Without this, overflow: hidden reserves no gutter, making the backdrop
+               content area wider than the textarea, causing wrap-point mismatches. */
+            overflow-x: hidden;
+            overflow-y: scroll;
+            scrollbar-gutter: stable;
+            scrollbar-width: none;       /* Firefox — hide visual scrollbar, keep gutter */
             pointer-events: none;
             color: transparent;
         }
+        .editor-backdrop::-webkit-scrollbar { display: none; }  /* Chrome/Safari */
         .editor-backdrop mark {
             background: rgba(255, 180, 0, 0.22);
             color: transparent;
