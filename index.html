@@ -2429,6 +2429,7 @@
                         Clear saved credentials
                     </button>
                 </div>
+
             </div>
             
             <div class="models-section">
@@ -4067,7 +4068,12 @@ PRODUCT_NAME
         // ── Sigma API Fetch with Retry + Auto-Refresh ────────────────────────
         async function sigmaFetch(path, options = {}) {
             const pathStr = (path instanceof URL) ? path.toString() : String(path);
-            const url = pathStr.startsWith('http') ? pathStr : state.baseUrl + pathStr;
+            let url = pathStr.startsWith('http') ? pathStr : state.baseUrl + pathStr;
+            // Always append skipPermissionCheck to the data models list endpoint.
+            // Only applies to GET /v2/dataModels (the list call) — not to /spec CRUD paths.
+            if (/\/v2\/dataModels(?:\?|$)/i.test(url)) {
+                url += (url.includes('?') ? '&' : '?') + 'skipPermissionCheck=true';
+            }
             const isJson = options.body && typeof options.body === 'string';
             const method = (options.method || 'GET').toUpperCase();
             const debug = _isDevMode();
@@ -9005,12 +9011,12 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                         document.getElementById('apiRegion').value = creds.apiUrl;
                         state.baseUrl = creds.apiUrl;
                     }
-                } catch (e) {
+} catch (e) {
                     console.error('Failed to load saved credentials:', e);
                 }
             }
         }
-        
+
         // Clear saved credentials
         function clearCredentials() {
             sessionStorage.removeItem('sigma_standalone_credentials');
