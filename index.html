@@ -14888,6 +14888,21 @@ ${cleanedSql}`;
                     }
                 }
 
+                // 1c. Remove trailing commas before SQL clause keywords.
+                //     LookML derived table SQL sometimes ends a SELECT list with a trailing
+                //     comma (e.g. "expr AS col,\nFROM ...") which is valid in Looker's
+                //     templating context but illegal standalone SQL. Strip them.
+                {
+                    const beforeCount = (rawSql.match(/,\s*\n?\s*(FROM|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|UNION|INTERSECT|EXCEPT)\b/gi) || []).length;
+                    if (beforeCount > 0) {
+                        rawSql = rawSql.replace(
+                            /,(\s*\n?\s*)(FROM|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|UNION|INTERSECT|EXCEPT)\b/gi,
+                            '$1$2'
+                        );
+                        warnings.push(`ℹ️ "${viewName}": removed ${beforeCount} trailing comma(s) before SQL clause keyword(s) — invalid in standalone SQL.`);
+                    }
+                }
+
                 // 2. Rewrite Snowflake cast shorthand to Sigma-safe equivalents.
                 //    Sigma rewrites BOTH col::DATE and CAST(col AS DATE) to
                 //    TO_DATE(CAST(col AS DATE)), which Snowflake rejects because
@@ -18981,6 +18996,7 @@ models:
     <li><b>Derived tables without SQL</b> — If a <code>derived_table</code> block exists but contains no <code>sql:</code> statement, a Custom SQL element is still created with a blank SQL body and a warning is shown. Add the SQL manually in the JSON editor before saving to Sigma.</li>
     <li><b>Snowflake cast shorthand (<code>::TYPE</code>) in derived table SQL</b> — Sigma rewrites both <code>col::DATE</code> and <code>CAST(col AS DATE)</code> as <code>TO_DATE(CAST(col AS DATE))</code> when saving, which Snowflake rejects because <code>TO_DATE</code> does not accept a DATE argument. The converter automatically rewrites <code>::DATE</code> to <code>TRY_TO_DATE(TO_VARCHAR(col))</code> and <code>::TIMESTAMP</code> to <code>TRY_TO_TIMESTAMP(TO_VARCHAR(col))</code> — functions Sigma does not touch. Other <code>::TYPE</code> casts become <code>CAST(col AS TYPE)</code>. A warning appears in the output panel listing each rewritten cast.</li>
     <li><b>Incremental PDT leading-comma CTEs</b> — Looker incremental PDT SQL bodies are designed to be appended to a trigger CTE, so they begin with <code>,cte_name AS (</code> rather than a full <code>WITH</code> statement. The converter automatically corrects this to <code>WITH cte_name AS (</code> so the SQL is valid standalone. A warning is shown in the output panel when this correction is applied.</li>
+    <li><b>Trailing comma before SQL keywords in derived table SQL</b> — Some LookML derived tables leave a trailing comma at the end of a <code>SELECT</code> list (e.g. <code>expr AS col,\nFROM final</code>). This is tolerated by Looker's templating engine but is invalid standalone SQL that causes a Snowflake compilation error. The converter automatically strips these trailing commas before <code>FROM</code>, <code>WHERE</code>, <code>GROUP BY</code>, <code>ORDER BY</code>, <code>HAVING</code>, <code>LIMIT</code>, and set operators. A warning is shown when this correction is applied.</li>
 </ul>
 
 <div class="help-links">
