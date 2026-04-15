@@ -53,10 +53,12 @@ auto-assigns names via its own friendly naming.
    incremental PDT with a leading-comma CTE (`,cte_name AS (`), possibly preceded by `--`
    comment lines. Step 1b of the derived-table pre-processor auto-corrects this by
    prepending `WITH ` (strips leading comment lines before testing for the comma pattern).
-9. `syntax error … unexpected '('` from a derived table SQL element — likely a trailing
-   comma at the end of a SELECT list before `FROM` (e.g. `expr AS col,\nFROM final`).
-   Step 1c of the derived-table pre-processor auto-corrects by stripping commas immediately
-   before `FROM`, `WHERE`, `GROUP BY`, `ORDER BY`, `HAVING`, `LIMIT`, or set operators.
+9. `syntax error … unexpected '('` from a derived table SQL element — two known causes:
+   (a) Trailing comma before `FROM` (e.g. `expr AS col,\nFROM final`) — step 1c strips it.
+   (b) Snowflake JSON path + cast shorthand (`f.value:col::DATE`) — step 2 was incorrectly
+   rewriting the `col` after the path colon (`:`) to a function call, producing invalid
+   `f.value:TRY_TO_DATE(TO_VARCHAR(col))`. Fixed: added `:` to the step 2 negative lookbehind
+   so path-accessed identifiers (`(?<!['"\\:])`) are not rewritten.
 8. `${view.SQL_TABLE_NAME}` where that view is itself a PDT — the converter now automatically
    creates a separate Custom SQL element for the referenced PDT and replaces the reference
    with `sigma_element('Name')`. PDT sub-elements are prepended to `allElements` so they
