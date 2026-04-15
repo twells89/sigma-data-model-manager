@@ -45,6 +45,13 @@ auto-assigns names via its own friendly naming.
    raw column instead of a boolean expression; check `yesnoExprMap` coverage
 5. `is premium customer [IS PREMIUM CUSTOMER]` not found — means Pattern 1c failed
    for a bracket-form IN expression
+6. `[Custom SQL/COLUMN_NAME]` in LookML derived-table column formulas — means
+   `colRef()` helper isn't being used. Derived table (SQL element) columns must use
+   bare `[COL]` refs, not `[Custom SQL/COL]`. Check `colRef` is used everywhere in
+   the view-build loop for Custom SQL elements.
+7. `syntax error … unexpected 'WHERE'` from a derived table SQL element — likely an
+   incremental PDT with a leading-comma CTE (`,cte_name AS (`). The fix at step 1b
+   of the derived-table pre-processor auto-corrects this by prepending `WITH `.
 
 ## In-tool documentation locations
 - **Help modal content**: `HELP_CONTENT` JS object (~line 16830). One key per converter tab:

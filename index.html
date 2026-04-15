@@ -14852,6 +14852,15 @@ ${cleanedSql}`;
                 // Strip any remaining Liquid tags
                 rawSql = rawSql.replace(/\{%-?\s*[^%]+\s*-?%\}/g, '/* REMOVED: LookML liquid tag */');
 
+                // 1b. Fix leading-comma CTE pattern from Looker incremental PDTs.
+                //     Incremental PDT SQL bodies are designed to be appended after a trigger
+                //     CTE, so they start with ",cte_name AS (..." rather than "WITH cte_name AS (".
+                //     Strip the leading comma and prepend WITH so the SQL is valid standalone.
+                if (/^,\s*\w+\s+AS\s*\(/i.test(rawSql)) {
+                    rawSql = 'WITH ' + rawSql.slice(1); // drop leading comma, prepend WITH + space
+                    warnings.push(`ℹ️ "${viewName}": fixed incremental PDT leading-comma CTE — prepended WITH to make SQL valid standalone.`);
+                }
+
                 // 2. Rewrite Snowflake cast shorthand to Sigma-safe equivalents.
                 //    Sigma rewrites BOTH col::DATE and CAST(col AS DATE) to
                 //    TO_DATE(CAST(col AS DATE)), which Snowflake rejects because
@@ -14903,7 +14912,7 @@ ${cleanedSql}`;
                     return `/* TODO: table for "${refViewName}" */`;
                 });
 
-                tableName = 'Custom SQL'; // makes column formulas → [Custom SQL/COL]
+                tableName = 'Custom SQL'; // signals isCustomSql → column formulas use bare [COL] refs
                 element = {
                     id: elementId,
                     kind: 'table',
@@ -15017,6 +15026,10 @@ ${cleanedSql}`;
             // not a display name. For warehouse-table elements it uses the display name.
             const isCustomSql = (tableName === 'Custom SQL');
             const colLabel = (physCol) => isCustomSql ? physCol : sigmaDisplayName(physCol);
+            // colRef: build a column formula reference.
+            // SQL elements → bare [ColAlias] (relative ref within the element).
+            // Warehouse-table elements → [TableName/Display Name] (qualified source ref).
+            const colRef = (col) => isCustomSql ? `[${colLabel(col)}]` : `[${tableName}/${colLabel(col)}]`;
 
             // ── Dimensions ──────────────────────────────────────────────────
             const dims = view.dimension
@@ -15092,7 +15105,7 @@ ${cleanedSql}`;
                             colIdMap[physicalCol] = physColId;
                             element.columns.push({
                                 id: physColId,
-                                formula: `[${tableName}/${colLabel(physicalCol)}]`
+                                formula: colRef(physicalCol)
                             });
                             element.order.push(physColId);
                         }
@@ -15134,7 +15147,7 @@ ${cleanedSql}`;
                         element.order.push(colId);
                         warnings.push(`ℹ "${d._name}" → calculated column. Review: ${sigmaFormula}`);
                     } else {
-                        const sqlCol = { id: colId, formula: `[${tableName}/${sigmaDisplayName(colName)}]`, name: d.label || sigmaDisplayName(d._name) };
+                        const sqlCol = { id: colId, formula: colRef(colName), name: d.label || sigmaDisplayName(d._name) };
                         if (isHiddenDim) sqlCol.hidden = true;
                         element.columns.push(sqlCol);
                         element.order.push(colId);
@@ -15155,7 +15168,7 @@ ${cleanedSql}`;
                         colIdMap[physicalCol] = srcColId;
                         element.columns.push({
                             id: srcColId,
-                            formula: `[${tableName}/${colLabel(physicalCol)}]`
+                            formula: colRef(physicalCol)
                         });
                         element.order.push(srcColId);
                     }
@@ -15193,7 +15206,7 @@ ${cleanedSql}`;
                 const colId = sigmaShortId();
                 colIdMap[colName] = colId;
                 colIdMap[physicalCol] = colId;
-                const dimCol = { id: colId, formula: `[${tableName}/${colLabel(physicalCol)}]` };
+                const dimCol = { id: colId, formula: colRef(physicalCol) };
                 if (d.hidden === true || d.hidden === 'yes') dimCol.hidden = true;
                 element.columns.push(dimCol);
                 element.order.push(colId);
@@ -15276,8 +15289,8 @@ ${cleanedSql}`;
                                       || lookStripSql(dg.sql_start).split('.').pop().replace(/"/g, '').toUpperCase();
                     const endCol    = (normEnd.match(/^([A-Za-z_][A-Za-z0-9_]*)/) || ['',''])[1].toUpperCase()
                                       || lookStripSql(dg.sql_end).split('.').pop().replace(/"/g, '').toUpperCase();
-                    const startRef  = `[${tableName}/${colLabel(startCol)}]`;
-                    const endRef    = `[${tableName}/${colLabel(endCol)}]`;
+                    const startRef  = colRef(startCol);
+                    const endRef    = colRef(endCol);
                     const intervals = Array.isArray(dg.intervals)
                         ? dg.intervals.map(i => String(i).toLowerCase())
                         : _DG_DEFAULT_INTERVALS;
@@ -15319,8 +15332,8 @@ ${cleanedSql}`;
 
                 // epoch columns need DateFromUnix() wrapping before truncation
                 const baseRef = datatype === 'epoch'
-                    ? `DateFromUnix([${tableName}/${colLabel(physicalCol)}])`
-                    : `[${tableName}/${colLabel(physicalCol)}]`;
+                    ? `DateFromUnix(${colRef(physicalCol)})`
+                    : colRef(physicalCol);
 
                 timeframes.forEach(tf => {
                     // Fiscal timeframes — requires fiscal_month_offset from model-level LookML
@@ -15424,7 +15437,7 @@ ${cleanedSql}`;
                             element.columns.push({ id: calcId, formula, name: msLabel });
                             warnings.push(`✅ Measure "${ms._name}" (${msType}) → calculated column: ${formula.slice(0, 100)}`);
                         } else {
-                            element.columns.push({ id: calcId, formula: `[${tableName}/${sigmaDisplayName(msName)}]`, name: msLabel });
+                            element.columns.push({ id: calcId, formula: colRef(msName), name: msLabel });
                             warnings.push(`⚠ Measure "${ms._name}": could not auto-convert complex SQL — edit formula manually.`);
                         }
                         element.order.push(calcId);
@@ -15441,7 +15454,7 @@ ${cleanedSql}`;
                     if (!colIdMap[physicalCol]) {
                         const colId = sigmaShortId();
                         colIdMap[physicalCol] = colId;
-                        element.columns.push({ id: colId, formula: `[${tableName}/${colLabel(physicalCol)}]` });
+                        element.columns.push({ id: colId, formula: colRef(physicalCol) });
                         element.order.push(colId);
                     }
                     const dn = colLabel(physicalCol);
@@ -15484,7 +15497,7 @@ ${cleanedSql}`;
                             if (!colIdMap[cleanField]) {
                                 const colId = sigmaShortId();
                                 colIdMap[cleanField] = colId;
-                                element.columns.push({ id: colId, formula: `[${tableName}/${dn}]` });
+                                element.columns.push({ id: colId, formula: colRef(cleanField) });
                                 element.order.push(colId);
                             }
                             if (fVal === 'yes' || fVal === 'true') conditions.push(`[${dn}] = True`);
@@ -15498,7 +15511,7 @@ ${cleanedSql}`;
                         if (!colIdMap[physicalCol]) {
                             const colId = sigmaShortId();
                             colIdMap[physicalCol] = colId;
-                            element.columns.push({ id: colId, formula: `[${tableName}/${colLabel(physicalCol)}]` });
+                            element.columns.push({ id: colId, formula: colRef(physicalCol) });
                             element.order.push(colId);
                         }
                         const dn = colLabel(physicalCol);
@@ -15532,7 +15545,7 @@ ${cleanedSql}`;
                     if (!colIdMap[cdCol]) {
                         const colId = sigmaShortId();
                         colIdMap[cdCol] = colId;
-                        element.columns.push({ id: colId, formula: `[${tableName}/${colLabel(cdCol)}]` });
+                        element.columns.push({ id: colId, formula: colRef(cdCol) });
                         element.order.push(colId);
                     }
                     const _lkFmt3 = (ms.value_format_name ? _lookFormatNameToSigma(ms.value_format_name) : null) || (ms.value_format ? _excelFormatToSigma(ms.value_format) : null) || _inferSigmaFormat(`CountDistinct([${colLabel(cdCol)}])`, msLabel);
@@ -15544,7 +15557,7 @@ ${cleanedSql}`;
                     if (!colIdMap[physicalCol]) {
                         const colId = sigmaShortId();
                         colIdMap[physicalCol] = colId;
-                        element.columns.push({ id: colId, formula: `[${tableName}/${colLabel(physicalCol)}]` });
+                        element.columns.push({ id: colId, formula: colRef(physicalCol) });
                         element.order.push(colId);
                     }
                     const _lkFormula4 = lookSigmaMetric(msType, colLabel(physicalCol));
@@ -18923,6 +18936,7 @@ models:
     <li><b>Unsupported SQL functions</b> — Dimension and measure <code>sql:</code> expressions containing Snowflake-specific functions without Sigma equivalents (<code>FLATTEN</code>, <code>LATERAL</code>, <code>QUALIFY</code>, <code>PIVOT</code>, <code>UNPIVOT</code>, <code>GENERATOR</code>, <code>TABLESAMPLE</code>, <code>OBJECT_CONSTRUCT</code>, <code>ARRAY_CONSTRUCT</code>) are automatically <b>skipped with a warning</b>. The column is omitted from the output — add it manually in the Sigma UI after saving.</li>
     <li><b>Derived tables without SQL</b> — If a <code>derived_table</code> block exists but contains no <code>sql:</code> statement, a Custom SQL element is still created with a blank SQL body and a warning is shown. Add the SQL manually in the JSON editor before saving to Sigma.</li>
     <li><b>Snowflake cast shorthand (<code>::TYPE</code>) in derived table SQL</b> — Sigma rewrites both <code>col::DATE</code> and <code>CAST(col AS DATE)</code> as <code>TO_DATE(CAST(col AS DATE))</code> when saving, which Snowflake rejects because <code>TO_DATE</code> does not accept a DATE argument. The converter automatically rewrites <code>::DATE</code> to <code>TRY_TO_DATE(TO_VARCHAR(col))</code> and <code>::TIMESTAMP</code> to <code>TRY_TO_TIMESTAMP(TO_VARCHAR(col))</code> — functions Sigma does not touch. Other <code>::TYPE</code> casts become <code>CAST(col AS TYPE)</code>. A warning appears in the output panel listing each rewritten cast.</li>
+    <li><b>Incremental PDT leading-comma CTEs</b> — Looker incremental PDT SQL bodies are designed to be appended to a trigger CTE, so they begin with <code>,cte_name AS (</code> rather than a full <code>WITH</code> statement. The converter automatically corrects this to <code>WITH cte_name AS (</code> so the SQL is valid standalone. A warning is shown in the output panel when this correction is applied.</li>
 </ul>
 
 <div class="help-links">
