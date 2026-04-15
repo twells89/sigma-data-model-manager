@@ -50,8 +50,16 @@ auto-assigns names via its own friendly naming.
    bare `[COL]` refs, not `[Custom SQL/COL]`. Check `colRef` is used everywhere in
    the view-build loop for Custom SQL elements.
 7. `syntax error … unexpected 'WHERE'` from a derived table SQL element — likely an
-   incremental PDT with a leading-comma CTE (`,cte_name AS (`). The fix at step 1b
-   of the derived-table pre-processor auto-corrects this by prepending `WITH `.
+   incremental PDT with a leading-comma CTE (`,cte_name AS (`), possibly preceded by `--`
+   comment lines. Step 1b of the derived-table pre-processor auto-corrects this by
+   prepending `WITH ` (strips leading comment lines before testing for the comma pattern).
+8. `${view.SQL_TABLE_NAME}` where that view is itself a PDT — the converter now automatically
+   creates a separate Custom SQL element for the referenced PDT and replaces the reference
+   with `sigma_element('Name')`. PDT sub-elements are prepended to `allElements` so they
+   appear before the element that references them. The `lookConvertView` function takes an
+   optional `pdtElementsMap` parameter (Map of refViewName → result); the SQL_TABLE_NAME
+   resolution uses a two-pass approach (async loop to populate the map, then synchronous
+   `.replace()`) because `String.prototype.replace` callbacks cannot be async.
 
 ## In-tool documentation locations
 - **Help modal content**: `HELP_CONTENT` JS object (~line 16830). One key per converter tab:

@@ -14264,9 +14264,10 @@ ${cleanedSql}`;
 
             const elementMap  = {};  // alias   → { element, elementId, colIdMap }
             const physViewMap = {};  // viewName → { element, elementId, colIdMap }
+            const pdtElementsMap = new Map(); // refViewName → result for PDT sub-elements
 
             // Base view — all columns included (FK cols present, matching Snow SV structure)
-            const baseResult = await lookConvertView(baseViewName, baseAlias, connectionId, warnings);
+            const baseResult = await lookConvertView(baseViewName, baseAlias, connectionId, warnings, pdtElementsMap);
             elementMap[baseAlias]    = baseResult;
             physViewMap[baseViewName] = baseResult;
             if (baseAlias !== baseViewName) elementMap[baseViewName] = baseResult;
@@ -14274,7 +14275,7 @@ ${cleanedSql}`;
             // Join views — create at most ONE element per physical viewName
             for (const j of joinDefs) {
                 if (!physViewMap[j.viewName]) {
-                    const res = await lookConvertView(j.viewName, j.viewName, connectionId, warnings);
+                    const res = await lookConvertView(j.viewName, j.viewName, connectionId, warnings, pdtElementsMap);
                     physViewMap[j.viewName] = res;
                 }
                 // Register alias → same physical element
@@ -14330,6 +14331,15 @@ ${cleanedSql}`;
                 seenIds.add(r.elementId);
                 return true;
             }).map(r => r.element);
+
+            // Prepend PDT sub-elements (referenced via sigma_element() in derived table SQL).
+            // These must come before the elements that reference them.
+            for (const [, pdtResult] of pdtElementsMap) {
+                if (!seenIds.has(pdtResult.elementId)) {
+                    seenIds.add(pdtResult.elementId);
+                    allElements.unshift(pdtResult.element);
+                }
+            }
 
             // Dimension elements (no relationships) FIRST, fact element (with relationships) LAST.
             // The Sigma spec API must encounter target element IDs before the relationship
@@ -14661,6 +14671,7 @@ ${cleanedSql}`;
 
             // Shared view registry — same physical view → same element across all explores
             const globalPhysViewMap = {};  // viewName → { element, elementId, colIdMap }
+            const globalPdtElementsMap = new Map(); // refViewName → result for PDT sub-elements
 
             for (const exploreName of allExploreNames) {
                 const explore = lookProject.explores[exploreName];
@@ -14701,13 +14712,13 @@ ${cleanedSql}`;
 
                 // Ensure base element exists (create once, reuse across explores)
                 if (!globalPhysViewMap[baseViewName]) {
-                    globalPhysViewMap[baseViewName] = await lookConvertView(baseViewName, baseViewName, connectionId, warnings);
+                    globalPhysViewMap[baseViewName] = await lookConvertView(baseViewName, baseViewName, connectionId, warnings, globalPdtElementsMap);
                 }
 
                 // Ensure each join's physical view element exists
                 for (const j of joinDefs) {
                     if (!globalPhysViewMap[j.viewName]) {
-                        globalPhysViewMap[j.viewName] = await lookConvertView(j.viewName, j.viewName, connectionId, warnings);
+                        globalPhysViewMap[j.viewName] = await lookConvertView(j.viewName, j.viewName, connectionId, warnings, globalPdtElementsMap);
                     }
                 }
 
@@ -14761,6 +14772,15 @@ ${cleanedSql}`;
                 seenIds.add(r.elementId);
                 return true;
             }).map(r => r.element);
+
+            // Prepend PDT sub-elements (referenced via sigma_element() in derived table SQL).
+            // These must come before the elements that reference them.
+            for (const [, pdtResult] of globalPdtElementsMap) {
+                if (!seenIds.has(pdtResult.elementId)) {
+                    seenIds.add(pdtResult.elementId);
+                    allElements.unshift(pdtResult.element);
+                }
+            }
 
             // Sort: elements without relationships (dims) first, elements with relationships (facts) last
             // Sigma spec API requires target element IDs to appear before their relationship sources
@@ -14825,7 +14845,7 @@ ${cleanedSql}`;
         }
 
         // ── Convert a single LookML view to a Sigma element ──────────────────
-        async function lookConvertView(viewName, displayAlias, connectionId, warnings) {
+        async function lookConvertView(viewName, displayAlias, connectionId, warnings, pdtElementsMap = null) {
             const view = lookProject.views[viewName];
             if (!view) {
                 warnings.push(`⚠ View "${viewName}" not found in uploaded files — element will have no columns`);
@@ -14855,10 +14875,17 @@ ${cleanedSql}`;
                 // 1b. Fix leading-comma CTE pattern from Looker incremental PDTs.
                 //     Incremental PDT SQL bodies are designed to be appended after a trigger
                 //     CTE, so they start with ",cte_name AS (..." rather than "WITH cte_name AS (".
+                //     Some PDTs also begin with -- comment lines before the comma.
                 //     Strip the leading comma and prepend WITH so the SQL is valid standalone.
-                if (/^,\s*\w+\s+AS\s*\(/i.test(rawSql)) {
-                    rawSql = 'WITH ' + rawSql.slice(1); // drop leading comma, prepend WITH + space
-                    warnings.push(`ℹ️ "${viewName}": fixed incremental PDT leading-comma CTE — prepended WITH to make SQL valid standalone.`);
+                {
+                    // Strip leading blank lines and -- comment lines to find the first real token
+                    const strippedForCommaCheck = rawSql.replace(/^(\s*--[^\n]*\n|\s*\n)*/m, '').trimStart();
+                    if (/^,\s*\w+\s+AS\s*\(/i.test(strippedForCommaCheck)) {
+                        // Find the position of the first comma in rawSql (skip over any leading comments)
+                        const commaPos = rawSql.indexOf(',', rawSql.length - strippedForCommaCheck.length);
+                        rawSql = rawSql.slice(0, commaPos) + 'WITH ' + rawSql.slice(commaPos + 1);
+                        warnings.push(`ℹ️ "${viewName}": fixed incremental PDT leading-comma CTE — prepended WITH to make SQL valid standalone.`);
+                    }
                 }
 
                 // 2. Rewrite Snowflake cast shorthand to Sigma-safe equivalents.
@@ -14891,30 +14918,47 @@ ${cleanedSql}`;
                     warnings.push(`ℹ️ "${viewName}" derived table SQL: rewrote ${castConversions.length} Snowflake cast shorthand(s) to Sigma-compatible equivalents (Sigma wraps ::DATE/CAST(…AS DATE) with TO_DATE() which Snowflake rejects): ${castConversions.join(', ')}`);
                 }
 
-                // 3. Resolve ${view_name.SQL_TABLE_NAME} using uploaded view files (handles multi-hop chains)
-                rawSql = rawSql.replace(/\$\{(\w+)\.SQL_TABLE_NAME\}/gi, (match, refViewName) => {
-                    const refView = lookProject.views[refViewName];
-                    if (!refView) {
-                        warnings.push(`⚠ "${viewName}" SQL: referenced view "${refViewName}" not found in uploaded files — placeholder left in SQL.`);
-                        return `/* TODO: table for "${refViewName}" — upload that view file to auto-resolve */`;
+                // 3. Resolve ${view_name.SQL_TABLE_NAME} using uploaded view files (handles multi-hop chains).
+                //    Two-pass approach: async lookups first (supports await for PDT sub-elements),
+                //    then a synchronous replace so String.prototype.replace callback stays sync.
+                {
+                    const replacementMap = new Map(); // refViewName → replacement string
+                    const allSqlTableRefs = [...rawSql.matchAll(/\$\{(\w+)\.SQL_TABLE_NAME\}/gi)];
+                    for (const [, refViewName] of allSqlTableRefs) {
+                        if (replacementMap.has(refViewName)) continue;
+                        const refView = lookProject.views[refViewName];
+                        if (!refView) {
+                            warnings.push(`⚠ "${viewName}" SQL: referenced view "${refViewName}" not found in uploaded files — placeholder left in SQL.`);
+                            replacementMap.set(refViewName, `/* TODO: table for "${refViewName}" — upload that view file to auto-resolve */`);
+                        } else if (refView.derived_table !== undefined) {
+                            const pdtElementName = sigmaDisplayName(refViewName);
+                            if (pdtElementsMap !== null && !pdtElementsMap.has(refViewName)) {
+                                const pdtResult = await lookConvertView(refViewName, refViewName, connectionId, warnings, pdtElementsMap);
+                                pdtElementsMap.set(refViewName, pdtResult);
+                            }
+                            warnings.push(`ℹ "${viewName}" SQL: "${refViewName}" is a PDT — converted to a separate Custom SQL element, referenced via sigma_element('${pdtElementName}').`);
+                            replacementMap.set(refViewName, `sigma_element('${pdtElementName}')`);
+                        } else {
+                            let path = (refView.sql_table_name || '').trim().replace(/;;\s*$/, '').trim();
+                            // Recursively resolve if the referenced view's sql_table_name is itself a reference
+                            if (path) path = lookResolveTableRef(path, lookProject.views, new Set([viewName, refViewName]));
+                            if (path && !path.includes('${')) {
+                                warnings.push(`✅ Resolved \${${refViewName}.SQL_TABLE_NAME} → ${path}`);
+                                replacementMap.set(refViewName, path);
+                            } else {
+                                replacementMap.set(refViewName, `/* TODO: table for "${refViewName}" */`);
+                            }
+                        }
                     }
-                    if (refView.derived_table !== undefined) {
-                        warnings.push(`ℹ "${viewName}" SQL: "${refViewName}" is a PDT — its materialized table name cannot be resolved statically. Update the placeholder.`);
-                        return `/* TODO: PDT table for "${refViewName}" */`;
-                    }
-                    let path = (refView.sql_table_name || '').trim().replace(/;;\s*$/, '').trim();
-                    // Recursively resolve if the referenced view's sql_table_name is itself a reference
-                    if (path) path = lookResolveTableRef(path, lookProject.views, new Set([viewName, refViewName]));
-                    if (path && !path.includes('${')) {
-                        warnings.push(`✅ Resolved \${${refViewName}.SQL_TABLE_NAME} → ${path}`);
-                        return path;
-                    }
-                    return `/* TODO: table for "${refViewName}" */`;
-                });
+                    rawSql = rawSql.replace(/\$\{(\w+)\.SQL_TABLE_NAME\}/gi, (match, refViewName) =>
+                        replacementMap.get(refViewName) ?? match
+                    );
+                }
 
                 tableName = 'Custom SQL'; // signals isCustomSql → column formulas use bare [COL] refs
                 element = {
                     id: elementId,
+                    name: sigmaDisplayName(displayAlias),
                     kind: 'table',
                     source: {
                         connectionId: connectionId || '<CONNECTION_ID>',
@@ -18896,7 +18940,7 @@ models:
 <h3>What Gets Converted</h3>
 <ul>
     <li><b>Views with sql_table_name</b> → Sigma elements with warehouse paths</li>
-    <li><b>Derived tables (SQL)</b> → Sigma custom SQL elements</li>
+    <li><b>Derived tables (SQL)</b> → Sigma custom SQL elements; if another derived table's SQL references a PDT view via <code>${'{'}view.SQL_TABLE_NAME{'}'}</code>, that PDT is automatically converted into its own Custom SQL element and referenced via <code>sigma_element('Name')</code> — no manual wiring required</li>
     <li><b>Dimensions</b> → Sigma columns with formula conversion; complex <code>sql</code> expressions auto-converted to Sigma syntax (see Expression Conversion below); duplicate physical columns are auto-deduplicated</li>
     <li><b>Tier dimensions</b> → Bucketed <code>If()</code> calculated columns (e.g. "0 to 99", "100 to 499", "500 or Above")</li>
     <li><b>Yesno dimensions</b> → Boolean calculated columns with "(T/F)" suffix</li>
@@ -18929,7 +18973,7 @@ models:
 <ul>
     <li><b>Liquid templating</b> — <code>{% %}</code> and <code>{{ }}</code> blocks are <b>stripped entirely</b> with warnings. Any dimension or measure that depends on Liquid conditionals (e.g. <code>{% if _user_attributes['region'] %}</code>) will produce incorrect formulas. Review all Liquid warnings carefully after conversion.</li>
     <li><b>Cross-element columns</b> — Formulas referencing columns from other elements (via <code>\${view_name.field}</code> across explores) are removed with a warning. These must be added manually in the Sigma UI because the API does not support cross-element column references.</li>
-    <li><b>PDT materializations</b> — Persistent Derived Tables are recognized but the materialization strategy (trigger, datagroup, sql_trigger_value) does not carry over.</li>
+    <li><b>PDT materializations</b> — Persistent Derived Tables are recognized and converted to Custom SQL elements. The materialization strategy (trigger, datagroup, sql_trigger_value) does not carry over. When a derived table's SQL references another PDT via <code>${'{'}view.SQL_TABLE_NAME{'}'}</code>, the referenced PDT is auto-converted to its own Custom SQL element and referenced via <code>sigma_element('Name')</code>; upload all referenced view files at once to enable full auto-resolution.</li>
     <li><b>Access filters / row-level access</b> — LookML <code>access_filter</code> blocks are converted to Sigma RLS calculated columns using <code>CurrentUserAttributeText()</code>. You must ensure the matching user attribute exists in Sigma and add a <code>True</code> filter on the generated column. <code>access_grant</code> blocks (permission-based access) are not converted.</li>
     <li><b>Explore-level always_filter</b> — String/list value filters are converted directly to Sigma element filters. Date relative expressions ("1 day", "last month") and range expressions (">100") cannot be auto-converted — add those manually using Sigma's date range or number range filter after import. <code>conditionally_filter</code> is not converted.</li>
     <li><b>sql_table_name with Liquid</b> — If a view's <code>sql_table_name</code> uses Liquid to switch tables dynamically (e.g. by environment), the converter strips the Liquid and uses whatever static text remains. Verify the warehouse path after conversion.</li>
