@@ -2634,6 +2634,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                             <option value="contract">📝 Atlan Data Contract</option>
                             <option value="omni">🌐 Omni Analytics</option>
                             <option value="qlik">🔮 Qlik Sense</option>
+                            <option value="oac">☁️ Oracle Analytics Cloud</option>
                             <option value="ssas" class="dev-mode-only" style="display:none">🧊 SSAS/MSAS Cube</option>
                         </select>
                     </div>
@@ -3506,6 +3507,102 @@ How it works:
                     </div>
                 </div>
                 <!-- ── End Qlik Sense Panel ───────────────────────────────────────── -->
+
+                <!-- Oracle Analytics Cloud SMML Converter Panel -->
+                <div class="converter-panel" id="subPanelOac">
+
+                    <!-- Left: Input + Config -->
+                    <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Oracle Analytics Cloud</span>
+                        </div>
+
+                        <div id="oacDropZone" class="lookml-drop-zone"
+                             onclick="document.getElementById('oacFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleOacDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">☁️</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop SMML .zip or .json files here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">OAC Semantic Modeler → ⋯ → Export → .zip</div>
+                        </div>
+                        <input type="file" id="oacFileInput" accept=".zip,.json" multiple style="display:none" onchange="handleOacFileInput(event)">
+
+                        <div id="oacFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Business Model</label>
+                            <select id="oacModelSelect" class="form-input" style="font-size: 12px;">
+                                <option value="">— Upload files to see models —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Connection</label>
+                            <select id="oacConnectionId" class="form-input" style="font-size: 12px;">
+                                <option value="">— Connect to Sigma to load —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="oacDatabase" placeholder="e.g. ANALYTICS" style="font-size: 12px;">
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Schema override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="oacSchema" placeholder="e.g. PUBLIC" style="font-size: 12px;">
+                        </div>
+
+                        <div class="dbt-badge-row" id="oacInputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" id="oacConvertBtn" onclick="runOacConversion()">
+                                ☁️ Convert to Sigma JSON
+                            </button>
+                        </div>
+
+                        <div style="font-size: 10px; color: var(--text-muted); padding: 0 4px; line-height: 1.4;">
+                            <strong>How to get files:</strong><br>
+                            • In OAC, open the <b>Semantic Modeler</b><br>
+                            • Click <b>⋯ → Export</b> to download the <code>.zip</code><br>
+                            • Drop the <code>.zip</code> here — or upload individual logical table <code>.json</code> files from the <code>logical/</code> folder inside the ZIP
+                        </div>
+                    </div>
+
+                    <!-- Right: Sigma JSON Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copyOacOutput()" id="oacCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadOacOutputToEditor()" id="oacLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="oacWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="oacJsonOutput" readonly placeholder="Convert an OAC semantic model to see the Sigma JSON here...
+
+How it works:
+• Upload the SMML .zip from OAC Semantic Modeler → Export
+• Logical tables → Sigma elements (warehouse-table)
+• Dimension columns → Sigma columns
+• Measure columns → Sigma metrics (Sum, Count, Avg, etc.)
+• Joins → Sigma relationships (keys inferred from shared column names)
+• OAC Logical SQL → Sigma formula equivalents where possible
+• AGO(), TODATE(), PERIODROLLING(), FILTER() → flagged for manual review"></textarea>
+
+                        <div class="dbt-badge-row" id="oacOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="oacLoadAndSave()" id="oacSaveBtn" disabled>
+                                💾 Load &amp; Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <!-- ── End Oracle Analytics Cloud Panel ──────────────────────────── -->
 
                 <!-- SSAS / MSAS Cube Converter Panel (dev mode only) -->
                 <div class="converter-panel dev-mode-only" id="subPanelSsas" style="display:none">
@@ -6223,7 +6320,7 @@ ${JSON.stringify(failedJson, null, 2)}`;
         async function populateConverterConnections() {
             if (!state.accessToken) return;
             const connections = await fetchConnectionsList();
-            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'qlikConnectionId', 'ssasConnectionId'];
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'qlikConnectionId', 'oacConnectionId', 'ssasConnectionId'];
             targetIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (!sel) return;
@@ -9114,8 +9211,8 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         }
 
         function switchConverter(format) {
-            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Qlik', 'Ssas'];
-            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', qlik: 'Qlik', ssas: 'Ssas' };
+            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Qlik', 'Oac', 'Ssas'];
+            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', qlik: 'Qlik', oac: 'Oac', ssas: 'Ssas' };
             const target = map[format] || 'Dbt';
             panels.forEach(p => {
                 const el = document.getElementById('subPanel' + p);
@@ -12468,6 +12565,494 @@ explores:
 
         async function qlikLoadAndSave() {
             loadQlikOutputToEditor();
+            if (!state.accessToken) {
+                showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning');
+                return;
+            }
+            openSaveLocationModal();
+        }
+
+        // ── Oracle Analytics Cloud (OAC) SMML Converter ─────────────────────
+
+        let _oacParsed = null;
+        // {
+        //   businessModels: Map<bmName, LogicalTable[]>,
+        //   physicalMap:    Map<tableNameUpper, {database, schema, name}>
+        // }
+
+        function handleOacFileInput(event) {
+            const files = [...event.target.files];
+            if (files.length) processOacFiles(files);
+            event.target.value = '';
+        }
+
+        function handleOacDrop(event) {
+            event.preventDefault();
+            document.getElementById('oacDropZone').classList.remove('drag-over');
+            const files = [...event.dataTransfer.files];
+            if (files.length) processOacFiles(files);
+        }
+
+        // Display name for OAC objects: preserve existing spaces and title-case each word;
+        // fall back to sigmaDisplayName for snake_case / ALL_CAPS names without spaces.
+        function _oacDisplayName(s) {
+            if (!s) return '';
+            if (s.includes(' ')) return s.replace(/\b\w/g, c => c.toUpperCase());
+            return sigmaDisplayName(s);
+        }
+
+        // Extract physical column name from an OAC physicalExpression.text value.
+        // Handles:  "TABLE"."COLUMN"  /  TABLE.COLUMN  /  bare COLUMN
+        function _oacExtractPhysColName(expr) {
+            if (!expr) return '';
+            const str = expr.trim();
+            const quoted = str.match(/"([^"]+)"\s*$/);
+            if (quoted) return quoted[1];
+            return str.includes('.') ? str.split('.').pop().trim() : str;
+        }
+
+        // OAC aggregation rule → Sigma formula string.
+        // dispName: bare column display name (no TABLE/ prefix) — metrics ref by local name.
+        function _oacAggFormula(rule, dispName) {
+            const c = `[${dispName}]`;
+            const map = {
+                SUM:            `Sum(${c})`,
+                AVG:            `Avg(${c})`,
+                COUNT:          `Count(${c})`,
+                COUNT_DISTINCT: `CountDistinct(${c})`,
+                MIN:            `Min(${c})`,
+                MAX:            `Max(${c})`,
+                MEDIAN:         `Median(${c})`,
+                STD_DEV:        `StdDev(${c})`,
+                STD_DEV_POP:    `StdDevPop(${c})`,
+            };
+            return map[rule] ?? null;
+        }
+
+        // Convert an OAC Logical SQL expression to an approximate Sigma formula.
+        // Returns { formula, warnings }
+        function _oacExprToSigma(expr) {
+            if (!expr) return { formula: '', warnings: [] };
+            let f = expr.trim();
+            const warnings = [];
+
+            // Flag functions with no Sigma equivalent
+            const unsupportedRe = /\b(AGO|TODATE|PERIODROLLING|FILTER|EVALUATE|EVALUATE_AGGR|MSUM|MCOUNT|MAVG|MMAX|MMIN|NTILE|TOPN|BOTTOMN|PERCENTRANK|NVL2|OBIEE_BIN)\s*\(/i;
+            const unsupMatch = f.match(unsupportedRe);
+            if (unsupMatch) {
+                warnings.push(`uses "${unsupMatch[1].toUpperCase()}()" — no direct Sigma equivalent; review manually`);
+            }
+
+            // SQL_TSI_* interval constants → quoted strings (DateAdd/DateDiff first arg)
+            const _tsiMap = {
+                SQL_TSI_SECOND: '"second"', SQL_TSI_MINUTE: '"minute"', SQL_TSI_HOUR: '"hour"',
+                SQL_TSI_DAY: '"day"', SQL_TSI_WEEK: '"week"', SQL_TSI_MONTH: '"month"',
+                SQL_TSI_QUARTER: '"quarter"', SQL_TSI_YEAR: '"year"'
+            };
+            f = f.replace(/\bSQL_TSI_\w+\b/gi, m => _tsiMap[m.toUpperCase()] || `"${m.toLowerCase()}"`);
+
+            // Function name remappings
+            f = f.replace(/\bNVL\s*\(/gi,              'Coalesce(');
+            f = f.replace(/\bSUBSTR(?:ING)?\s*\(/gi,   'Mid(');
+            f = f.replace(/\bINSTR\s*\(/gi,             'Search(');
+            f = f.replace(/\bLENGTH\s*\(/gi,            'Len(');
+            f = f.replace(/\bTO_CHAR\s*\(/gi,           'Text(');
+            f = f.replace(/\bTO_DATE\s*\(/gi,           'Date(');
+            f = f.replace(/\bTO_NUMBER\s*\(/gi,         'Number(');
+            f = f.replace(/\bCEIL\s*\(/gi,              'Ceiling(');
+            f = f.replace(/\bTIMESTAMPADD\s*\(/gi,      'DateAdd(');
+            f = f.replace(/\bTIMESTAMPDIFF\s*\(/gi,     'DateDiff(');
+            f = f.replace(/\bCURRENT_DATE\b/gi,         'Today()');
+            f = f.replace(/\bCURRENT_TIMESTAMP\b/gi,    'Now()');
+            f = f.replace(/\bCURRENT_TIME\b/gi,         'Now()');
+
+            // "TABLE"."COLUMN" → [Column Display Name]
+            f = f.replace(/"[^"]+"\."([^"]+)"/g, (_, col) => `[${_oacDisplayName(col)}]`);
+            // TABLE.COLUMN → [Column Display Name]
+            f = f.replace(/\b[A-Za-z_][A-Za-z0-9_ ]*\.[A-Za-z_][A-Za-z0-9_]+\b/g,
+                m => `[${_oacDisplayName(m.split('.').pop())}]`);
+
+            // Single-quoted string literals → double-quoted  ('Holiday' → "Holiday")
+            f = f.replace(/'([^']*)'/g, '"$1"');
+
+            // expr IN (a, b, c) → In(expr, a, b, c)
+            f = f.replace(/(\w+(?:\([^)]*\))?|\[[^\]]+\])\s+IN\s+\(([^)]+)\)/gi,
+                (_, lhs, items) => {
+                    const vals = items.split(',').map(v => v.trim());
+                    return `In(${lhs}, ${vals.join(', ')})`;
+                });
+
+            // CASE WHEN ... THEN ... [WHEN ...] [ELSE ...] END → nested If()
+            if (/\bCASE\b/i.test(f)) {
+                f = _sqlCaseToIf(f);
+            }
+
+            return { formula: f, warnings };
+        }
+
+        async function processOacFiles(files) {
+            _oacParsed = null;
+            document.getElementById('oacFileList').innerHTML = '';
+            document.getElementById('oacInputStats').innerHTML = '';
+            document.getElementById('oacModelSelect').innerHTML = '<option value="">— Upload files to see models —</option>';
+
+            const businessModels = new Map(); // bmName → LogicalTable[]
+            const physicalMap    = new Map(); // tableNameUpper → {database, schema, name}
+            let tableCount = 0;
+
+            for (const file of files) {
+                const lname = file.name.toLowerCase();
+
+                if (lname.endsWith('.zip')) {
+                    try {
+                        const zip = await JSZip.loadAsync(await file.arrayBuffer());
+                        for (const [path, zf] of Object.entries(zip.files)) {
+                            if (zf.dir || !path.endsWith('.json')) continue;
+                            const parts = path.split('/').filter(Boolean);
+                            let obj;
+                            try { obj = JSON.parse(await zf.async('string')); } catch { continue; }
+
+                            if (parts[0] === 'physical' && parts.length >= 4) {
+                                // physical/Database/Schema/Table.json
+                                const database  = parts[1];
+                                const schema    = parts[2];
+                                const tableName = parts[3].replace(/\.json$/i, '');
+                                physicalMap.set(tableName.toUpperCase(), { database, schema, name: tableName });
+                            } else if (parts[0] === 'logical' && parts.length >= 3) {
+                                // logical/BusinessModelName/TableName.json
+                                const bmName   = parts[1];
+                                const fileName = parts[2].replace(/\.json$/i, '');
+                                // Skip the business model descriptor (same name as the folder)
+                                if (fileName === bmName) continue;
+                                if (!Array.isArray(obj.logicalColumns)) continue;
+                                if (!businessModels.has(bmName)) businessModels.set(bmName, []);
+                                businessModels.get(bmName).push(obj);
+                                tableCount++;
+                            }
+                        }
+                    } catch (e) {
+                        showToast('❌ Failed to read ZIP: ' + e.message, 'error');
+                        return;
+                    }
+                } else if (lname.endsWith('.json')) {
+                    try {
+                        const obj = JSON.parse(await file.text());
+                        if (!Array.isArray(obj.logicalColumns)) {
+                            showToast(`⚠ ${file.name}: no logicalColumns found — skipped`, 'warning');
+                            continue;
+                        }
+                        const bmName = 'Uploaded Model';
+                        if (!businessModels.has(bmName)) businessModels.set(bmName, []);
+                        businessModels.get(bmName).push(obj);
+                        tableCount++;
+                    } catch (e) {
+                        showToast(`❌ ${file.name}: ${e.message}`, 'error');
+                    }
+                }
+            }
+
+            if (!businessModels.size) {
+                showToast('No SMML logical table files found. Upload the Semantic Modeler .zip or individual logical table .json files.', 'warning');
+                return;
+            }
+
+            _oacParsed = { businessModels, physicalMap };
+
+            // Populate business model selector
+            const sel = document.getElementById('oacModelSelect');
+            sel.innerHTML = '';
+            for (const [name, tables] of businessModels) {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = `${name} (${tables.length} table${tables.length !== 1 ? 's' : ''})`;
+                sel.appendChild(opt);
+            }
+
+            // File badge
+            document.getElementById('oacFileList').innerHTML =
+                `<div class="lookml-file-badge">
+                    <span class="lookml-file-name">${files.length === 1 ? files[0].name : files.length + ' files'}</span>
+                    <span class="lookml-file-size">${tableCount} table${tableCount !== 1 ? 's' : ''}</span>
+                </div>`;
+
+            // Input stats
+            const totalTables = [...businessModels.values()].reduce((s, ts) => s + ts.length, 0);
+            document.getElementById('oacInputStats').innerHTML = [
+                `<span class="dbt-stat-badge">${businessModels.size} model${businessModels.size !== 1 ? 's' : ''}</span>`,
+                `<span class="dbt-stat-badge">${totalTables} logical table${totalTables !== 1 ? 's' : ''}</span>`,
+                physicalMap.size > 0
+                    ? `<span class="dbt-stat-badge">${physicalMap.size} physical table${physicalMap.size !== 1 ? 's' : ''}</span>`
+                    : ''
+            ].filter(Boolean).join('');
+
+            showToast(`Loaded ${tableCount} logical table${tableCount !== 1 ? 's' : ''} from ${businessModels.size} business model${businessModels.size !== 1 ? 's' : ''}`, 'success');
+        }
+
+        function runOacConversion() {
+            if (!_oacParsed) {
+                showToast('Upload an OAC SMML .zip or logical table JSON files first', 'warning');
+                return;
+            }
+            const selectedBm = document.getElementById('oacModelSelect').value;
+            if (!selectedBm) { showToast('Select a business model', 'warning'); return; }
+            const tables = _oacParsed.businessModels.get(selectedBm) || [];
+            if (!tables.length) { showToast('No logical tables in selected model', 'warning'); return; }
+
+            const btn = document.getElementById('oacConvertBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Converting…';
+
+            try {
+                _usedIds.clear();
+                const connectionId = document.getElementById('oacConnectionId').value.trim() || '<CONNECTION_ID>';
+                state.useFriendlyNames = isConnectionFriendly(connectionId);
+                const dbOverride  = document.getElementById('oacDatabase').value.trim().toUpperCase();
+                const schOverride = document.getElementById('oacSchema').value.trim().toUpperCase();
+                const warnings = [];
+                { const fnWarn = friendlyNameWarning(); if (fnWarn) warnings.push(fnWarn); }
+
+                const elements        = [];
+                const tableElementMap = new Map(); // tableNameUpper → { elementId, colMap, element }
+
+                // ── Pass 1: Build Sigma elements ──────────────────────────────
+                for (const table of tables) {
+                    const tableName    = table.name || 'Unknown';
+                    const tableDisplay = _oacDisplayName(tableName);
+                    const elementId    = sigmaShortId();
+                    const columns      = [];
+                    const metrics      = [];
+                    const order        = [];
+                    const colMap       = new Map(); // colNameUpper → { colId, displayName }
+                    const physColIds   = new Map(); // rawFormula → colId (dedup raw physical cols)
+
+                    // Resolve physical table path from logicalTableSources
+                    const srcTables   = table.logicalTableSources?.[0]?.tableMapping?.tables || [];
+                    const physRawName = srcTables[0] || tableName;
+                    // Strip any schema prefix (SCHEMA.TABLE → TABLE)
+                    const physKey     = physRawName.split('.').pop().trim().toUpperCase();
+                    const physInfo    = _oacParsed.physicalMap.get(physKey);
+
+                    const database  = dbOverride  || physInfo?.database || '';
+                    const schema    = schOverride || physInfo?.schema   || '';
+                    const pathParts = [];
+                    if (database) pathParts.push(database);
+                    if (schema)   pathParts.push(schema);
+                    pathParts.push(physKey);
+
+                    // Build columns + metrics from logicalColumns.
+                    // Dimensions → columns[]; measures → metrics[] (with raw phys col backing them).
+                    const _aggFnMap = {
+                        SUM: e => `Sum(${e})`,           AVG: e => `Avg(${e})`,
+                        COUNT: e => `Count(${e})`,       COUNT_DISTINCT: e => `CountDistinct(${e})`,
+                        MIN: e => `Min(${e})`,           MAX: e => `Max(${e})`,
+                        MEDIAN: e => `Median(${e})`,     STD_DEV: e => `StdDev(${e})`,
+                        STD_DEV_POP: e => `StdDevPop(${e})`
+                    };
+                    for (const col of (table.logicalColumns || [])) {
+                        const colName   = col.name || 'Column';
+                        const colDisp   = _oacDisplayName(colName);
+                        const rule      = col.aggregation?.rule;
+                        const isMeasure = rule && rule !== 'NONE';
+
+                        // Physical column from physicalMappings
+                        const physExpr    = col.logicalColumnSource?.physicalMappings?.[0]?.physicalExpression?.text || '';
+                        const physColRaw  = _oacExtractPhysColName(physExpr);
+                        const physColDisp = physColRaw ? _oacDisplayName(physColRaw) : _oacDisplayName(colName);
+
+                        // Logical (derived) expression — present when column has no physical mapping
+                        const logExpr   = col.logicalColumnSource?.logicalExpression?.text || '';
+                        const isDerived = !physExpr && !!logExpr;
+
+                        if (isDerived) {
+                            const { formula: converted, warnings: exprW } = _oacExprToSigma(logExpr);
+                            exprW.forEach(w => warnings.push(`⚠ "${colName}": ${w}`));
+                            const formula = converted || `[${colDisp}]`;
+                            if (isMeasure) {
+                                // Derived aggregate expression → metric
+                                const fn = _aggFnMap[rule];
+                                if (!fn) { warnings.push(`⚠ "${colName}": rule "${rule}" unsupported — skipped.`); continue; }
+                                const metricId = sigmaShortId();
+                                const mf = fn(formula);
+                                const mObj = { id: metricId, name: colDisp, formula: mf };
+                                let mFmt = _inferSigmaFormat(mf, colDisp);
+                                // OAC stores pct values as 0-100, not 0-1; suffix format avoids ×100.
+                                if (mFmt?.formatString === ',.2%') mFmt = { kind: 'number', formatString: ',.2f', suffix: '%' };
+                                if (mFmt) mObj.format = mFmt;
+                                metrics.push(mObj);
+                                colMap.set(colName.toUpperCase(), { colId: metricId, displayName: colDisp });
+                            } else {
+                                // Derived dimension column
+                                const colId = sigmaShortId();
+                                columns.push({ id: colId, formula });
+                                order.push(colId);
+                                colMap.set(colName.toUpperCase(), { colId, displayName: colDisp });
+                            }
+                        } else if (isMeasure) {
+                            // Physical measure: ensure the raw backing column exists, then add metric.
+                            // Metrics use bare [Col Name] refs; the backing column holds [TABLE/Col Name].
+                            const rawFormula = `[${physKey}/${physColDisp}]`;
+                            if (!physColIds.has(rawFormula)) {
+                                const rawId = sigmaShortId();
+                                columns.push({ id: rawId, formula: rawFormula });
+                                order.push(rawId);
+                                physColIds.set(rawFormula, rawId);
+                            }
+                            const fn = _aggFnMap[rule];
+                            if (!fn) { warnings.push(`⚠ "${colName}": rule "${rule}" unsupported — skipped.`); continue; }
+                            const metricId = sigmaShortId();
+                            const mf = fn(`[${physColDisp}]`);
+                            const mObj = { id: metricId, name: colDisp, formula: mf };
+                            let mFmt = _inferSigmaFormat(mf, colDisp);
+                            // OAC stores pct values as 0-100, not 0-1; suffix format avoids ×100.
+                            if (mFmt?.formatString === ',.2%') mFmt = { kind: 'number', formatString: ',.2f', suffix: '%' };
+                            if (mFmt) mObj.format = mFmt;
+                            metrics.push(mObj);
+                            colMap.set(colName.toUpperCase(), { colId: metricId, displayName: colDisp });
+                        } else {
+                            // Dimension / non-measure physical column
+                            const rawFormula = `[${physKey}/${physColDisp}]`;
+                            if (physColIds.has(rawFormula)) {
+                                // Already added as a backing col — just register in colMap
+                                colMap.set(colName.toUpperCase(), { colId: physColIds.get(rawFormula), displayName: physColDisp });
+                                continue;
+                            }
+                            const colId = sigmaShortId();
+                            columns.push({ id: colId, formula: rawFormula });
+                            order.push(colId);
+                            physColIds.set(rawFormula, colId);
+                            colMap.set(colName.toUpperCase(), { colId, displayName: physColDisp });
+                        }
+                    }
+
+                    const element = {
+                        id:     elementId,
+                        kind:   'table',
+                        name:   tableDisplay,
+                        source: { connectionId, kind: 'warehouse-table', path: pathParts },
+                        columns,
+                        order:  [...order]
+                    };
+                    if (metrics.length) element.metrics = metrics;
+                    elements.push(element);
+                    tableElementMap.set(tableName.toUpperCase(), { elementId, colMap, element });
+                }
+
+                // ── Pass 2: Build relationships from logical joins ─────────────
+                for (const table of tables) {
+                    const srcInfo = tableElementMap.get((table.name || '').toUpperCase());
+                    if (!srcInfo) continue;
+
+                    for (const join of (table.joins || [])) {
+                        const tgtName = join.rightTable;
+                        if (!tgtName) continue;
+                        const tgtInfo = tableElementMap.get(tgtName.toUpperCase());
+                        if (!tgtInfo) {
+                            warnings.push(`⚠ Join target "${tgtName}" not in uploaded files — relationship skipped. Upload the missing logical table file.`);
+                            continue;
+                        }
+
+                        // Infer key: first column name shared between source and target
+                        let srcEntry = null, tgtEntry = null;
+                        for (const [key, info] of srcInfo.colMap) {
+                            if (tgtInfo.colMap.has(key)) {
+                                srcEntry = info;
+                                tgtEntry = tgtInfo.colMap.get(key);
+                                break;
+                            }
+                        }
+
+                        if (!srcInfo.element.relationships) srcInfo.element.relationships = [];
+                        if (srcEntry && tgtEntry) {
+                            srcInfo.element.relationships.push({
+                                id:              sigmaShortId(),
+                                targetElementId: tgtInfo.elementId,
+                                keys:            [{ sourceColumnId: srcEntry.colId, targetColumnId: tgtEntry.colId }]
+                            });
+                        } else {
+                            warnings.push(`⚠ "${table.name}" → "${tgtName}": no shared key column found — relationship added without keys. Set join keys manually in Sigma.`);
+                            srcInfo.element.relationships.push({
+                                id:              sigmaShortId(),
+                                targetElementId: tgtInfo.elementId,
+                                keys:            []
+                            });
+                        }
+                    }
+                }
+
+                // ── Write output ───────────────────────────────────────────────
+                const outputJson = {
+                    name:  selectedBm,
+                    pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
+                };
+                document.getElementById('oacJsonOutput').value = JSON.stringify(outputJson, null, 2);
+
+                const warnBox = document.getElementById('oacWarningBox');
+                if (warnings.length) {
+                    warnBox.style.display = '';
+                    warnBox.innerHTML = warnings.map(w => `<div>${w}</div>`).join('');
+                } else {
+                    warnBox.style.display = 'none';
+                }
+
+                const ec = elements.length;
+                const mc = elements.reduce((n, e) => n + (e.metrics?.length || 0), 0);
+                const cc = elements.reduce((n, e) => n + (e.columns?.length || 0), 0);
+                const wc = warnings.length;
+                document.getElementById('oacOutputStats').innerHTML = [
+                    `<span class="dbt-stat-badge">${ec} element${ec !== 1 ? 's' : ''}</span>`,
+                    `<span class="dbt-stat-badge">${cc} column${cc !== 1 ? 's' : ''}</span>`,
+                    mc ? `<span class="dbt-stat-badge metrics">${mc} metric${mc !== 1 ? 's' : ''}</span>` : '',
+                    wc ? `<span class="dbt-stat-badge" style="color:var(--warning);">${wc} warning${wc !== 1 ? 's' : ''}</span>` : ''
+                ].filter(Boolean).join('');
+
+                ['oacCopyBtn', 'oacLoadBtn', 'oacSaveBtn'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.disabled = false;
+                });
+
+                showToast(`Converted "${selectedBm}" → ${ec} element${ec !== 1 ? 's' : ''}, ${mc} metric${mc !== 1 ? 's' : ''}`, 'success');
+
+            } catch (e) {
+                console.error('OAC conversion error:', e);
+                showToast('❌ Conversion error: ' + e.message, 'error');
+            } finally {
+                const btn = document.getElementById('oacConvertBtn');
+                btn.disabled = false;
+                btn.textContent = '☁️ Convert to Sigma JSON';
+            }
+        }
+
+        function copyOacOutput() {
+            const val = document.getElementById('oacJsonOutput').value;
+            if (!val) return;
+            navigator.clipboard.writeText(val).then(() => showToast('Copied to clipboard', 'success'));
+        }
+
+        function loadOacOutputToEditor() {
+            const val = document.getElementById('oacJsonOutput').value;
+            if (!val) return;
+            try {
+                const obj = JSON.parse(val);
+                editorMode = 'json';
+                _updateModeToggleUI();
+                setEditorContent(obj);
+            } catch (e) {
+                setEditorRaw(val);
+            }
+            state.isNewModel = true;
+            state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from Oracle Analytics Cloud (unsaved)';
+            ['findBtn', 'treeViewBtn', 'formatBtn', 'diffBtn', 'copyBtn', 'saveBtn', 'aiBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+            enableEditorModeToggle();
+            switchEditorTab('json');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
+        }
+
+        async function oacLoadAndSave() {
+            loadOacOutputToEditor();
             if (!state.accessToken) {
                 showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning');
                 return;
@@ -19400,6 +19985,67 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <a href="https://qlik.dev/apis/rest/apps/" target="_blank">Qlik Cloud REST API — Apps</a>
     <a href="https://qlik.dev/apis/json-rpc/qix/doc/" target="_blank">Qlik Engine API (JSON-RPC / Enigma.js)</a>
     <a href="https://help.qlik.com/en-US/cloud-services/Subsystems/Hub/Content/Sense_Hub/DataModeling/data-model-viewer.htm" target="_blank">Qlik — Data Model Viewer</a>
+</div>`,
+
+            oac: `
+<h3>Oracle Analytics Cloud Converter</h3>
+<p>Converts Oracle Analytics Cloud (OAC) semantic models exported from the <b>Semantic Modeler</b> (SMML format) to Sigma data model JSON. Parses logical tables, dimensions, measures, aggregation rules, and joins.</p>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>Logical tables</b> → Sigma elements (one element per logical table); the physical table path (database, schema, table name) is resolved from the <code>physical/</code> layer in the export ZIP</li>
+    <li><b>Dimension columns</b> (<code>aggregation.rule: NONE</code> or no rule) → Sigma dimension columns with warehouse column references</li>
+    <li><b>Measure columns</b> (SUM, AVG, COUNT, COUNT_DISTINCT, MIN, MAX, MEDIAN, STD_DEV, STD_DEV_POP) → Sigma <b>metrics</b> (in the element's <code>metrics</code> array); the underlying physical column is also kept in <code>columns</code> so derived formulas can reference the row-level value</li>
+    <li><b>Derived / calculated columns</b> → Sigma calculated column formulas; common OAC Logical SQL functions are remapped to Sigma equivalents (see Expression Conversion below)</li>
+    <li><b>Joins</b> → Sigma relationships; join keys are inferred by matching column names shared between the source and target logical tables</li>
+</ul>
+
+<h3>How to Export from OAC</h3>
+<ol>
+    <li>In OAC, open the <b>Semantic Modeler</b></li>
+    <li>Click the <b>⋯</b> (three-dot) menu on your semantic model</li>
+    <li>Choose <b>Export</b> — OAC downloads a <code>.zip</code> containing your model in SMML (Semantic Modeler Markup Language) JSON format</li>
+    <li>Drop the <code>.zip</code> directly into the converter</li>
+</ol>
+<p>You can also upload individual logical table <code>.json</code> files from the <code>logical/</code> folder inside the ZIP.</p>
+
+<h3>Expression Conversion</h3>
+<p>OAC Logical SQL expressions in derived columns are partially converted to Sigma syntax:</p>
+<ul>
+    <li><code>NVL(a, b)</code> → <code>Coalesce(a, b)</code></li>
+    <li><code>SUBSTR / SUBSTRING</code> → <code>Mid()</code></li>
+    <li><code>INSTR()</code> → <code>Search()</code></li>
+    <li><code>LENGTH()</code> → <code>Len()</code></li>
+    <li><code>TO_CHAR()</code> → <code>Text()</code></li>
+    <li><code>TO_DATE()</code> → <code>Date()</code></li>
+    <li><code>TO_NUMBER()</code> → <code>Number()</code></li>
+    <li><code>CEIL()</code> → <code>Ceiling()</code></li>
+    <li><code>TIMESTAMPADD()</code> → <code>DateAdd()</code>; <code>TIMESTAMPDIFF()</code> → <code>DateDiff()</code>; <code>SQL_TSI_DAY</code> / <code>SQL_TSI_MONTH</code> etc. → <code>"day"</code> / <code>"month"</code> etc.</li>
+    <li><code>CURRENT_DATE</code> → <code>Today()</code></li>
+    <li><code>CURRENT_TIMESTAMP / CURRENT_TIME</code> → <code>Now()</code></li>
+    <li><code>"TABLE"."COLUMN"</code> and <code>TABLE.COLUMN</code> references → <code>[Column Name]</code></li>
+    <li>Single-quoted string literals — <code>'Value'</code> → <code>"Value"</code></li>
+    <li><code>expr IN (a, b, c)</code> → <code>In(expr, a, b, c)</code></li>
+    <li><code>CASE WHEN cond THEN val … ELSE val END</code> → <code>If(cond, val, If(…, val, fallback))</code></li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li><b>OAC time series functions</b> — <code>AGO()</code>, <code>TODATE()</code>, <code>PERIODROLLING()</code> have no direct Sigma equivalents. Expressions using them are converted with a warning; review and adjust the formula manually in Sigma.</li>
+    <li><b>FILTER() aggregation</b> — <code>FILTER(measure USING condition)</code> (OAC conditional aggregation) has no direct equivalent. Use <code>SumIf()</code> / <code>CountIf()</code> in Sigma instead.</li>
+    <li><b>EVALUATE()</b> — Native SQL pass-through has no Sigma equivalent in the logical layer.</li>
+    <li><b>Join keys</b> — SMML logical joins do not embed FK/PK column mappings. Keys are inferred by matching column names shared between joined tables. If no match is found, the relationship is created without keys — configure them manually in Sigma after import.</li>
+    <li><b>Level-based hierarchies</b> — OAC drill hierarchies are not converted. Configure them in the Sigma data model editor after import.</li>
+    <li><b>Dimension-specific aggregation rules</b> — Only the default aggregation rule per logical column is converted; per-dimension override rules are not supported.</li>
+    <li><b>Multi-source logical tables</b> — Only the first logical table source is used. Multi-source federation is not supported.</li>
+    <li><b>Classic RPD files</b> — Only SMML (JSON) exports from the new OAC Semantic Modeler are supported. Classic binary <code>.rpd</code> files must be converted to SMML using Oracle's tools before uploading here.</li>
+</ul>
+
+<div class="help-links">
+    <div class="help-links-title">📚 Resources</div>
+    <a href="https://docs.oracle.com/en/cloud/paas/analytics-cloud/acmdg/what-is-smml.html" target="_blank">Oracle — What is SMML?</a>
+    <a href="https://docs.oracle.com/en/cloud/paas/analytics-cloud/acsmm/smml-schema-files-and-folders.html" target="_blank">Oracle — SMML Schema Files and Folders</a>
+    <a href="https://docs.oracle.com/en/cloud/paas/analytics-cloud/acsmm/smml-elements-logical-table.html" target="_blank">Oracle — SMML Logical Table Reference</a>
 </div>`,
 
             mcp: `
