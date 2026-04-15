@@ -19421,7 +19421,7 @@ models:
     <li><b>AI Assistant</b> — Generate columns, metrics, descriptions, RLS, CLS, and more using natural language</li>
     <li><b>Fix with AI</b> — When a save fails, an error banner offers AI-powered repair of common issues (empty arrays, casing, structural problems)</li>
     <li><b>Smart Insert</b> — AI-generated content is merged intelligently into the correct element</li>
-    <li><b>Converters</b> — Import from dbt, Snowflake Cortex Analyst, LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, and <b>Omni Analytics</b></li>
+    <li><b>Converters</b> — Import from dbt, Snowflake Cortex Analyst, LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, Omni Analytics, Qlik, and <b>Oracle Analytics Cloud</b></li>
     <li><b>Bulk Upload</b> — Create multiple elements from warehouse tables at once</li>
 </ul>
 
@@ -20104,7 +20104,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
 
         function switchHelpTab(tab) {
             document.querySelectorAll('#helpTabs .help-tab').forEach((t, i) => {
-                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'qlik', 'ai', 'api', 'mcp'];
+                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'qlik', 'oac', 'ai', 'api', 'mcp'];
                 t.classList.toggle('active', tabs[i] === tab);
             });
             document.getElementById('helpContent').innerHTML = HELP_CONTENT[tab] || '';
@@ -20898,6 +20898,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
                 <button class="help-tab" onclick="switchHelpTab('contract')">📝 Atlan</button>
                 <button class="help-tab" onclick="switchHelpTab('omni')">🌐 Omni</button>
                 <button class="help-tab" onclick="switchHelpTab('qlik')">🔮 Qlik</button>
+                <button class="help-tab" onclick="switchHelpTab('oac')">☁️ Oracle</button>
                 <button class="help-tab" onclick="switchHelpTab('ai')">🤖 AI Assistant</button>
                 <button class="help-tab" onclick="switchHelpTab('api')">⚙️ API Notes</button>
                 <button class="help-tab" onclick="switchHelpTab('mcp')">🔌 MCP Server</button>
