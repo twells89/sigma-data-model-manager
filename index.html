@@ -7075,41 +7075,69 @@ ELEMENT TYPES
   "kind": "table",
   "source": {
     "kind": "join",
+    "name": "Orders",        // REQUIRED when adding columns — drives formula prefix [Orders/...]
     "joins": [
       {
-        "left":  { "elementId": "leftElemId",  "kind": "table" },
-        "right": { "elementId": "rightElemId", "kind": "table" },
+        "left":  { "kind": "warehouse-table", "connectionId": "uuid", "path": ["DB", "S", "ORDERS"] },
+        "right": { "kind": "warehouse-table", "connectionId": "uuid", "path": ["DB", "S", "CUSTOMERS"] },
         "columns": [
-          { "left": "[Origin Airport]", "right": "[Iata Code]" }
+          { "left": "[CustomerId]", "right": "[Id]" }  // join keys: bare [ColName], NO prefix, case-sensitive
         ],
-        "joinType": "inner"
+        "joinType": "left-outer",
+        "name": "Customers"  // REQUIRED when adding columns from this source — drives [Customers/...]
       }
-    ],
-    "primarySource": { "elementId": "leftElemId", "kind": "table" }
+    ]
   },
-  "columns": [...],
+  "columns": [
+    { "id": "c1", "formula": "[Orders/OrderId]",   "name": "Order ID" },
+    { "id": "c2", "formula": "[Orders/Amount]",    "name": "Amount" },
+    { "id": "c3", "formula": "[Customers/Name]",   "name": "Customer Name" }
+  ],
   "order": [...]
 }
-Join columns use short random IDs and formulas like "[FLIGHTS/Year]" (TABLE_NAME/Display Name).
+CRITICAL: source.name sets the formula prefix for head/primary source columns.
+          joins[N].name sets the formula prefix for each right-side source's columns.
+          Without these name fields, column formulas fail to resolve.
+          Left/right sources can be: warehouse-table, table (elementId ref), or data-model.
 
-### 4. Union element
+### 4. Union element (UNION ALL of multiple sources)
 {
   "id": "elemId",
   "kind": "table",
   "source": {
     "kind": "union",
     "sources": [
-      { "connectionId": "uuid", "kind": "warehouse-table", "path": [...] },
-      { "elementId": "otherElemId", "kind": "table" }
+      { "kind": "warehouse-table", "connectionId": "uuid", "path": ["DB", "S", "US_SALES"] },
+      { "kind": "warehouse-table", "connectionId": "uuid", "path": ["DB", "S", "EU_SALES"] }
     ],
     "matches": [
-      { "outputColumnName": "State", "sourceColumns": ["[State]", "[State]"] }
+      { "outputColumnName": "OrderId", "sourceColumns": ["OrderId", "OrderId"] },
+      { "outputColumnName": "Amount",  "sourceColumns": ["Amount", "SaleAmount"] },
+      { "outputColumnName": "Region",  "sourceColumns": ["Region", null] }  // null = missing in that source
     ]
   },
   "columns": [...],
   "order": [...]
 }
-Union columns use short random IDs and formulas like "[Union of 2 Sources/State]".
+Union columns use NO prefix: formula "[OrderId]", NOT "[TABLE/OrderId]".
+sourceColumns length must equal sources length. All sources must share the same connection.
+
+### 5. Data model reference element (reference elements from another published data model)
+{
+  "id": "elemId",
+  "kind": "table",
+  "source": {
+    "kind": "data-model",
+    "dataModelId": "uuid-of-other-data-model",
+    "elementId": "elementIdWithinThatModel",
+    "groupingId": "optionalGroupingLevel"  // optional — reference a specific grouping level
+  },
+  "columns": [...],
+  "order": [...]
+}
+Columns use [ElementName/ColumnName] where ElementName is the "name" field of the referenced element.
+Use GET /v2/dataModels/{id}/spec to inspect an existing model for its element IDs.
+This is how cascading/layered data models reference each other — equivalent to LookML model refinements.
 
 ### 5. Control element
 {
@@ -7361,15 +7389,22 @@ use an admin bypass column so org admins can see all data. Mark all RLS columns 
 The exclude-filter on the rollup column is what actually restricts rows.
 
 ═══════════════════════════════════════════════════
-FORMULA REFERENCE RULES
+FORMULA REFERENCE RULES (prefix depends on source type)
 ═══════════════════════════════════════════════════
-- Warehouse columns in element formulas: [TABLE_NAME/Display Name]  (TABLE_NAME = last segment of path)
-- Calculated column formulas:            [Display Name]              (NO table prefix)
-- Metric formulas:                       [Display Name]              (NO table prefix)
-- Custom SQL columns:                    [Custom SQL/Column Alias]  (Title Case, NOT ALL_CAPS)
-- Join output columns:                   [TABLE_NAME/Display Name]
-- Union output columns:                  [Union of 2 Sources/Column Name]
-- NEVER use dot notation like [table.col] — always slash [TABLE/Col]
+Source type determines the formula prefix for columns in that element:
+
+  warehouse-table source: [LastPathSegment/ColName]    — last segment of path[], e.g. path ["DB","S","ORDERS"] → [ORDERS/OrderId]
+  sql source:             [ElementNameField/ColName]   — the table element's own "name" field
+  table source (ref):     [ReferencedElement.name/ColName]
+  data-model source (ref):[ReferencedElement.name/ColName]
+  join source:            [JoinSource.name/ColName]    — source.name for head/primary, joins[N].name for each right source
+  union source:           [ColName]                    — NO prefix; use outputColumnName from matches[]
+  transpose source:       [ColName]                    — NO prefix
+
+Calculated column formulas: [Display Name]  — local columns only, NO prefix
+Metric formulas:            [Display Name]  — use SOURCE column names (warehouse names), NOT spec id values
+NEVER use dot notation like [table.col] — always slash [TABLE/Col]
+Element IDs must be unique across ALL pages in the model (not just within one page)
 
 ═══════════════════════════════════════════════════
 SIGMA FORMULA FUNCTION REFERENCE
@@ -10830,6 +10865,7 @@ relationships:
         }
 
         function runDbtConversion() {
+            _usedIds.clear();
             const yamlText = document.getElementById('dbtYamlInput').value.trim();
             let database = document.getElementById('dbtDatabase').value.trim();
             let schema   = document.getElementById('dbtSchema').value.trim();
@@ -16830,6 +16866,7 @@ ${cleanedSql}`;
             const btn = document.getElementById('tableauConvertBtn');
             btn.disabled = true; btn.textContent = '⏳ Converting…';
 
+            _usedIds.clear();
             try {
                 const idx = parseInt(document.getElementById('tableauDatasourceSelect').value) || 0;
                 const ds  = _tableauParsed.datasources[idx];
@@ -17628,6 +17665,7 @@ ${cleanedSql}`;
             const btn = document.getElementById('pbiConvertBtn');
             btn.disabled = true; btn.textContent = '⏳ Converting…';
 
+            _usedIds.clear();
             try {
                 const model = _pbiModel.model || _pbiModel;
                 const connectionId = document.getElementById('pbiConnectionId').value.trim() || '<CONNECTION_ID>';
@@ -20160,7 +20198,24 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <li><code>convert_omni_to_sigma</code> — Omni Analytics .view.yaml + .model.yaml → Sigma JSON</li>
     <li><code>convert_sql_to_sigma_formula</code> — SQL expression → Sigma formula</li>
     <li><code>convert_tableau_formula_to_sigma</code> — Tableau formula → Sigma formula</li>
+    <li><code>parse_lookml</code> — Parse a LookML file and return its structured representation</li>
+    <li><code>diagnose_sigma_save_error</code> — Identify which SQL element caused a Sigma save error (e.g. "syntax error line 49 at position 24")</li>
     <li><code>get_sigma_data_model_schema</code> — Sigma data model JSON schema reference</li>
+    <li><code>format_sigma_display_name</code> — Convert SNAKE_CASE identifier to Sigma Title Case display name</li>
+</ul>
+
+<h3>Data Model Spec Resources</h3>
+<p>The MCP also exposes the complete Sigma data model spec as readable resources. AI agents can read these on demand for authoritative schema details on any component:</p>
+<ul style="font-size:12px;color:var(--text-secondary);">
+    <li><code>sigma://data-model-spec/data-model</code> — Top-level structure, ID rules, cross-reference rules</li>
+    <li><code>sigma://data-model-spec/column</code> — Column formulas, prefix rules per source type, formula syntax</li>
+    <li><code>sigma://data-model-spec/metric</code> — Metric formulas (including source column name rules)</li>
+    <li><code>sigma://data-model-spec/source</code> — All 7 source types overview</li>
+    <li><code>sigma://data-model-spec/join-source</code> — Join source with name field requirements</li>
+    <li><code>sigma://data-model-spec/union-source</code> — Union source (UNION ALL)</li>
+    <li><code>sigma://data-model-spec/transpose-source</code> — Transpose source (PIVOT/UNPIVOT)</li>
+    <li><code>sigma://data-model-spec/table</code>, <code>/element</code>, <code>/page</code> — Table and element structure</li>
+    <li><code>sigma://data-model-spec/relationship</code>, <code>/filter</code>, <code>/folder</code>, <code>/grouping</code>, <code>/control</code> — Supporting types</li>
 </ul>
 
 <h3>Client Setup</h3>
