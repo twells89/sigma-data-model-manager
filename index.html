@@ -2940,21 +2940,6 @@ How it works:
 
                     <div class="dbt-badge-row" id="lookOutputStats"></div>
 
-                    <!-- Diagnose Save Error -->
-                    <details id="lookDiagSection" style="margin-top:8px;">
-                        <summary style="cursor:pointer;font-size:12px;color:#94a3b8;user-select:none;padding:2px 0;">
-                            🔎 Diagnose Sigma Save Error
-                        </summary>
-                        <div style="margin-top:8px;">
-                            <textarea id="lookDiagInput" style="width:100%;height:64px;font-size:11px;font-family:var(--font-mono,monospace);background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:6px;resize:vertical;box-sizing:border-box;"
-                                placeholder='Paste the Sigma error message here, e.g.: "syntax error line 49 at position 24 unexpected …"'></textarea>
-                            <button class="btn btn-secondary btn-small" style="margin-top:4px;width:100%;" onclick="diagnoseLookSqlError()">
-                                🔎 Find Culprit Element
-                            </button>
-                            <div id="lookDiagResult" style="margin-top:8px;font-size:12px;line-height:1.6;color:#e2e8f0;"></div>
-                        </div>
-                    </details>
-
                     <div class="dbt-convert-row">
                         <button class="btn btn-success" style="flex: 1;" onclick="loadAndSaveLookModel()" id="lookSaveBtn" disabled>
                             💾 Load & Save to Sigma
@@ -7075,69 +7060,41 @@ ELEMENT TYPES
   "kind": "table",
   "source": {
     "kind": "join",
-    "name": "Orders",        // REQUIRED when adding columns — drives formula prefix [Orders/...]
     "joins": [
       {
-        "left":  { "kind": "warehouse-table", "connectionId": "uuid", "path": ["DB", "S", "ORDERS"] },
-        "right": { "kind": "warehouse-table", "connectionId": "uuid", "path": ["DB", "S", "CUSTOMERS"] },
+        "left":  { "elementId": "leftElemId",  "kind": "table" },
+        "right": { "elementId": "rightElemId", "kind": "table" },
         "columns": [
-          { "left": "[CustomerId]", "right": "[Id]" }  // join keys: bare [ColName], NO prefix, case-sensitive
+          { "left": "[Origin Airport]", "right": "[Iata Code]" }
         ],
-        "joinType": "left-outer",
-        "name": "Customers"  // REQUIRED when adding columns from this source — drives [Customers/...]
+        "joinType": "inner"
       }
-    ]
+    ],
+    "primarySource": { "elementId": "leftElemId", "kind": "table" }
   },
-  "columns": [
-    { "id": "c1", "formula": "[Orders/OrderId]",   "name": "Order ID" },
-    { "id": "c2", "formula": "[Orders/Amount]",    "name": "Amount" },
-    { "id": "c3", "formula": "[Customers/Name]",   "name": "Customer Name" }
-  ],
+  "columns": [...],
   "order": [...]
 }
-CRITICAL: source.name sets the formula prefix for head/primary source columns.
-          joins[N].name sets the formula prefix for each right-side source's columns.
-          Without these name fields, column formulas fail to resolve.
-          Left/right sources can be: warehouse-table, table (elementId ref), or data-model.
+Join columns use short random IDs and formulas like "[FLIGHTS/Year]" (TABLE_NAME/Display Name).
 
-### 4. Union element (UNION ALL of multiple sources)
+### 4. Union element
 {
   "id": "elemId",
   "kind": "table",
   "source": {
     "kind": "union",
     "sources": [
-      { "kind": "warehouse-table", "connectionId": "uuid", "path": ["DB", "S", "US_SALES"] },
-      { "kind": "warehouse-table", "connectionId": "uuid", "path": ["DB", "S", "EU_SALES"] }
+      { "connectionId": "uuid", "kind": "warehouse-table", "path": [...] },
+      { "elementId": "otherElemId", "kind": "table" }
     ],
     "matches": [
-      { "outputColumnName": "OrderId", "sourceColumns": ["OrderId", "OrderId"] },
-      { "outputColumnName": "Amount",  "sourceColumns": ["Amount", "SaleAmount"] },
-      { "outputColumnName": "Region",  "sourceColumns": ["Region", null] }  // null = missing in that source
+      { "outputColumnName": "State", "sourceColumns": ["[State]", "[State]"] }
     ]
   },
   "columns": [...],
   "order": [...]
 }
-Union columns use NO prefix: formula "[OrderId]", NOT "[TABLE/OrderId]".
-sourceColumns length must equal sources length. All sources must share the same connection.
-
-### 5. Data model reference element (reference elements from another published data model)
-{
-  "id": "elemId",
-  "kind": "table",
-  "source": {
-    "kind": "data-model",
-    "dataModelId": "uuid-of-other-data-model",
-    "elementId": "elementIdWithinThatModel",
-    "groupingId": "optionalGroupingLevel"  // optional — reference a specific grouping level
-  },
-  "columns": [...],
-  "order": [...]
-}
-Columns use [ElementName/ColumnName] where ElementName is the "name" field of the referenced element.
-Use GET /v2/dataModels/{id}/spec to inspect an existing model for its element IDs.
-This is how cascading/layered data models reference each other — equivalent to LookML model refinements.
+Union columns use short random IDs and formulas like "[Union of 2 Sources/State]".
 
 ### 5. Control element
 {
@@ -7389,22 +7346,15 @@ use an admin bypass column so org admins can see all data. Mark all RLS columns 
 The exclude-filter on the rollup column is what actually restricts rows.
 
 ═══════════════════════════════════════════════════
-FORMULA REFERENCE RULES (prefix depends on source type)
+FORMULA REFERENCE RULES
 ═══════════════════════════════════════════════════
-Source type determines the formula prefix for columns in that element:
-
-  warehouse-table source: [LastPathSegment/ColName]    — last segment of path[], e.g. path ["DB","S","ORDERS"] → [ORDERS/OrderId]
-  sql source:             [ElementNameField/ColName]   — the table element's own "name" field
-  table source (ref):     [ReferencedElement.name/ColName]
-  data-model source (ref):[ReferencedElement.name/ColName]
-  join source:            [JoinSource.name/ColName]    — source.name for head/primary, joins[N].name for each right source
-  union source:           [ColName]                    — NO prefix; use outputColumnName from matches[]
-  transpose source:       [ColName]                    — NO prefix
-
-Calculated column formulas: [Display Name]  — local columns only, NO prefix
-Metric formulas:            [Display Name]  — use SOURCE column names (warehouse names), NOT spec id values
-NEVER use dot notation like [table.col] — always slash [TABLE/Col]
-Element IDs must be unique across ALL pages in the model (not just within one page)
+- Warehouse columns in element formulas: [TABLE_NAME/Display Name]  (TABLE_NAME = last segment of path)
+- Calculated column formulas:            [Display Name]              (NO table prefix)
+- Metric formulas:                       [Display Name]              (NO table prefix)
+- Custom SQL columns:                    [Custom SQL/Column Alias]  (Title Case, NOT ALL_CAPS)
+- Join output columns:                   [TABLE_NAME/Display Name]
+- Union output columns:                  [Union of 2 Sources/Column Name]
+- NEVER use dot notation like [table.col] — always slash [TABLE/Col]
 
 ═══════════════════════════════════════════════════
 SIGMA FORMULA FUNCTION REFERENCE
@@ -10865,7 +10815,6 @@ relationships:
         }
 
         function runDbtConversion() {
-            _usedIds.clear();
             const yamlText = document.getElementById('dbtYamlInput').value.trim();
             let database = document.getElementById('dbtDatabase').value.trim();
             let schema   = document.getElementById('dbtSchema').value.trim();
@@ -14900,10 +14849,14 @@ ${cleanedSql}`;
 
             const elementMap  = {};  // alias   → { element, elementId, colIdMap }
             const physViewMap = {};  // viewName → { element, elementId, colIdMap }
-            const pdtElementsMap = new Map(); // refViewName → result for PDT sub-elements
+            // NOTE (CTE mode): pdtElementsMap is kept for the "Prepend PDT sub-elements" loop below,
+            // but lookConvertView no longer populates it — PDTs are inlined as CTEs instead.
+            // When sigma_element() support lands in the /spec API, restore the original approach:
+            // pass pdtElementsMap to lookConvertView and un-comment the prepend loop.
+            const pdtElementsMap = new Map(); // unused in CTE mode; kept for revert reference
 
             // Base view — all columns included (FK cols present, matching Snow SV structure)
-            const baseResult = await lookConvertView(baseViewName, baseAlias, connectionId, warnings, pdtElementsMap);
+            const baseResult = await lookConvertView(baseViewName, baseAlias, connectionId, warnings);
             elementMap[baseAlias]    = baseResult;
             physViewMap[baseViewName] = baseResult;
             if (baseAlias !== baseViewName) elementMap[baseViewName] = baseResult;
@@ -14911,7 +14864,7 @@ ${cleanedSql}`;
             // Join views — create at most ONE element per physical viewName
             for (const j of joinDefs) {
                 if (!physViewMap[j.viewName]) {
-                    const res = await lookConvertView(j.viewName, j.viewName, connectionId, warnings, pdtElementsMap);
+                    const res = await lookConvertView(j.viewName, j.viewName, connectionId, warnings);
                     physViewMap[j.viewName] = res;
                 }
                 // Register alias → same physical element
@@ -14968,14 +14921,16 @@ ${cleanedSql}`;
                 return true;
             }).map(r => r.element);
 
-            // Prepend PDT sub-elements (referenced via sigma_element() in derived table SQL).
-            // These must come before the elements that reference them.
-            for (const [, pdtResult] of pdtElementsMap) {
-                if (!seenIds.has(pdtResult.elementId)) {
-                    seenIds.add(pdtResult.elementId);
-                    allElements.unshift(pdtResult.element);
-                }
-            }
+            // TODO: REVERT — Prepend PDT sub-elements (referenced via sigma_element() in derived table SQL).
+            // In CTE mode pdtElementsMap is always empty so this loop is a no-op.
+            // When sigma_element() is supported, restore passing pdtElementsMap to lookConvertView
+            // and un-comment this block (removing the no-op note).
+            // for (const [, pdtResult] of pdtElementsMap) {
+            //     if (!seenIds.has(pdtResult.elementId)) {
+            //         seenIds.add(pdtResult.elementId);
+            //         allElements.unshift(pdtResult.element);
+            //     }
+            // }
 
             // Dimension elements (no relationships) FIRST, fact element (with relationships) LAST.
             // The Sigma spec API must encounter target element IDs before the relationship
@@ -15307,7 +15262,9 @@ ${cleanedSql}`;
 
             // Shared view registry — same physical view → same element across all explores
             const globalPhysViewMap = {};  // viewName → { element, elementId, colIdMap }
-            const globalPdtElementsMap = new Map(); // refViewName → result for PDT sub-elements
+            // NOTE (CTE mode): globalPdtElementsMap is kept for the "Prepend PDT sub-elements" loop below,
+            // but lookConvertView no longer populates it — PDTs are inlined as CTEs instead.
+            const globalPdtElementsMap = new Map(); // unused in CTE mode; kept for revert reference
 
             for (const exploreName of allExploreNames) {
                 const explore = lookProject.explores[exploreName];
@@ -15348,13 +15305,13 @@ ${cleanedSql}`;
 
                 // Ensure base element exists (create once, reuse across explores)
                 if (!globalPhysViewMap[baseViewName]) {
-                    globalPhysViewMap[baseViewName] = await lookConvertView(baseViewName, baseViewName, connectionId, warnings, globalPdtElementsMap);
+                    globalPhysViewMap[baseViewName] = await lookConvertView(baseViewName, baseViewName, connectionId, warnings);
                 }
 
                 // Ensure each join's physical view element exists
                 for (const j of joinDefs) {
                     if (!globalPhysViewMap[j.viewName]) {
-                        globalPhysViewMap[j.viewName] = await lookConvertView(j.viewName, j.viewName, connectionId, warnings, globalPdtElementsMap);
+                        globalPhysViewMap[j.viewName] = await lookConvertView(j.viewName, j.viewName, connectionId, warnings);
                     }
                 }
 
@@ -15409,14 +15366,16 @@ ${cleanedSql}`;
                 return true;
             }).map(r => r.element);
 
-            // Prepend PDT sub-elements (referenced via sigma_element() in derived table SQL).
-            // These must come before the elements that reference them.
-            for (const [, pdtResult] of globalPdtElementsMap) {
-                if (!seenIds.has(pdtResult.elementId)) {
-                    seenIds.add(pdtResult.elementId);
-                    allElements.unshift(pdtResult.element);
-                }
-            }
+            // TODO: REVERT — Prepend PDT sub-elements (referenced via sigma_element() in derived table SQL).
+            // In CTE mode globalPdtElementsMap is always empty so this loop is a no-op.
+            // When sigma_element() is supported, restore passing globalPdtElementsMap to lookConvertView
+            // and un-comment this block (removing the no-op note).
+            // for (const [, pdtResult] of globalPdtElementsMap) {
+            //     if (!seenIds.has(pdtResult.elementId)) {
+            //         seenIds.add(pdtResult.elementId);
+            //         allElements.unshift(pdtResult.element);
+            //     }
+            // }
 
             // Sort: elements without relationships (dims) first, elements with relationships (facts) last
             // Sigma spec API requires target element IDs to appear before their relationship sources
@@ -15481,7 +15440,16 @@ ${cleanedSql}`;
         }
 
         // ── Convert a single LookML view to a Sigma element ──────────────────
-        async function lookConvertView(viewName, displayAlias, connectionId, warnings, pdtElementsMap = null) {
+        // cteMap: shared Map used across recursive calls to collect PDT CTEs (depth-first = topo order).
+        //   null  → legacy sigma_element() mode (currently unused; see TODO in PDT block below)
+        //   Map() → CTE-inlining mode (current workaround until /spec API supports sigma_element())
+        // isTopLevel: true for direct callers (explore loop); false for recursive PDT resolution.
+        //   Only top-level calls prepend the WITH clause to rawSql.
+        async function lookConvertView(viewName, displayAlias, connectionId, warnings, cteMap = null, isTopLevel = true) {
+            // In CTE mode, create a fresh map at the top level so each element gets its own CTE chain.
+            if (isTopLevel && cteMap === null) {
+                cteMap = new Map();
+            }
             const view = lookProject.views[viewName];
             if (!view) {
                 warnings.push(`⚠ View "${viewName}" not found in uploaded files — element will have no columns`);
@@ -15550,7 +15518,7 @@ ${cleanedSql}`;
                 //      (Sigma wraps those as TO_VARCHAR/TO_NUMBER which are valid).
                 const castConversions = [];
                 rawSql = rawSql.replace(
-                    /(?<!['"\\:])([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*::\s*([A-Za-z_]\w*)/g,
+                    /(?<!['"\\])([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*::\s*([A-Za-z_]\w*)/g,
                     (match, expr, typ) => {
                         const typU = typ.toUpperCase();
                         let replacement;
@@ -15582,13 +15550,41 @@ ${cleanedSql}`;
                             warnings.push(`⚠ "${viewName}" SQL: referenced view "${refViewName}" not found in uploaded files — placeholder left in SQL.`);
                             replacementMap.set(refViewName, `/* TODO: table for "${refViewName}" — upload that view file to auto-resolve */`);
                         } else if (refView.derived_table !== undefined) {
-                            const pdtElementName = sigmaDisplayName(refViewName);
-                            if (pdtElementsMap !== null && !pdtElementsMap.has(refViewName)) {
-                                const pdtResult = await lookConvertView(refViewName, refViewName, connectionId, warnings, pdtElementsMap);
-                                pdtElementsMap.set(refViewName, pdtResult);
+                            // ── CTE inlining (temporary workaround) ─────────────────────────────────
+                            // TODO: REVERT TO sigma_element() WHEN THE /spec API SUPPORTS IT.
+                            //
+                            // To revert:
+                            //   1. Replace this entire block with the original sigma_element() code below.
+                            //   2. Change the lookConvertView signature back to:
+                            //        async function lookConvertView(viewName, displayAlias, connectionId, warnings, pdtElementsMap = null)
+                            //      (remove the cteMap/isTopLevel params and the "create fresh map" block at the top)
+                            //   3. Remove the "Prepend CTEs" block further below in this function.
+                            //   4. In the single-explore section (~line 14852), restore:
+                            //        const pdtElementsMap = new Map();
+                            //        await lookConvertView(..., pdtElementsMap)  [both call sites]
+                            //      and un-comment the "Prepend PDT sub-elements" loop.
+                            //   5. In the batch section (~line 15259), restore the same for globalPdtElementsMap.
+                            //
+                            // Original sigma_element() code:
+                            //   const pdtElementName = sigmaDisplayName(refViewName);
+                            //   if (pdtElementsMap !== null && !pdtElementsMap.has(refViewName)) {
+                            //       const pdtResult = await lookConvertView(refViewName, refViewName, connectionId, warnings, pdtElementsMap);
+                            //       pdtElementsMap.set(refViewName, pdtResult);
+                            //   }
+                            //   warnings.push(`ℹ "${viewName}" SQL: "${refViewName}" is a PDT — converted to a separate Custom SQL element, referenced via sigma_element('${pdtElementName}').`);
+                            //   replacementMap.set(refViewName, `sigma_element('${pdtElementName}')`);
+                            //
+                            // ── CTE inlining implementation ──────────────────────────────────────────
+                            if (cteMap !== null && !cteMap.has(refViewName)) {
+                                // Recurse with isTopLevel=false so the PDT's own SQL is processed
+                                // (resolving its own PDT deps into cteMap) but CTEs are NOT prepended
+                                // to the PDT's statement — they'll all be flattened into the top-level WITH.
+                                const pdtResult = await lookConvertView(refViewName, refViewName, connectionId, warnings, cteMap, false);
+                                const pdtSql = pdtResult.element?.source?.statement ?? '/* no SQL */';
+                                cteMap.set(refViewName, pdtSql);
                             }
-                            warnings.push(`ℹ "${viewName}" SQL: "${refViewName}" is a PDT — converted to a separate Custom SQL element, referenced via sigma_element('${pdtElementName}').`);
-                            replacementMap.set(refViewName, `sigma_element('${pdtElementName}')`);
+                            warnings.push(`ℹ "${viewName}" SQL: "${refViewName}" is a PDT — inlined as CTE "${refViewName}" (temporary workaround; will use sigma_element() when /spec API supports it).`);
+                            replacementMap.set(refViewName, `"${refViewName}"`);
                         } else {
                             let path = (refView.sql_table_name || '').trim().replace(/;;\s*$/, '').trim();
                             // Recursively resolve if the referenced view's sql_table_name is itself a reference
@@ -15604,6 +15600,19 @@ ${cleanedSql}`;
                     rawSql = rawSql.replace(/\$\{(\w+)\.SQL_TABLE_NAME\}/gi, (match, refViewName) =>
                         replacementMap.get(refViewName) ?? match
                     );
+                }
+
+                // ── Prepend CTE definitions for inlined PDTs (top-level only) ────────────
+                // cteMap entries are in Map insertion order, which is depth-first / topological
+                // order (leaf PDTs inserted before the parents that reference them).
+                // isTopLevel=false calls skip this so CTEs aren't nested inside CTE bodies.
+                //
+                // TODO: REVERT — remove this block when reverting to sigma_element().
+                if (isTopLevel && cteMap !== null && cteMap.size > 0) {
+                    const cteClause = [...cteMap.entries()]
+                        .map(([name, sql]) => `"${name}" AS (\n${sql}\n)`)
+                        .join(',\n');
+                    rawSql = `WITH\n${cteClause}\n\n${rawSql}`;
                 }
 
                 tableName = 'Custom SQL'; // signals isCustomSql → column formulas use bare [COL] refs
@@ -16866,7 +16875,6 @@ ${cleanedSql}`;
             const btn = document.getElementById('tableauConvertBtn');
             btn.disabled = true; btn.textContent = '⏳ Converting…';
 
-            _usedIds.clear();
             try {
                 const idx = parseInt(document.getElementById('tableauDatasourceSelect').value) || 0;
                 const ds  = _tableauParsed.datasources[idx];
@@ -17665,7 +17673,6 @@ ${cleanedSql}`;
             const btn = document.getElementById('pbiConvertBtn');
             btn.disabled = true; btn.textContent = '⏳ Converting…';
 
-            _usedIds.clear();
             try {
                 const model = _pbiModel.model || _pbiModel;
                 const connectionId = document.getElementById('pbiConnectionId').value.trim() || '<CONNECTION_ID>';
@@ -18084,85 +18091,6 @@ ${cleanedSql}`;
             enableEditorModeToggle();
             switchEditorTab('json');
             showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
-        }
-
-        function diagnoseLookSqlError() {
-            const errText = document.getElementById('lookDiagInput').value.trim();
-            const modelText = document.getElementById('lookJsonOutput').value.trim();
-            const resultEl = document.getElementById('lookDiagResult');
-
-            if (!errText) { resultEl.innerHTML = '<span style="color:#f87171">Paste a Sigma error message above first.</span>'; return; }
-            if (!modelText) { resultEl.innerHTML = '<span style="color:#f87171">Convert a LookML explore first so the model is populated.</span>'; return; }
-
-            // Extract line/position from error  e.g. "syntax error line 49 at position 24 unexpected '('"
-            const lineMatch = errText.match(/syntax error line (\d+) at position (\d+)/i);
-            if (!lineMatch) {
-                resultEl.innerHTML = '<span style="color:#f87171">Could not find "syntax error line N at position M" in the message.</span>';
-                return;
-            }
-            const targetLine = parseInt(lineMatch[1], 10);
-            const targetPos  = parseInt(lineMatch[2], 10);
-            const errorToken = (errText.match(/unexpected '([^']+)'/) || [])[1] || '';
-
-            let model;
-            try { model = JSON.parse(modelText); }
-            catch (e) { resultEl.innerHTML = '<span style="color:#f87171">Could not parse model JSON.</span>'; return; }
-
-            // Gather all sql-kind elements across all pages
-            const sqlElements = [];
-            for (const page of (model.pages || [])) {
-                for (const el of (page.elements || [])) {
-                    if (el.source && el.source.kind === 'sql' && el.source.statement) {
-                        sqlElements.push({ name: el.name || '(unnamed)', sql: el.source.statement });
-                    }
-                }
-            }
-
-            if (!sqlElements.length) {
-                resultEl.innerHTML = '<span style="color:#f87171">No SQL elements found in the model (no derived-table views?).</span>';
-                return;
-            }
-
-            // Find candidates: elements whose SQL has ≥ targetLine lines
-            const candidates = [];
-            for (const el of sqlElements) {
-                const lines = el.sql.split('\n');
-                if (lines.length >= targetLine) {
-                    const problemLine = lines[targetLine - 1];
-                    const charAtPos   = targetPos <= problemLine.length ? problemLine[targetPos - 1] : '';
-                    const tokenMatch  = errorToken && (charAtPos === errorToken || problemLine.includes(errorToken));
-                    candidates.push({ name: el.name, line: problemLine, charAtPos, tokenMatch, totalLines: lines.length });
-                }
-            }
-
-            if (!candidates.length) {
-                resultEl.innerHTML =
-                    `<span style="color:#fbbf24">No element has ≥ ${targetLine} lines of SQL.<br>` +
-                    `Longest element has ${Math.max(...sqlElements.map(e => e.sql.split('\n').length))} lines.</span>`;
-                return;
-            }
-
-            // Sort: token-matching candidates first
-            candidates.sort((a, b) => (b.tokenMatch ? 1 : 0) - (a.tokenMatch ? 1 : 0));
-
-            let html = `<strong style="color:#94a3b8">Line ${targetLine}, position ${targetPos}` +
-                       (errorToken ? ` — unexpected '<code>${escapeHtml(errorToken)}</code>'` : '') + `</strong><br>` +
-                       `<span style="color:#64748b;font-size:11px;">${candidates.length} element(s) with ≥${targetLine} lines:</span><br><br>`;
-
-            for (const c of candidates) {
-                const accent = c.tokenMatch ? '#f59e0b' : '#334155';
-                const badge  = c.tokenMatch ? ' <span style="color:#f59e0b">⚠ likely culprit</span>' : '';
-                html += `<div style="margin-bottom:8px;padding:7px 10px;background:#0f172a;border-radius:4px;border-left:3px solid ${accent}">`;
-                html += `<strong>${escapeHtml(c.name)}</strong>${badge}<br>`;
-                html += `<span style="font-size:11px;color:#64748b">line ${targetLine} (of ${c.totalLines}): </span>`;
-                html += `<code style="font-size:11px;color:#e2e8f0;word-break:break-all">${escapeHtml(c.line.trim())}</code>`;
-                if (c.charAtPos) {
-                    html += `<br><span style="font-size:11px;color:#64748b">char at pos ${targetPos}: </span><code style="font-size:11px;color:#fbbf24">${escapeHtml(c.charAtPos)}</code>`;
-                }
-                html += `</div>`;
-            }
-
-            resultEl.innerHTML = html;
         }
 
         async function loadAndSaveLookModel() {
@@ -19711,7 +19639,7 @@ models:
     <li><b>sql_table_name with Liquid</b> — If a view's <code>sql_table_name</code> uses Liquid to switch tables dynamically (e.g. by environment), the converter strips the Liquid and uses whatever static text remains. Verify the warehouse path after conversion.</li>
     <li><b>Unsupported SQL functions</b> — Dimension and measure <code>sql:</code> expressions containing Snowflake-specific functions without Sigma equivalents (<code>FLATTEN</code>, <code>LATERAL</code>, <code>QUALIFY</code>, <code>PIVOT</code>, <code>UNPIVOT</code>, <code>GENERATOR</code>, <code>TABLESAMPLE</code>, <code>OBJECT_CONSTRUCT</code>, <code>ARRAY_CONSTRUCT</code>) are automatically <b>skipped with a warning</b>. The column is omitted from the output — add it manually in the Sigma UI after saving.</li>
     <li><b>Derived tables without SQL</b> — If a <code>derived_table</code> block exists but contains no <code>sql:</code> statement, a Custom SQL element is still created with a blank SQL body and a warning is shown. Add the SQL manually in the JSON editor before saving to Sigma.</li>
-    <li><b>Snowflake cast shorthand (<code>::TYPE</code>) in derived table SQL</b> — Sigma rewrites both <code>col::DATE</code> and <code>CAST(col AS DATE)</code> as <code>TO_DATE(CAST(col AS DATE))</code> when saving, which Snowflake rejects because <code>TO_DATE</code> does not accept a DATE argument. The converter automatically rewrites <code>::DATE</code> to <code>TRY_TO_DATE(TO_VARCHAR(col))</code> and <code>::TIMESTAMP</code> to <code>TRY_TO_TIMESTAMP(TO_VARCHAR(col))</code> — functions Sigma does not touch. Other <code>::TYPE</code> casts become <code>CAST(col AS TYPE)</code>. A warning appears in the output panel listing each rewritten cast. <b>Note:</b> Snowflake semi-structured data path access using the colon notation (<code>col:path::TYPE</code>, e.g. <code>f.value:start_datetime::DATE</code>) is handled correctly — only the outermost standalone <code>col::TYPE</code> cast is rewritten; path-accessed values (preceded by <code>:</code>) are left as-is to avoid invalid SQL.</li>
+    <li><b>Snowflake cast shorthand (<code>::TYPE</code>) in derived table SQL</b> — Sigma rewrites both <code>col::DATE</code> and <code>CAST(col AS DATE)</code> as <code>TO_DATE(CAST(col AS DATE))</code> when saving, which Snowflake rejects because <code>TO_DATE</code> does not accept a DATE argument. The converter automatically rewrites <code>::DATE</code> to <code>TRY_TO_DATE(TO_VARCHAR(col))</code> and <code>::TIMESTAMP</code> to <code>TRY_TO_TIMESTAMP(TO_VARCHAR(col))</code> — functions Sigma does not touch. Other <code>::TYPE</code> casts become <code>CAST(col AS TYPE)</code>. A warning appears in the output panel listing each rewritten cast.</li>
     <li><b>Incremental PDT leading-comma CTEs</b> — Looker incremental PDT SQL bodies are designed to be appended to a trigger CTE, so they begin with <code>,cte_name AS (</code> rather than a full <code>WITH</code> statement. The converter automatically corrects this to <code>WITH cte_name AS (</code> so the SQL is valid standalone. A warning is shown in the output panel when this correction is applied.</li>
     <li><b>Trailing comma before SQL keywords in derived table SQL</b> — Some LookML derived tables leave a trailing comma at the end of a <code>SELECT</code> list (e.g. <code>expr AS col,\nFROM final</code>). This is tolerated by Looker's templating engine but is invalid standalone SQL that causes a Snowflake compilation error. The converter automatically strips these trailing commas before <code>FROM</code>, <code>WHERE</code>, <code>GROUP BY</code>, <code>ORDER BY</code>, <code>HAVING</code>, <code>LIMIT</code>, and set operators. A warning is shown when this correction is applied.</li>
 </ul>
@@ -20198,24 +20126,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <li><code>convert_omni_to_sigma</code> — Omni Analytics .view.yaml + .model.yaml → Sigma JSON</li>
     <li><code>convert_sql_to_sigma_formula</code> — SQL expression → Sigma formula</li>
     <li><code>convert_tableau_formula_to_sigma</code> — Tableau formula → Sigma formula</li>
-    <li><code>parse_lookml</code> — Parse a LookML file and return its structured representation</li>
-    <li><code>diagnose_sigma_save_error</code> — Identify which SQL element caused a Sigma save error (e.g. "syntax error line 49 at position 24")</li>
     <li><code>get_sigma_data_model_schema</code> — Sigma data model JSON schema reference</li>
-    <li><code>format_sigma_display_name</code> — Convert SNAKE_CASE identifier to Sigma Title Case display name</li>
-</ul>
-
-<h3>Data Model Spec Resources</h3>
-<p>The MCP also exposes the complete Sigma data model spec as readable resources. AI agents can read these on demand for authoritative schema details on any component:</p>
-<ul style="font-size:12px;color:var(--text-secondary);">
-    <li><code>sigma://data-model-spec/data-model</code> — Top-level structure, ID rules, cross-reference rules</li>
-    <li><code>sigma://data-model-spec/column</code> — Column formulas, prefix rules per source type, formula syntax</li>
-    <li><code>sigma://data-model-spec/metric</code> — Metric formulas (including source column name rules)</li>
-    <li><code>sigma://data-model-spec/source</code> — All 7 source types overview</li>
-    <li><code>sigma://data-model-spec/join-source</code> — Join source with name field requirements</li>
-    <li><code>sigma://data-model-spec/union-source</code> — Union source (UNION ALL)</li>
-    <li><code>sigma://data-model-spec/transpose-source</code> — Transpose source (PIVOT/UNPIVOT)</li>
-    <li><code>sigma://data-model-spec/table</code>, <code>/element</code>, <code>/page</code> — Table and element structure</li>
-    <li><code>sigma://data-model-spec/relationship</code>, <code>/filter</code>, <code>/folder</code>, <code>/grouping</code>, <code>/control</code> — Supporting types</li>
 </ul>
 
 <h3>Client Setup</h3>
