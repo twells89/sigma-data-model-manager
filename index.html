@@ -2964,10 +2964,10 @@ How it works:
                              ondragleave="this.classList.remove('drag-over')"
                              ondrop="handleTableauDrop(event)">
                             <div style="font-size: 28px; margin-bottom: 8px;">📊</div>
-                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop .twb, .twbx, .tds, or .tdsx file here</div>
-                            <div style="font-size: 11px; color: var(--text-muted);">.twb/.twbx = workbook · .tds/.tdsx = data source</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop .twb, .twbx, .tds, or .tdsx files here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">Multiple files supported — combined into one data model</div>
                         </div>
-                        <input type="file" id="tableauFileInput" accept=".twb,.twbx,.tds,.tdsx" style="display:none" onchange="handleTableauFileInput(event)">
+                        <input type="file" id="tableauFileInput" accept=".twb,.twbx,.tds,.tdsx" multiple style="display:none" onchange="handleTableauFileInput(event)">
 
                         <!-- Loaded file badge — shown after upload, styled like LookML file list -->
                         <div id="tableauFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
@@ -2980,12 +2980,21 @@ How it works:
                             <div id="tableauDatasourceInfo" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
                         </div>
 
-                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                        <div id="tableauConnectionSection" class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
                             <label style="font-size: 11px;">Connection</label>
                             <select id="tableauConnectionId" class="form-input" style="font-size: 12px;">
                                 <option value="">— Connect to Sigma to load —</option>
                             </select>
                         </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;font-weight:600;">
+                                <input type="checkbox" id="tableauMultiConn" onchange="onTableauMultiConnChange()" style="cursor:pointer;accent-color:var(--accent);">
+                                Tables span multiple connections
+                            </label>
+                            <div class="form-hint">Assign a different connection to each data source</div>
+                        </div>
+                        <div id="tableauMultiConnTable" style="display:none;background:var(--bg-tertiary);border-radius:6px;padding:6px;margin-top:-4px;"></div>
 
                         <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
                             <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
@@ -6345,6 +6354,8 @@ ${JSON.stringify(failedJson, null, 2)}`;
                     sel.value = connections[0].connectionId;
                 }
             });
+            // Refresh per-datasource connection pickers if multi-conn mode is active
+            if (document.getElementById('tableauMultiConn')?.checked) rebuildMultiConnTable();
         }
 
         // Check if a connection has Use Friendly Names enabled
@@ -16327,19 +16338,19 @@ ${cleanedSql}`;
         // ── Tableau Converter ─────────────────────────────────────────────
         // ═══════════════════════════════════════════════════════════════════
 
-        let _tableauParsed = null;
+        let _tableauParsed = { datasources: [], parameters: [] };
 
         function handleTableauFileInput(event) {
-            const file = event.target.files[0];
-            if (file) processTableauFile(file);
+            Array.from(event.target.files).forEach(f => processTableauFile(f));
             event.target.value = '';
         }
 
         function handleTableauDrop(event) {
             event.preventDefault();
             document.getElementById('tableauDropZone').classList.remove('drag-over');
-            const file = event.dataTransfer.files[0];
-            if (file) processTableauFile(file);
+            Array.from(event.dataTransfer.files)
+                .filter(f => /\.(twb|twbx|tds|tdsx)$/i.test(f.name))
+                .forEach(f => processTableauFile(f));
         }
 
         async function processTableauFile(file) {
@@ -16370,9 +16381,8 @@ ${cleanedSql}`;
             catch(e) { showToast('XML parse error: ' + e.message, 'error'); return; }
             if (doc.querySelector('parsererror')) { showToast('Malformed XML in file', 'error'); return; }
 
-            // Support both .twb (root=<workbook>) and .tds (root=<datasource>)
-            let allDs;
             const root = doc.documentElement.tagName.toLowerCase();
+            let allDs;
             if (root === 'workbook') {
                 allDs = Array.from(doc.querySelectorAll('workbook > datasources > datasource'));
             } else if (root === 'datasource') {
@@ -16380,18 +16390,19 @@ ${cleanedSql}`;
             } else {
                 showToast('Unrecognized XML root element: <' + root + '>', 'error'); return;
             }
-            const parameters = [];
-            const datasources = [];
 
+            let addedCount = 0;
             for (const ds of allDs) {
                 if (ds.getAttribute('hasconnection') === 'false' || ds.getAttribute('name') === 'Parameters') {
                     for (const col of ds.querySelectorAll(':scope > column')) {
-                        const colName = col.getAttribute('caption') || col.getAttribute('name') || '';
-                        const colType = col.getAttribute('datatype') || 'string';
-                        const domainType = col.getAttribute('param-domain-type') || 'all';
-                        const members = Array.from(col.querySelectorAll('member')).map(m => m.getAttribute('value')).filter(Boolean);
-                        const calcEl = col.querySelector('calculation');
-                        parameters.push({ name: colName.replace(/^\[|\]$/g,''), type: colType, domainType, members, defaultVal: calcEl ? calcEl.getAttribute('formula') : '' });
+                        const colName = (col.getAttribute('caption') || col.getAttribute('name') || '').replace(/^\[|\]$/g, '');
+                        if (colName && !_tableauParsed.parameters.some(p => p.name === colName)) {
+                            const colType = col.getAttribute('datatype') || 'string';
+                            const domainType = col.getAttribute('param-domain-type') || 'all';
+                            const members = Array.from(col.querySelectorAll('member')).map(m => m.getAttribute('value')).filter(Boolean);
+                            const calcEl = col.querySelector('calculation');
+                            _tableauParsed.parameters.push({ name: colName, type: colType, domainType, members, defaultVal: calcEl ? calcEl.getAttribute('formula') : '' });
+                        }
                     }
                     continue;
                 }
@@ -16400,42 +16411,106 @@ ${cleanedSql}`;
                 const connClass = connection ? (connection.getAttribute('class') || '') : '';
                 const dbname = connection ? (connection.getAttribute('dbname') || connection.getAttribute('database') || '') : '';
                 const schema = connection ? (connection.getAttribute('schema') || '') : '';
-                datasources.push({ name, element: ds, connection, connClass, dbname, schema });
+                _tableauParsed.datasources.push({ name, element: ds, connection, connClass, dbname, schema, filename });
+                addedCount++;
             }
 
-            _tableauParsed = { datasources, parameters, filename };
-            document.getElementById('tableauFileList').innerHTML = '';
-            document.getElementById('tableauInputStats').innerHTML = '';
+            rebuildTableauUI();
+            if (addedCount > 0) showToast('Loaded ' + addedCount + ' data source' + (addedCount !== 1 ? 's' : '') + ' from ' + filename, 'success');
+            else showToast('No data sources found in ' + filename, 'warning');
+        }
 
+        function clearTableauFiles() {
+            _tableauParsed = { datasources: [], parameters: [] };
+            rebuildTableauUI();
+            const out = document.getElementById('tableauJsonOutput');
+            if (out) out.value = '';
+            ['tableauCopyBtn','tableauLoadBtn','tableauSaveBtn'].forEach(id => {
+                const el = document.getElementById(id); if (el) el.disabled = true;
+            });
+        }
+
+        function rebuildTableauUI() {
+            const { datasources, parameters } = _tableauParsed;
+            const filenames = [...new Set(datasources.map(ds => ds.filename))];
+
+            // ── File badges ───────────────────────────────────────────────────
+            const fileList = document.getElementById('tableauFileList');
+            if (filenames.length === 0) {
+                fileList.innerHTML = '';
+            } else {
+                fileList.innerHTML = filenames.map(fn => {
+                    const ext = /\.twbx$/i.test(fn) ? 'TWBX' : /\.tdsx$/i.test(fn) ? 'TDSX' : /\.tds$/i.test(fn) ? 'TDS' : 'TWB';
+                    return `<div style="display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-tertiary);border-radius:6px;font-size:11px;flex-shrink:0;">
+                        <span>📊</span>
+                        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(fn)}">${escapeHtml(fn)}</span>
+                        <span style="font-size:10px;color:var(--text-muted);flex-shrink:0;">${ext}</span>
+                    </div>`;
+                }).join('') + `<div style="text-align:right;margin-top:2px;">
+                    <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:10px;padding:2px 6px;" onclick="clearTableauFiles()">✕ Clear all</button>
+                </div>`;
+            }
+
+            // ── Datasource dropdown ───────────────────────────────────────────
             const sel = document.getElementById('tableauDatasourceSelect');
-            sel.innerHTML = datasources.map((ds, i) =>
-                `<option value="${i}">${escapeHtml(ds.name)}${ds.connClass ? ' (' + ds.connClass + ')' : ''}</option>`
-            ).join('');
+            sel.innerHTML = datasources.map((ds, i) => {
+                const prefix = filenames.length > 1 ? '[' + ds.filename.replace(/\.[^.]+$/, '') + '] ' : '';
+                return `<option value="${i}">${escapeHtml(prefix + ds.name)}${ds.connClass ? ' (' + ds.connClass + ')' : ''}</option>`;
+            }).join('');
             document.getElementById('tableauDatasourceSection').style.display = datasources.length > 0 ? '' : 'none';
             if (datasources.length > 0) onTableauDatasourceChange();
 
-            // Connection dropdown is populated by populateConverterConnections() on login
-
-            // Render file badge (like LookML file list)
-            const fileList = document.getElementById('tableauFileList');
-            fileList.innerHTML = '';
-            const badge = document.createElement('div');
-            badge.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-tertiary);border-radius:6px;font-size:11px;flex-shrink:0;';
-            const ext = filename.toLowerCase().endsWith('.twbx') ? 'TWBX' : 'TWB';
-            badge.innerHTML = `<span>📊</span>
-                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${filename}">${filename}</span>
-                <span style="font-size:10px;color:var(--text-muted);flex-shrink:0;">${ext}</span>`;
-            fileList.appendChild(badge);
-
-            // Input stats badge row
-            const statsEl = document.getElementById('tableauInputStats');
-            statsEl.innerHTML = [
-                `<span class="dbt-stat-badge">${datasources.length} data source${datasources.length!==1?'s':''}</span>`,
-                parameters.length ? `<span class="dbt-stat-badge">${parameters.length} parameter${parameters.length!==1?'s':''}</span>` : ''
+            // ── Input stats ───────────────────────────────────────────────────
+            document.getElementById('tableauInputStats').innerHTML = [
+                datasources.length ? `<span class="dbt-stat-badge">${datasources.length} data source${datasources.length !== 1 ? 's' : ''}</span>` : '',
+                filenames.length > 1 ? `<span class="dbt-stat-badge">${filenames.length} files</span>` : '',
+                parameters.length ? `<span class="dbt-stat-badge">${parameters.length} param${parameters.length !== 1 ? 's' : ''}</span>` : ''
             ].filter(Boolean).join('');
 
             document.getElementById('tableauConvertBtn').disabled = datasources.length === 0;
-            showToast(`Loaded ${datasources.length} data source${datasources.length!==1?'s':''}`, 'success');
+
+            // Rebuild per-datasource connection table if that mode is active
+            if (document.getElementById('tableauMultiConn')?.checked) rebuildMultiConnTable();
+        }
+
+        function onTableauMultiConnChange() {
+            const isMulti = document.getElementById('tableauMultiConn').checked;
+            document.getElementById('tableauConnectionSection').style.display = isMulti ? 'none' : '';
+            document.getElementById('tableauMultiConnTable').style.display = isMulti ? '' : 'none';
+            if (isMulti) rebuildMultiConnTable();
+        }
+
+        function rebuildMultiConnTable() {
+            const datasources = (_tableauParsed || {}).datasources || [];
+            const tableDiv = document.getElementById('tableauMultiConnTable');
+            if (!tableDiv) return;
+            if (datasources.length === 0) {
+                tableDiv.innerHTML = '<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0;">Upload files above to assign connections.</p>';
+                return;
+            }
+            const conns = wizardState.connections || [];
+            const connOptions = conns.length
+                ? conns.map(c => `<option value="${c.connectionId}">${escapeHtml(c.name || c.connectionId)}${c.friendlyName ? ' ✦' : ''}</option>`).join('')
+                : '<option value="">— Connect to Sigma to load —</option>';
+            const filenames = [...new Set(datasources.map(ds => ds.filename))];
+            const rows = datasources.map((ds, i) => {
+                const prefix = filenames.length > 1
+                    ? `<span style="color:var(--text-muted);font-size:10px;">[${escapeHtml(ds.filename.replace(/\.[^.]+$/, ''))}] </span>`
+                    : '';
+                return `<tr style="border-top:1px solid var(--border);">
+                    <td style="padding:4px 4px 4px 6px;"><input type="checkbox" id="tbl-ds-check-${i}" checked style="accent-color:var(--accent);cursor:pointer;"></td>
+                    <td style="padding:4px 6px;font-size:11px;">${prefix}${escapeHtml(ds.name)}${ds.connClass ? `<br><span style="color:var(--text-muted);font-size:10px;">${ds.connClass}</span>` : ''}</td>
+                    <td style="padding:4px 6px;"><select id="tbl-ds-conn-${i}" class="form-input" style="font-size:11px;padding:4px 8px;">${connOptions}</select></td>
+                </tr>`;
+            }).join('');
+            tableDiv.innerHTML = `<table style="width:100%;border-collapse:collapse;">
+                <thead><tr>
+                    <th style="padding:4px 6px;font-size:10px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;text-align:left;"></th>
+                    <th style="padding:4px 6px;font-size:10px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;text-align:left;">Data Source</th>
+                    <th style="padding:4px 6px;font-size:10px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;text-align:left;">Connection</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+            </table>`;
         }
 
         function onTableauDatasourceChange() {
@@ -16867,26 +16942,14 @@ ${cleanedSql}`;
             }
         }
 
-        // ── Main conversion function ──────────────────────────────────────
-        function runTableauConversion() {
-            if (!_tableauParsed || _tableauParsed.datasources.length === 0) {
-                showToast('Upload a .twb, .twbx, .tds, or .tdsx file first', 'warning'); return;
-            }
-            const btn = document.getElementById('tableauConvertBtn');
-            btn.disabled = true; btn.textContent = '⏳ Converting…';
+        // ── Per-datasource conversion helper ─────────────────────────────
+        // Converts one datasource to {elements, controls, warnings}.
+        // Separated from runTableauConversion so multi-connection mode can
+        // call it once per datasource with its own connectionId.
+        function convertOneDatasource(ds, connectionId, dbOverride, schOverride, strategy, parameters) {
+            const warnings = [], elements = [];
 
-            try {
-                const idx = parseInt(document.getElementById('tableauDatasourceSelect').value) || 0;
-                const ds  = _tableauParsed.datasources[idx];
-                const connectionId = document.getElementById('tableauConnectionId').value.trim() || '<CONNECTION_ID>';
-                state.useFriendlyNames = isConnectionFriendly(connectionId);
-                const dbOverride   = document.getElementById('tableauDatabase').value.trim().toUpperCase();
-                const schOverride  = document.getElementById('tableauSchema').value.trim().toUpperCase();
-                const strategy     = document.getElementById('tableauJoinStrategy').value;
-                const warnings = [], elements = [];
-                { const fnWarn = friendlyNameWarning(); if (fnWarn) warnings.push(fnWarn); }
-
-                const connection   = ds.connection;
+            const connection   = ds.connection;
                 const rootRelation = connection ? connection.querySelector(':scope > relation') : null;
 
                 if (!rootRelation) {
@@ -17260,7 +17323,7 @@ ${cleanedSql}`;
 
                 // Parameters → controls
                 const controls = [];
-                for (const p of _tableauParsed.parameters) {
+                for (const p of parameters) {
                     const controlId = sigmaDisplayName(p.name).replace(/\s+/g,'-');
                     if (p.domainType === 'list' && p.members.length > 0) {
                         controls.push({ kind:'control', controlId, id: sigmaShortId()+'con',
@@ -17284,26 +17347,85 @@ ${cleanedSql}`;
                     if (el.relationships && el.relationships.length === 0) delete el.relationships;
                 });
 
+                return { elements, controls, warnings };
+        }
+
+        // ── Main conversion function ──────────────────────────────────────
+        function runTableauConversion() {
+            if (!_tableauParsed || _tableauParsed.datasources.length === 0) {
+                showToast('Upload a .twb, .twbx, .tds, or .tdsx file first', 'warning'); return;
+            }
+            const btn = document.getElementById('tableauConvertBtn');
+            btn.disabled = true; btn.textContent = '⏳ Converting…';
+
+            try {
+                const isMulti = document.getElementById('tableauMultiConn')?.checked;
+                const dbOverride = document.getElementById('tableauDatabase').value.trim().toUpperCase();
+                const schOverride = document.getElementById('tableauSchema').value.trim().toUpperCase();
+                const strategy = document.getElementById('tableauJoinStrategy').value;
+
+                // Build the list of datasources to convert, each with its connectionId
+                let toConvert = [];
+                if (isMulti) {
+                    _tableauParsed.datasources.forEach((ds, i) => {
+                        const check = document.getElementById('tbl-ds-check-' + i);
+                        const connSel = document.getElementById('tbl-ds-conn-' + i);
+                        if (!check || check.checked) {
+                            toConvert.push({ ds, connectionId: (connSel?.value || '') || '<CONNECTION_ID>' });
+                        }
+                    });
+                    if (toConvert.length === 0) { showToast('Select at least one data source', 'warning'); return; }
+                } else {
+                    const idx = parseInt(document.getElementById('tableauDatasourceSelect').value) || 0;
+                    const ds = _tableauParsed.datasources[idx];
+                    const connectionId = document.getElementById('tableauConnectionId').value.trim() || '<CONNECTION_ID>';
+                    toConvert = [{ ds, connectionId }];
+                }
+
+                // Use the first connection's friendly-names setting
+                state.useFriendlyNames = isConnectionFriendly(toConvert[0].connectionId);
+
+                const allElements = [], allControls = [], allWarnings = [];
+                { const fnWarn = friendlyNameWarning(); if (fnWarn) allWarnings.push(fnWarn); }
+
+                let firstControls = true;
+                for (const { ds, connectionId } of toConvert) {
+                    const { elements, controls, warnings } = convertOneDatasource(
+                        ds, connectionId, dbOverride, schOverride, strategy, _tableauParsed.parameters
+                    );
+                    allElements.push(...elements);
+                    allWarnings.push(...warnings);
+                    // Parameters → controls are shared across all datasources; only add once
+                    if (firstControls) { allControls.push(...controls); firstControls = false; }
+                }
+
+                const modelName = toConvert.length === 1
+                    ? toConvert[0].ds.name
+                    : toConvert.map(t => t.ds.name).join(' + ');
+
                 const outputJson = {
-                    name: ds.name,
-                    pages: [{ id: sigmaShortId(), name: 'Page 1', elements: [...controls, ...elements] }]
+                    name: modelName,
+                    pages: [{ id: sigmaShortId(), name: 'Page 1', elements: [...allControls, ...allElements] }]
                 };
 
                 document.getElementById('tableauJsonOutput').value = JSON.stringify(outputJson, null, 2);
 
                 const warnBox = document.getElementById('tableauWarningBox');
-                if (warnings.length) { warnBox.style.display=''; warnBox.innerHTML = warnings.map(w=>'<div>'+w+'</div>').join(''); }
-                else { warnBox.style.display='none'; }
+                if (allWarnings.length) { warnBox.style.display = ''; warnBox.innerHTML = allWarnings.map(w => '<div>' + w + '</div>').join(''); }
+                else { warnBox.style.display = 'none'; }
 
-                const ec = elements.length, cc = controls.length, wc = warnings.length;
+                const ec = allElements.length, cc = allControls.length, wc = allWarnings.length;
                 document.getElementById('tableauOutputStats').innerHTML = [
-                    '<span class="dbt-stat-badge">' + ec + ' element' + (ec!==1?'s':'') + '</span>',
-                    cc ? '<span class="dbt-stat-badge" style="color:var(--accent);">' + cc + ' control' + (cc!==1?'s':'') + '</span>' : '',
-                    wc ? '<span class="dbt-stat-badge" style="color:var(--warning);">' + wc + ' warning' + (wc!==1?'s':'') + '</span>' : ''
+                    '<span class="dbt-stat-badge">' + ec + ' element' + (ec !== 1 ? 's' : '') + '</span>',
+                    cc ? '<span class="dbt-stat-badge" style="color:var(--accent);">' + cc + ' control' + (cc !== 1 ? 's' : '') + '</span>' : '',
+                    wc ? '<span class="dbt-stat-badge" style="color:var(--warning);">' + wc + ' warning' + (wc !== 1 ? 's' : '') + '</span>' : ''
                 ].filter(Boolean).join('');
 
                 ['tableauCopyBtn','tableauLoadBtn','tableauSaveBtn'].forEach(id => document.getElementById(id).disabled = false);
-                showToast('Converted "' + ds.name + '" → ' + ec + ' element' + (ec!==1?'s':''), 'success');
+                const label = toConvert.length === 1
+                    ? 'Converted "' + toConvert[0].ds.name + '" → ' + ec + ' element' + (ec !== 1 ? 's' : '')
+                    : 'Converted ' + toConvert.length + ' sources → ' + ec + ' element' + (ec !== 1 ? 's' : '');
+                showToast(label, 'success');
 
             } catch(e) {
                 showToast('Conversion error: ' + e.message, 'error');
