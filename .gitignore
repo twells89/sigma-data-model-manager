@@ -2,3 +2,4 @@ node_modules/
 package.json
 package-lock.json
 test_*.mjs
+!test_sql.mjs
