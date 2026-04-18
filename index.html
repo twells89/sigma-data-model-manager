@@ -13997,12 +13997,11 @@ explores:
         }
 
         // Ensure a column exists on an element, return its ID.
-        // Warehouse-table elements require [TableDisplay/ColumnDisplay] formula format.
+        // Warehouse-table element columns use bare [Column Display Name] — no table prefix.
+        // ([Table/Column] is cross-element reference syntax, not valid for same-element columns.)
         function ensureSqlColumn(elem, colName) {
             var dn = sigmaDisplayName(colName);
-            var tableName = elem.source && elem.source.path ? elem.source.path[elem.source.path.length - 1] : '';
-            var tableDisplay = tableName ? sigmaDisplayName(tableName) : '';
-            var formula = tableDisplay ? '[' + tableDisplay + '/' + dn + ']' : '[' + dn + ']';
+            var formula = '[' + dn + ']';
             var existing = (elem.columns || []).find(function(c) { return c.formula === formula; });
             if (existing) return existing.id;
             var id = sigmaInodeId(colName.toUpperCase());

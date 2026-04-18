@@ -346,9 +346,12 @@ console.log('\n── 10. DB/schema overrides ──');
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 11. COLUMN FORMULA FORMAT: [TableDisplay/ColumnDisplay] for warehouse-table
+// 11. COLUMN FORMULA FORMAT: bare [Column Name] for warehouse-table elements
 // ══════════════════════════════════════════════════════════════════════════════
-console.log('\n── 11. Column formula format: [Table/Column] ──');
+// Sigma warehouse-table elements use bare [Column Name] for physical columns.
+// [Table/Column] is cross-element reference syntax and causes API save failures
+// when "Table" doesn't match a real element name in the model.
+console.log('\n── 11. Column formula format: bare [Column] ──');
 
 {
   const model = await convert(
@@ -356,20 +359,16 @@ console.log('\n── 11. Column formula format: [Table/Column] ──');
   );
   const el = model?.pages?.[0]?.elements?.[0];
   const cols = el?.columns || [];
-  check('columns present',                   cols.length >= 2, `got ${cols.length}`);
-  check('column formula has TABLE/ prefix',
-    cols.every(c => /^\[Fact Orders\//.test(c.formula || '')),
-    cols.map(c => c.formula).join(', '));
-  check('order_id col formula = [Fact Orders/Order Id]',
-    cols.some(c => c.formula === '[Fact Orders/Order Id]'));
-  check('total_amount col formula = [Fact Orders/Total Amount]',
-    cols.some(c => c.formula === '[Fact Orders/Total Amount]'));
-  check('no bare [Column] formulas (wrong format)',
-    !cols.some(c => /^\[[A-Z][^/\]]+\]$/.test(c.formula || '')),
-    cols.filter(c => /^\[[A-Z][^/\]]+\]$/.test(c.formula || '')).map(c => c.formula).join(', '));
+  check('columns present',                     cols.length >= 2, `got ${cols.length}`);
+  check('order_id col formula = [Order Id]',   cols.some(c => c.formula === '[Order Id]'));
+  check('total_amount col formula = [Total Amount]',
+    cols.some(c => c.formula === '[Total Amount]'));
+  check('no [Table/Column] cross-element formulas on warehouse-table columns',
+    !cols.some(c => /\//.test(c.formula || '')),
+    cols.filter(c => /\//.test(c.formula || '')).map(c => c.formula).join(', '));
 }
 
-// FK key columns on dimension elements must also use [TableDisplay/Column] format
+// FK key columns on dimension elements also use bare [Column Name]
 {
   const model = await convert(`
 CREATE VIEW orders_enriched AS
@@ -381,8 +380,8 @@ JOIN PROD.DW.CUSTOMERS c ON o.cust_id = c.cust_id
   const dimElem = elements.find(e => e.name === 'Customers');
   check('dimension element exists',            !!dimElem);
   const dimCols = dimElem?.columns || [];
-  check('dimension FK column has [Customers/...] prefix',
-    dimCols.every(c => /^\[Customers\//.test(c.formula || '')),
+  check('dimension FK column is bare [Cust Id] (no Table/ prefix)',
+    dimCols.every(c => !/\//.test(c.formula || '')),
     dimCols.map(c => c.formula).join(', '));
 }
 
@@ -406,16 +405,16 @@ GROUP BY store_id
   const cols = el?.columns || [];
   const colFormulas = cols.map(c => c.formula);
 
-  // The inner columns referenced by each metric must exist in el.columns
+  // The inner columns referenced by each metric must exist in el.columns (bare format)
   // so Sigma can resolve Sum([Gross Revenue]) etc.
   check('gross_revenue column exists for Sum([Gross Revenue])',
-    colFormulas.some(f => f === '[Fact Orders/Gross Revenue]'),
+    colFormulas.some(f => f === '[Gross Revenue]'),
     'found: ' + colFormulas.join(', '));
   check('order_id column exists for CountIf metric',
-    colFormulas.some(f => f === '[Fact Orders/Order Id]'),
+    colFormulas.some(f => f === '[Order Id]'),
     'found: ' + colFormulas.join(', '));
   check('avg_basket_size column exists for Avg([Avg Basket Size])',
-    colFormulas.some(f => f === '[Fact Orders/Avg Basket Size]'),
+    colFormulas.some(f => f === '[Avg Basket Size]'),
     'found: ' + colFormulas.join(', '));
 
   // Metrics themselves should still reference display names without table prefix
