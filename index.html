@@ -3790,10 +3790,10 @@ CREATE VIEW customers AS SELECT customer_id, name, email FROM raw.customers;"></
 
                         <div style="font-size: 10px; color: var(--text-muted); padding: 0 4px; line-height: 1.4;">
                             <strong>What gets converted:</strong><br>
-                            • <b>CREATE VIEW / TABLE</b> → one SQL element per statement<br>
-                            • <b>Bare SELECT</b> → SQL element with extracted columns<br>
+                            • <b>Simple SELECT … FROM table</b> → native warehouse-table element<br>
                             • <b>SELECT list</b> → column names auto-extracted<br>
-                            • Multiple files merged into a single model
+                            • <b>db.schema.table</b> → path auto-detected; overrides below apply<br>
+                            • <b>Complex queries</b> (JOINs, CTEs, subqueries) → SQL fallback element
                         </div>
                     </div>
 
@@ -3812,10 +3812,11 @@ CREATE VIEW customers AS SELECT customer_id, name, email FROM raw.customers;"></
                         <textarea id="sqlJsonOutput" readonly placeholder="Convert SQL to see the Sigma model here...
 
 How it works:
-• Each CREATE VIEW/TABLE statement → one SQL element
-• SELECT list columns auto-extracted as named columns
-• Multiple files and paste blocks merged into one model
-• Database/schema overrides noted in warnings if set"></textarea>
+• Simple SELECT ... FROM table → native warehouse-table element
+• db.schema.table → auto-detected path (badges show NATIVE vs SQL)
+• SELECT list columns auto-extracted as named column formulas
+• JOINs / GROUP BY / CTEs → noted in warnings, wire in Sigma
+• Complex queries → SQL fallback element"></textarea>
 
                         <div class="dbt-badge-row" id="sqlOutputStats"></div>
 
@@ -13837,6 +13838,87 @@ explores:
             }).filter(Boolean);
         }
 
+        // Given a SQL body (the part after AS), try to resolve its primary warehouse source.
+        // Returns { kind:'warehouse-table', path:['DB','SCHEMA','TABLE'], hasJoins, hasAgg }
+        // or null if too complex to auto-resolve (subquery, CTE-only, multiple FROM tables, etc.)
+        function extractSqlSource(sql) {
+            // Skip CTEs: find the outermost (last top-level) SELECT
+            var workSql = sql;
+            if (/^\s*WITH\s/i.test(sql)) {
+                var depth = 0, lastTopSel = -1;
+                for (var i = 0; i < sql.length; i++) {
+                    if (sql[i] === '(') depth++;
+                    else if (sql[i] === ')') depth--;
+                    else if (depth === 0 && /^SELECT\b/i.test(sql.slice(i))) lastTopSel = i;
+                }
+                if (lastTopSel < 0) return null;
+                workSql = sql.slice(lastTopSel);
+            }
+            // Strip SELECT … down to FROM
+            var afterSel = workSql.replace(/^\s*SELECT\s+(?:DISTINCT\s+|ALL\s+)?/i, '');
+            var d = 0, fromIdx = -1;
+            for (var j = 0; j < afterSel.length; j++) {
+                if (afterSel[j] === '(') d++;
+                else if (afterSel[j] === ')') d--;
+                else if (d === 0 && /^FROM\b/i.test(afterSel.slice(j))) { fromIdx = j; break; }
+            }
+            if (fromIdx < 0) return null;
+            var afterFrom = afterSel.slice(fromIdx + 4).replace(/^\s+/, '');
+            // Subquery in FROM
+            if (/^\s*\(/.test(afterFrom)) return null;
+            // Find end of FROM clause (WHERE/JOIN/GROUP/ORDER/HAVING/LIMIT/UNION)
+            var stopRe = /\b(WHERE|(?:INNER|LEFT|RIGHT|FULL|CROSS)?\s*JOIN|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|UNION)\b/i;
+            var stopM  = stopRe.exec(afterFrom);
+            var fromClause = (stopM ? afterFrom.slice(0, stopM.index) : afterFrom).trim();
+            // Comma-separated = implicit cross join
+            if (/,/.test(fromClause)) return null;
+            // Bare table token (first word before alias)
+            var tableRef = fromClause.split(/\s+/)[0].replace(/["`[\]]/g, '');
+            if (!tableRef) return null;
+            var rawParts = tableRef.split('.');
+            var parts = rawParts.map(function(p) { return p.toUpperCase(); });
+            // Fill in db/schema overrides for short paths
+            var db     = document.getElementById('sqlDatabase').value.trim().toUpperCase();
+            var schema = document.getElementById('sqlSchema').value.trim().toUpperCase();
+            var path;
+            if (parts.length >= 3) {
+                path = parts.slice(-3); // use last 3 segments
+            } else if (parts.length === 2) {
+                path = db ? [db].concat(parts) : parts;
+            } else {
+                // bare table name
+                if (db && schema)     path = [db, schema, parts[0]];
+                else if (schema)      path = [schema, parts[0]];
+                else                  path = parts;
+            }
+            var hasJoins = !!(stopM && /JOIN/i.test(stopM[1]));
+            var hasAgg   = /\b(GROUP\s+BY|SUM\s*\(|COUNT\s*\(|AVG\s*\(|MIN\s*\(|MAX\s*\()\b/i.test(sql);
+            return { kind: 'warehouse-table', path: path, hasJoins: hasJoins, hasAgg: hasAgg };
+        }
+
+        // After ingesting statements, scan all sources to auto-suggest db/schema overrides.
+        function autoDetectSqlDbSchema() {
+            var dbCounts = {}, schemaCounts = {};
+            sqlFiles.forEach(function(f) {
+                f.statements.forEach(function(s) {
+                    var src = extractSqlSource(s.sql);
+                    if (!src) return;
+                    if (src.path.length >= 3) {
+                        dbCounts[src.path[0]] = (dbCounts[src.path[0]] || 0) + 1;
+                        schemaCounts[src.path[1]] = (schemaCounts[src.path[1]] || 0) + 1;
+                    } else if (src.path.length === 2) {
+                        schemaCounts[src.path[0]] = (schemaCounts[src.path[0]] || 0) + 1;
+                    }
+                });
+            });
+            var topDb     = Object.keys(dbCounts).sort(function(a,b){ return dbCounts[b]-dbCounts[a]; })[0];
+            var topSchema = Object.keys(schemaCounts).sort(function(a,b){ return schemaCounts[b]-schemaCounts[a]; })[0];
+            var dbEl  = document.getElementById('sqlDatabase');
+            var schEl = document.getElementById('sqlSchema');
+            if (topDb     && !dbEl.value)  dbEl.value  = topDb;
+            if (topSchema && !schEl.value) schEl.value = topSchema;
+        }
+
         function handleSqlFileInput(event) {
             Array.from(event.target.files).forEach(function(f) { processSqlFile(f); });
             event.target.value = '';
@@ -13878,6 +13960,7 @@ explores:
                 })
             });
             renderSqlStatements();
+            autoDetectSqlDbSchema();
             showToast('✅ ' + stmts.length + ' statement' + (stmts.length !== 1 ? 's' : '') + ' loaded from ' + (filename || 'paste'), 'success');
         }
 
@@ -13892,16 +13975,22 @@ explores:
             countEl.textContent = '(' + allStmts.length + ')';
             listEl.innerHTML = allStmts.map(function(item, idx) {
                 var s = item.stmt;
-                var preview = s.sql.replace(/\s+/g, ' ').slice(0, 58);
-                if (s.sql.length > 58) preview += '…';
+                // Preview: show the FROM path if extractable, otherwise first N chars of SQL
+                var src = extractSqlSource(s.sql);
+                var preview = src
+                    ? '→ ' + src.path.join('.')
+                    : s.sql.replace(/\s+/g, ' ').slice(0, 55) + (s.sql.length > 55 ? '…' : '');
                 var badge = s.type === 'view'
-                    ? '<span style="font-size:9px;background:var(--accent);color:#fff;border-radius:3px;padding:0 4px;margin-left:4px;">VIEW</span>'
-                    : '<span style="font-size:9px;background:var(--bg-secondary);color:var(--text-muted);border:1px solid var(--border);border-radius:3px;padding:0 4px;margin-left:4px;">QUERY</span>';
-                return '<label style="display:flex;align-items:flex-start;gap:6px;padding:5px 8px;border-bottom:1px solid var(--border);cursor:pointer;">' +
-                    '<input type="checkbox"' + (s.selected ? ' checked' : '') + ' style="margin-top:2px;flex-shrink:0;" onchange="toggleSqlStatement(' + idx + ',this.checked)">' +
-                    '<div style="min-width:0;flex:1;">' +
-                    '<div style="font-size:11px;font-weight:600;color:var(--text-primary);">' + escapeHtml(s.name) + badge + '</div>' +
-                    '<div style="font-size:10px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(preview) + '</div>' +
+                    ? '<span style="font-size:9px;background:var(--accent);color:#fff;border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle;">VIEW</span>'
+                    : '<span style="font-size:9px;border:1px solid var(--border);border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle;">QUERY</span>';
+                var srcBadge = src
+                    ? '<span style="font-size:9px;background:#1a6b3c;color:#7ef2ab;border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle;">NATIVE</span>'
+                    : '<span style="font-size:9px;background:#4a3000;color:#ffcc66;border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle;">SQL</span>';
+                return '<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border);cursor:pointer;text-align:left;width:100%;box-sizing:border-box;">' +
+                    '<input type="checkbox"' + (s.selected ? ' checked' : '') + ' style="margin-top:3px;flex-shrink:0;cursor:pointer;" onchange="toggleSqlStatement(' + idx + ',this.checked)">' +
+                    '<div style="flex:1;min-width:0;overflow:hidden;">' +
+                    '<div style="font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s.name) + badge + srcBadge + '</div>' +
+                    '<div style="font-size:10px;opacity:0.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;">' + escapeHtml(preview) + '</div>' +
                     '</div></label>';
             }).join('');
             renderSqlFileList();
@@ -13966,8 +14055,6 @@ explores:
 
         function runSqlConversion() {
             var connectionId = document.getElementById('sqlConnectionId').value.trim();
-            var database = document.getElementById('sqlDatabase').value.trim().toUpperCase();
-            var schema   = document.getElementById('sqlSchema').value.trim().toUpperCase();
             var warnings = [];
 
             var selected = [];
@@ -13977,17 +14064,41 @@ explores:
             if (selected.length === 0) { showToast('❌ No statements selected', 'error'); return; }
 
             var elements = [];
+            var nativeCount = 0, sqlFallback = 0;
+
             selected.forEach(function(stmt) {
-                var cols   = extractSqlColumns(stmt.sql);
-                var elemId = sigmaShortId();
+                var cols    = extractSqlColumns(stmt.sql);
+                var elemId  = sigmaShortId();
                 var colObjs = cols.map(function(colName) {
                     return { id: sigmaInodeId(colName.toUpperCase()), formula: '[' + sigmaDisplayName(colName) + ']' };
                 });
-                var source = { kind: 'sql', statement: stmt.sql };
-                if (connectionId) source.connectionId = connectionId;
-                if (cols.length === 0) {
-                    warnings.push('"' + stmt.name + '": columns not auto-extracted — add them manually in Sigma after loading.');
+
+                var src = extractSqlSource(stmt.sql);
+                var source;
+
+                if (src) {
+                    // Native warehouse-table element
+                    source = { kind: 'warehouse-table', path: src.path };
+                    if (connectionId) source.connectionId = connectionId;
+                    nativeCount++;
+                    if (src.hasJoins) {
+                        warnings.push('"' + stmt.name + '": JOINs detected — only the primary table was mapped. Wire additional joins in Sigma.');
+                    }
+                    if (src.hasAgg) {
+                        warnings.push('"' + stmt.name + '": aggregations detected (GROUP BY / SUM etc.) — not auto-applied. Add metrics in Sigma.');
+                    }
+                } else {
+                    // Complex query — fall back to SQL element
+                    source = { kind: 'sql', statement: stmt.sql };
+                    if (connectionId) source.connectionId = connectionId;
+                    sqlFallback++;
+                    warnings.push('"' + stmt.name + '": complex query (subquery, CTE, or multi-table) — kept as custom SQL element.');
                 }
+
+                if (cols.length === 0) {
+                    warnings.push('"' + stmt.name + '": could not auto-extract columns — add them manually in Sigma.');
+                }
+
                 elements.push({
                     id: elemId,
                     kind: 'table',
@@ -13998,12 +14109,8 @@ explores:
                 });
             });
 
-            if ((database || schema) && selected.length > 0) {
-                warnings.push('Database/schema overrides are noted but not substituted into SQL bodies — apply prefixes manually if needed.');
-            }
-
             var sigmaModel = {
-                name: 'Custom SQL Model',
+                name: 'Converted SQL Model',
                 pages: [{ id: sigmaShortId(), name: 'Page 1', elements: elements }]
             };
             var json = JSON.stringify(sigmaModel, null, 2);
@@ -14011,16 +14118,21 @@ explores:
             ['sqlCopyBtn', 'sqlLoadBtn', 'sqlSaveBtn'].forEach(function(id) {
                 var el = document.getElementById(id); if (el) el.disabled = false;
             });
+
             var totalCols = elements.reduce(function(s, e) { return s + (e.columns || []).length; }, 0);
             document.getElementById('sqlOutputStats').innerHTML =
                 '<span class="dbt-stat-badge models">🔷 ' + elements.length + ' element' + (elements.length !== 1 ? 's' : '') + '</span>' +
-                '<span class="dbt-stat-badge dimensions">' + totalCols + ' column' + (totalCols !== 1 ? 's' : '') + '</span>';
+                (nativeCount  ? '<span class="dbt-stat-badge dimensions">✅ ' + nativeCount  + ' native</span>' : '') +
+                (sqlFallback  ? '<span class="dbt-stat-badge">' + sqlFallback + ' SQL fallback</span>' : '') +
+                '<span class="dbt-stat-badge dimensions">' + totalCols + ' col' + (totalCols !== 1 ? 's' : '') + '</span>';
+
             var warnBox = document.getElementById('sqlWarningBox');
             if (warnings.length > 0) {
                 warnBox.style.display = 'block';
                 warnBox.innerHTML = warnings.map(function(w) { return '<div>⚠️ ' + escapeHtml(w) + '</div>'; }).join('');
             } else { warnBox.style.display = 'none'; }
-            showToast('✅ Converted ' + elements.length + ' SQL element' + (elements.length !== 1 ? 's' : ''), 'success');
+
+            showToast('✅ ' + nativeCount + ' native + ' + sqlFallback + ' SQL element' + (elements.length !== 1 ? 's' : ''), 'success');
         }
 
         function copySqlOutput() {
