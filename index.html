@@ -13978,7 +13978,7 @@ explores:
                             ? 'CountIf(IsNotNull([' + sigmaDisplayName(innerCol) + ']))'
                             : sigmaFn + '([' + sigmaDisplayName(innerCol) + '])';
                     }
-                    metrics.push({ name: sigmaDisplayName(alias), formula: formula });
+                    metrics.push({ name: sigmaDisplayName(alias), formula: formula, sourceCol: multiAgg ? null : innerCol });
                 } else {
                     if (alias) columns.push(alias);
                 }
@@ -13997,13 +13997,17 @@ explores:
         }
 
         // Ensure a column exists on an element, return its ID.
+        // Warehouse-table elements require [TableDisplay/ColumnDisplay] formula format.
         function ensureSqlColumn(elem, colName) {
             var dn = sigmaDisplayName(colName);
-            var existing = (elem.columns || []).find(function(c) { return c.formula === '[' + dn + ']'; });
+            var tableName = elem.source && elem.source.path ? elem.source.path[elem.source.path.length - 1] : '';
+            var tableDisplay = tableName ? sigmaDisplayName(tableName) : '';
+            var formula = tableDisplay ? '[' + tableDisplay + '/' + dn + ']' : '[' + dn + ']';
+            var existing = (elem.columns || []).find(function(c) { return c.formula === formula; });
             if (existing) return existing.id;
             var id = sigmaInodeId(colName.toUpperCase());
             if (!elem.columns) { elem.columns = []; elem.order = []; }
-            elem.columns.push({ id: id, formula: '[' + dn + ']' });
+            elem.columns.push({ id: id, formula: formula });
             elem.order.push(id);
             return id;
         }
@@ -14235,6 +14239,11 @@ explores:
                 parsed.metrics.forEach(function(m) {
                     var mId = sigmaInodeId(m.name.replace(/\s+/g, '_').toUpperCase());
                     primaryElem.metrics.push({ id: mId, name: m.name, formula: m.formula });
+                    // Ensure the source column referenced by the metric formula exists on the element,
+                    // otherwise Sigma can't resolve Sum([Column Name]) etc.
+                    if (m.sourceCol && m.sourceCol !== 'rows') {
+                        ensureSqlColumn(primaryElem, m.sourceCol);
+                    }
                 });
 
                 // ── JOIN targets → dimension elements + relationships ────────

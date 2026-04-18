@@ -346,6 +346,89 @@ console.log('\n── 10. DB/schema overrides ──');
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// 11. COLUMN FORMULA FORMAT: [TableDisplay/ColumnDisplay] for warehouse-table
+// ══════════════════════════════════════════════════════════════════════════════
+console.log('\n── 11. Column formula format: [Table/Column] ──');
+
+{
+  const model = await convert(
+    'CREATE VIEW v AS SELECT order_id, total_amount FROM ANALYTICS.PUBLIC.FACT_ORDERS'
+  );
+  const el = model?.pages?.[0]?.elements?.[0];
+  const cols = el?.columns || [];
+  check('columns present',                   cols.length >= 2, `got ${cols.length}`);
+  check('column formula has TABLE/ prefix',
+    cols.every(c => /^\[Fact Orders\//.test(c.formula || '')),
+    cols.map(c => c.formula).join(', '));
+  check('order_id col formula = [Fact Orders/Order Id]',
+    cols.some(c => c.formula === '[Fact Orders/Order Id]'));
+  check('total_amount col formula = [Fact Orders/Total Amount]',
+    cols.some(c => c.formula === '[Fact Orders/Total Amount]'));
+  check('no bare [Column] formulas (wrong format)',
+    !cols.some(c => /^\[[A-Z][^/\]]+\]$/.test(c.formula || '')),
+    cols.filter(c => /^\[[A-Z][^/\]]+\]$/.test(c.formula || '')).map(c => c.formula).join(', '));
+}
+
+// FK key columns on dimension elements must also use [TableDisplay/Column] format
+{
+  const model = await convert(`
+CREATE VIEW orders_enriched AS
+SELECT o.order_id, c.name
+FROM PROD.DW.ORDERS o
+JOIN PROD.DW.CUSTOMERS c ON o.cust_id = c.cust_id
+`);
+  const elements = model?.pages?.[0]?.elements || [];
+  const dimElem = elements.find(e => e.name === 'Customers');
+  check('dimension element exists',            !!dimElem);
+  const dimCols = dimElem?.columns || [];
+  check('dimension FK column has [Customers/...] prefix',
+    dimCols.every(c => /^\[Customers\//.test(c.formula || '')),
+    dimCols.map(c => c.formula).join(', '));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 12. METRIC SOURCE COLUMNS ADDED TO ELEMENT
+// ══════════════════════════════════════════════════════════════════════════════
+console.log('\n── 12. Metric source columns present in element ──');
+
+{
+  const model = await convert(`
+CREATE VIEW revenue_by_store AS
+SELECT
+  store_id,
+  SUM(gross_revenue)     AS total_revenue,
+  COUNT(order_id)        AS order_count,
+  AVG(avg_basket_size)   AS avg_basket
+FROM ANALYTICS.SALES.FACT_ORDERS
+GROUP BY store_id
+`);
+  const el = model?.pages?.[0]?.elements?.[0];
+  const cols = el?.columns || [];
+  const colFormulas = cols.map(c => c.formula);
+
+  // The inner columns referenced by each metric must exist in el.columns
+  // so Sigma can resolve Sum([Gross Revenue]) etc.
+  check('gross_revenue column exists for Sum([Gross Revenue])',
+    colFormulas.some(f => f === '[Fact Orders/Gross Revenue]'),
+    'found: ' + colFormulas.join(', '));
+  check('order_id column exists for CountIf metric',
+    colFormulas.some(f => f === '[Fact Orders/Order Id]'),
+    'found: ' + colFormulas.join(', '));
+  check('avg_basket_size column exists for Avg([Avg Basket Size])',
+    colFormulas.some(f => f === '[Fact Orders/Avg Basket Size]'),
+    'found: ' + colFormulas.join(', '));
+
+  // Metrics themselves should still reference display names without table prefix
+  const metrics = el?.metrics || [];
+  check('Sum metric formula = Sum([Gross Revenue])',
+    metrics.some(m => m.formula === 'Sum([Gross Revenue])'));
+  check('CountIf metric formula = CountIf(IsNotNull([Order Id]))',
+    metrics.some(m => m.formula === 'CountIf(IsNotNull([Order Id]))'));
+  check('Avg metric formula = Avg([Avg Basket Size])',
+    metrics.some(m => m.formula === 'Avg([Avg Basket Size])'));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // RESULTS
 // ══════════════════════════════════════════════════════════════════════════════
 console.log('\nSQL CONVERTER TEST');
