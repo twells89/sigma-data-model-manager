@@ -96,8 +96,8 @@ console.log('\n── 2. Single-table → warehouse-table ──');
   check('path = [ANALYTICS, PUBLIC, ORDERS]',
     JSON.stringify(el?.source?.path) === JSON.stringify(['ANALYTICS', 'PUBLIC', 'ORDERS']));
   check('has 4 columns',                 (el?.columns?.length || 0) === 4, `got ${el?.columns?.length}`);
-  check('column formulas use display names',
-    (el?.columns || []).every(c => /^\[[A-Z][a-z]/.test(c.formula || '')));
+  check('column formulas use [PHYSICAL_TABLE/Column] format',
+    (el?.columns || []).every(c => /^\[ORDERS\//.test(c.formula || '')));
   check('no relationships on single-table element', !el?.relationships);
 }
 
@@ -363,13 +363,12 @@ console.log('\n── 11. Column formula format: [ElementName/Column] ──');
   const cols = el?.columns || [];
   check('element named after physical table (Fact Orders)', el?.name === 'Fact Orders');
   check('columns present',                         cols.length >= 2, `got ${cols.length}`);
-  check('order_id col = [Fact Orders/Order Id]',   cols.some(c => c.formula === '[Fact Orders/Order Id]'));
-  check('total_amount col = [Fact Orders/Total Amount]',
-    cols.some(c => c.formula === '[Fact Orders/Total Amount]'));
-  check('column has explicit name field',
-    cols.every(c => typeof c.name === 'string' && c.name.length > 0));
-  check('all formulas use physical table name as prefix',
-    cols.every(c => /^\[Fact Orders\//.test(c.formula || '')),
+  // Formula prefix = raw physical table name (uppercase, underscores), NOT the display name
+  check('order_id col = [FACT_ORDERS/Order Id]',   cols.some(c => c.formula === '[FACT_ORDERS/Order Id]'));
+  check('total_amount col = [FACT_ORDERS/Total Amount]',
+    cols.some(c => c.formula === '[FACT_ORDERS/Total Amount]'));
+  check('all formulas use raw table name as prefix (e.g. FACT_ORDERS)',
+    cols.every(c => /^\[FACT_ORDERS\//.test(c.formula || '')),
     cols.map(c => c.formula).join(', '));
 }
 
@@ -385,13 +384,13 @@ JOIN PROD.DW.CUSTOMERS c ON o.cust_id = c.cust_id
   const dimElem = elements.find(e => e.name === 'Customers');
   check('dimension element exists',            !!dimElem);
   const dimCols = dimElem?.columns || [];
-  check('dim FK col = [Customers/Cust Id]',
-    dimCols.some(c => c.formula === '[Customers/Cust Id]'),
+  check('dim FK col = [CUSTOMERS/Cust Id]',
+    dimCols.some(c => c.formula === '[CUSTOMERS/Cust Id]'),
     dimCols.map(c => c.formula).join(', '));
   // Primary table is ORDERS → element named "Orders"
-  check('primary FK col = [Orders/Cust Id]',
+  check('primary FK col = [ORDERS/Cust Id]',
     (model?.pages?.[0]?.elements?.find(e => e.name === 'Orders')?.columns || [])
-      .some(c => c.formula === '[Orders/Cust Id]'));
+      .some(c => c.formula === '[ORDERS/Cust Id]'));
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -417,14 +416,15 @@ GROUP BY store_id
   // The inner columns referenced by each metric must exist in el.columns
   // with [ElementName/Column] self-reference format
   // Element name = sigmaDisplayName("FACT_ORDERS") = "Fact Orders"
-  check('gross_revenue column = [Fact Orders/Gross Revenue]',
-    colFormulas.some(f => f === '[Fact Orders/Gross Revenue]'),
+  // Element source table is FACT_ORDERS — prefix uses raw physical name
+  check('gross_revenue column = [FACT_ORDERS/Gross Revenue]',
+    colFormulas.some(f => f === '[FACT_ORDERS/Gross Revenue]'),
     'found: ' + colFormulas.join(', '));
-  check('order_id column = [Fact Orders/Order Id]',
-    colFormulas.some(f => f === '[Fact Orders/Order Id]'),
+  check('order_id column = [FACT_ORDERS/Order Id]',
+    colFormulas.some(f => f === '[FACT_ORDERS/Order Id]'),
     'found: ' + colFormulas.join(', '));
-  check('avg_basket_size column = [Fact Orders/Avg Basket Size]',
-    colFormulas.some(f => f === '[Fact Orders/Avg Basket Size]'),
+  check('avg_basket_size column = [FACT_ORDERS/Avg Basket Size]',
+    colFormulas.some(f => f === '[FACT_ORDERS/Avg Basket Size]'),
     'found: ' + colFormulas.join(', '));
 
   // Metrics themselves should still reference display names without table prefix

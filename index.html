@@ -13997,18 +13997,20 @@ explores:
         }
 
         // Ensure a column exists on an element, return its ID.
-        // Sigma warehouse-table columns require [ElementName/ColumnDisplay] — a self-reference
-        // using the element's own display name as the prefix. Bare [Column] fails to resolve
-        // against the physical warehouse schema; the prefix tells Sigma to resolve within the
-        // element's logical schema where display names like "Date Key" → DATE_KEY are known.
+        // Sigma physical-column formula format: [PHYSICAL_TABLE_NAME/Column Display Name]
+        // The table prefix is the raw uppercase path segment (e.g. ORDER_FACT, DATE_DIM),
+        // NOT the humanized display name. This matches the documented inode column format.
         function ensureSqlColumn(elem, colName) {
             var dn = sigmaDisplayName(colName);
-            var formula = '[' + elem.name + '/' + dn + ']';
+            var physTable = elem.source && elem.source.path
+                ? elem.source.path[elem.source.path.length - 1]
+                : elem.name.toUpperCase().replace(/\s+/g, '_');
+            var formula = '[' + physTable + '/' + dn + ']';
             var existing = (elem.columns || []).find(function(c) { return c.formula === formula; });
             if (existing) return existing.id;
             var id = sigmaInodeId(colName.toUpperCase());
             if (!elem.columns) { elem.columns = []; elem.order = []; }
-            elem.columns.push({ id: id, name: dn, formula: formula });
+            elem.columns.push({ id: id, formula: formula });
             elem.order.push(id);
             return id;
         }
