@@ -14321,6 +14321,17 @@ explores:
                     });
                 });
 
+                // ── Add dim-attributed SELECT columns to each dimension element ──
+                // joinElemCache is now populated; loop again to wire non-FK dim columns.
+                parsed.columns.forEach(function(col) {
+                    if (typeof col !== 'object' || !col.joinTable) return;
+                    var jEntry = null;
+                    Object.keys(joinElemCache).forEach(function(k) {
+                        if (k.split('.').pop() === col.joinTable) jEntry = joinElemCache[k];
+                    });
+                    if (jEntry) ensureSqlColumn(jEntry.elem, col.name);
+                });
+
                 // ── Clean up empty arrays ───────────────────────────────────
                 if (!primaryElem.columns.length)      { delete primaryElem.columns;      delete primaryElem.order; }
                 if (!primaryElem.metrics.length)      delete primaryElem.metrics;

@@ -477,6 +477,20 @@ JOIN DB.SCH.DATE_DIM d  ON o.date_key = d.date_key
   // No bare [Column] or [Table/Column] formulas for attributed columns
   check('no unattributed joined cols on primary element',
     !formulas.some(f => f === '[Customer Name]' || f === '[Date Label]'));
+
+  // Dimension elements must also have the SELECT columns in their own columns array
+  const elems = model?.pages?.[0]?.elements || [];
+  const custElem = elems.find(e => e.name === 'CUSTOMERS');
+  const custCols  = (custElem?.columns || []).map(c => c.formula);
+  check('CUSTOMERS elem has [CUSTOMERS/Customer Name]',
+    custCols.some(f => f === '[CUSTOMERS/Customer Name]'));
+  check('CUSTOMERS elem has [CUSTOMERS/Email]',
+    custCols.some(f => f === '[CUSTOMERS/Email]'));
+
+  const dateDimElem = elems.find(e => e.name === 'DATE_DIM');
+  const dateCols    = (dateDimElem?.columns || []).map(c => c.formula);
+  check('DATE_DIM elem has [DATE_DIM/Date Label]',
+    dateCols.some(f => f === '[DATE_DIM/Date Label]'));
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
