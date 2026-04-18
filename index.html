@@ -13931,7 +13931,7 @@ explores:
             var ptokens = primaryClause.split(/\s+/);
             var primaryTableRef = ptokens[0];
             var aliasIdx = (ptokens[1] || '').toUpperCase() === 'AS' ? 2 : 1;
-            // (alias is unused for path-building but kept for ON clause resolution)
+            var primaryAlias = (ptokens[aliasIdx] || '').replace(/["`[\]]/g, '').toLowerCase();
 
             var db     = document.getElementById('sqlDatabase').value.trim().toUpperCase();
             var schema = document.getElementById('sqlSchema').value.trim().toUpperCase();
@@ -13951,6 +13951,14 @@ explores:
                 var jPath = buildSqlPath(jTable, db, schema);
                 if (jPath) joins.push({ path: jPath, alias: jAlias, joinType: jType, leftKey: onLeft, rightKey: onRight });
             }
+
+            // Build alias map: alias → null (primary) or 'JOIN_TABLE_NAME' (join target)
+            // Used to attribute SELECT columns to the right source table.
+            var aliasMap = {};
+            if (primaryAlias) aliasMap[primaryAlias] = null; // null = primary table
+            joins.forEach(function(j) {
+                if (j.alias) aliasMap[j.alias.toLowerCase()] = j.path[j.path.length - 1];
+            });
 
             // Parse SELECT items into regular columns and aggregate metrics
             var columns = [], metrics = [];
@@ -13980,7 +13988,25 @@ explores:
                     }
                     metrics.push({ name: sigmaDisplayName(alias), formula: formula, sourceCol: multiAgg ? null : innerCol });
                 } else {
-                    if (alias) columns.push(alias);
+                    if (!alias) return;
+                    // Detect table.column attribution via alias prefix (e.g. c.customer_name)
+                    var partForAttr = part.trim();
+                    var asAt = partForAttr.search(/\bAS\s+[\w"`[\]]+\s*$/i);
+                    var colExpr = (asAt >= 0 ? partForAttr.slice(0, asAt).trim() : partForAttr);
+                    var joinTable; // undefined = unknown → default to primary
+                    if (!/[()]/.test(colExpr)) {
+                        var dotM = colExpr.match(/^([\w"`[\]]+)\.([\w"`[\]]+)$/);
+                        if (dotM) {
+                            var tblAlias = dotM[1].replace(/["`[\]]/g, '').toLowerCase();
+                            var physCol  = dotM[2].replace(/["`[\]]/g, '');
+                            if (tblAlias in aliasMap) {
+                                joinTable = aliasMap[tblAlias]; // null (primary) or 'JOIN_TABLE'
+                                alias = physCol;               // use physical col name for formula
+                            }
+                        }
+                    }
+                    // Truthy joinTable → joined dimension column; falsy → primary table column
+                    columns.push(joinTable ? { name: alias, joinTable: joinTable } : alias);
                 }
             });
 
@@ -14239,7 +14265,21 @@ explores:
                 allElements.push(primaryElem);
 
                 // Regular columns from SELECT list
-                parsed.columns.forEach(function(colName) { ensureSqlColumn(primaryElem, colName); });
+                var primaryTable = primaryElem.source.path[primaryElem.source.path.length - 1];
+                parsed.columns.forEach(function(col) {
+                    if (typeof col === 'object' && col.joinTable) {
+                        // Column attributed to a joined dimension → [PRIMARY/DIM/Column] formula
+                        var dn = sigmaDisplayName(col.name);
+                        var formula = '[' + primaryTable + '/' + col.joinTable + '/' + dn + ']';
+                        if (!primaryElem.columns.find(function(c) { return c.formula === formula; })) {
+                            var cId = sigmaShortId();
+                            primaryElem.columns.push({ id: cId, formula: formula });
+                            primaryElem.order.push(cId);
+                        }
+                    } else {
+                        ensureSqlColumn(primaryElem, typeof col === 'string' ? col : col.name);
+                    }
+                });
 
                 // Aggregate metrics (SUM/COUNT/AVG/MIN/MAX)
                 parsed.metrics.forEach(function(m) {

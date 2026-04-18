@@ -438,6 +438,48 @@ GROUP BY store_id
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// 13. JOIN COLUMN ATTRIBUTION: [PRIMARY/DIM/Column] via alias prefix
+// ══════════════════════════════════════════════════════════════════════════════
+console.log('\n── 13. Join column attribution ──');
+
+{
+  const model = await convert(`
+CREATE VIEW sales_detail AS
+SELECT
+  o.order_id,
+  o.amount,
+  c.customer_name,
+  c.email         AS customer_email,
+  d.date_label
+FROM DB.SCH.ORDERS o
+JOIN DB.SCH.CUSTOMERS c ON o.cust_id = c.cust_id
+JOIN DB.SCH.DATE_DIM d  ON o.date_key = d.date_key
+`);
+  check('valid JSON', model !== null);
+  const el = model?.pages?.[0]?.elements?.find(e => e.name === 'Orders');
+  const cols = el?.columns || [];
+  const formulas = cols.map(c => c.formula);
+
+  // Primary table columns → [ORDERS/Column]
+  check('order_id → [ORDERS/Order Id]',
+    formulas.some(f => f === '[ORDERS/Order Id]'));
+  check('amount → [ORDERS/Amount]',
+    formulas.some(f => f === '[ORDERS/Amount]'));
+
+  // Joined dimension columns → [ORDERS/DIM/Column]
+  check('c.customer_name → [ORDERS/CUSTOMERS/Customer Name]',
+    formulas.some(f => f === '[ORDERS/CUSTOMERS/Customer Name]'));
+  check('c.email AS alias → physical name customer_email used... or email → [ORDERS/CUSTOMERS/Email]',
+    formulas.some(f => f === '[ORDERS/CUSTOMERS/Email]'));
+  check('d.date_label → [ORDERS/DATE_DIM/Date Label]',
+    formulas.some(f => f === '[ORDERS/DATE_DIM/Date Label]'));
+
+  // No bare [Column] or [Table/Column] formulas for attributed columns
+  check('no unattributed joined cols on primary element',
+    !formulas.some(f => f === '[Customer Name]' || f === '[Date Label]'));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // RESULTS
 // ══════════════════════════════════════════════════════════════════════════════
 console.log('\nSQL CONVERTER TEST');
