@@ -146,8 +146,9 @@ GROUP BY o.order_id, o.order_date, c.customer_name, p.product_name
   // Primary + 2 join targets
   check('3 elements (primary + 2 join targets)', elements.length === 3, `got ${elements.length}`);
 
-  const primary = elements.find(e => e.name === 'Sales Summary');
-  check('primary element named Sales Summary', !!primary);
+  // Primary element is named after the physical table (ORDERS), not the SQL view (sales_summary)
+  const primary = elements.find(e => e.name === 'Orders');
+  check('primary element named after physical table (Orders)', !!primary);
   check('primary source = warehouse-table',    primary?.source?.kind === 'warehouse-table');
   check('primary path = DB.SCH.ORDERS',
     JSON.stringify(primary?.source?.path) === JSON.stringify(['DB', 'SCH', 'ORDERS']));
@@ -354,19 +355,20 @@ console.log('\n── 10. DB/schema overrides ──');
 console.log('\n── 11. Column formula format: [ElementName/Column] ──');
 
 {
+  // Physical table is FACT_ORDERS → element named "Fact Orders" regardless of view name
   const model = await convert(
-    'CREATE VIEW fact_orders AS SELECT order_id, total_amount FROM ANALYTICS.PUBLIC.FACT_ORDERS'
+    'CREATE VIEW any_view_name AS SELECT order_id, total_amount FROM ANALYTICS.PUBLIC.FACT_ORDERS'
   );
   const el = model?.pages?.[0]?.elements?.[0];
   const cols = el?.columns || [];
-  check('element named Fact Orders',               el?.name === 'Fact Orders');
+  check('element named after physical table (Fact Orders)', el?.name === 'Fact Orders');
   check('columns present',                         cols.length >= 2, `got ${cols.length}`);
   check('order_id col = [Fact Orders/Order Id]',   cols.some(c => c.formula === '[Fact Orders/Order Id]'));
   check('total_amount col = [Fact Orders/Total Amount]',
     cols.some(c => c.formula === '[Fact Orders/Total Amount]'));
   check('column has explicit name field',
     cols.every(c => typeof c.name === 'string' && c.name.length > 0));
-  check('all formulas use element name as prefix',
+  check('all formulas use physical table name as prefix',
     cols.every(c => /^\[Fact Orders\//.test(c.formula || '')),
     cols.map(c => c.formula).join(', '));
 }
@@ -386,9 +388,10 @@ JOIN PROD.DW.CUSTOMERS c ON o.cust_id = c.cust_id
   check('dim FK col = [Customers/Cust Id]',
     dimCols.some(c => c.formula === '[Customers/Cust Id]'),
     dimCols.map(c => c.formula).join(', '));
-  check('primary FK col = [Orders Enriched/Cust Id]',
-    (model?.pages?.[0]?.elements?.find(e => e.name === 'Orders Enriched')?.columns || [])
-      .some(c => c.formula === '[Orders Enriched/Cust Id]'));
+  // Primary table is ORDERS → element named "Orders"
+  check('primary FK col = [Orders/Cust Id]',
+    (model?.pages?.[0]?.elements?.find(e => e.name === 'Orders')?.columns || [])
+      .some(c => c.formula === '[Orders/Cust Id]'));
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -413,14 +416,15 @@ GROUP BY store_id
 
   // The inner columns referenced by each metric must exist in el.columns
   // with [ElementName/Column] self-reference format
-  check('gross_revenue column = [Revenue By Store/Gross Revenue]',
-    colFormulas.some(f => f === '[Revenue By Store/Gross Revenue]'),
+  // Element name = sigmaDisplayName("FACT_ORDERS") = "Fact Orders"
+  check('gross_revenue column = [Fact Orders/Gross Revenue]',
+    colFormulas.some(f => f === '[Fact Orders/Gross Revenue]'),
     'found: ' + colFormulas.join(', '));
-  check('order_id column = [Revenue By Store/Order Id]',
-    colFormulas.some(f => f === '[Revenue By Store/Order Id]'),
+  check('order_id column = [Fact Orders/Order Id]',
+    colFormulas.some(f => f === '[Fact Orders/Order Id]'),
     'found: ' + colFormulas.join(', '));
-  check('avg_basket_size column = [Revenue By Store/Avg Basket Size]',
-    colFormulas.some(f => f === '[Revenue By Store/Avg Basket Size]'),
+  check('avg_basket_size column = [Fact Orders/Avg Basket Size]',
+    colFormulas.some(f => f === '[Fact Orders/Avg Basket Size]'),
     'found: ' + colFormulas.join(', '));
 
   // Metrics themselves should still reference display names without table prefix

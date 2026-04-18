@@ -14223,11 +14223,14 @@ explores:
 
                 nativeCount++;
 
-                // ── Primary element (named after the view) ──────────────────
+                // ── Primary element (named after the physical table) ────────
+                // Column formulas use [ElementName/Column] self-reference, so the
+                // element name must match the physical table display name, not the SQL view name.
+                var primaryTableName = parsed.primaryPath[parsed.primaryPath.length - 1];
                 var primaryId   = sigmaShortId();
                 var primaryElem = {
                     id: primaryId, kind: 'table',
-                    name: sigmaDisplayName(stmt.name),
+                    name: sigmaDisplayName(primaryTableName),
                     source: makeSource(parsed.primaryPath),
                     columns: [], order: [], metrics: [], relationships: []
                 };
