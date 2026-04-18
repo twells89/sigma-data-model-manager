@@ -13961,14 +13961,23 @@ explores:
                 if (aggM) {
                     if (!alias) alias = aggM[1].replace(/\s+/g, '').toLowerCase() + '_result';
                     var funcName = aggM[1].replace(/\s+/g, '').toUpperCase();
-                    var parenOpen = part.indexOf('(');
+                    // Use the paren that belongs to the matched aggregate function (not an outer wrapper like ROUND)
+                    var parenOpen  = aggM.index + aggM[0].length - 1;
                     var parenClose = sqlFindClose(part, parenOpen);
-                    var inner = part.slice(parenOpen + 1, parenClose).trim();
-                    var innerCol = inner.split('.').pop().replace(/["`[\]]/g, '').replace(/^\*$/, 'rows') || alias;
-                    var sigmaFn = { SUM: 'Sum', COUNT: 'CountIf', COUNTDISTINCT: 'CountDistinct', AVG: 'Avg', AVERAGE: 'Avg', MIN: 'Min', MAX: 'Max' }[funcName] || 'Sum';
-                    var formula = funcName === 'COUNT'
-                        ? 'CountIf(IsNotNull([' + sigmaDisplayName(innerCol) + ']))'
-                        : sigmaFn + '([' + sigmaDisplayName(innerCol) + '])';
+                    var inner      = part.slice(parenOpen + 1, parenClose).trim();
+                    // Detect complex expressions: multiple agg calls or arithmetic (ratio metrics etc.)
+                    var multiAgg = (part.match(/\b(SUM|COUNT|AVG|MIN|MAX)\s*\(/gi) || []).length > 1;
+                    var formula;
+                    if (multiAgg) {
+                        // Best-effort placeholder — user should refine in Sigma
+                        formula = '/* TODO: ' + alias + ' — complex expression, wire manually */';
+                    } else {
+                        var innerCol = inner.split('.').pop().replace(/["`[\]]/g, '').replace(/^\*$/, 'rows') || alias;
+                        var sigmaFn = { SUM: 'Sum', COUNT: 'CountIf', COUNTDISTINCT: 'CountDistinct', AVG: 'Avg', AVERAGE: 'Avg', MIN: 'Min', MAX: 'Max' }[funcName] || 'Sum';
+                        formula = funcName === 'COUNT'
+                            ? 'CountIf(IsNotNull([' + sigmaDisplayName(innerCol) + ']))'
+                            : sigmaFn + '([' + sigmaDisplayName(innerCol) + '])';
+                    }
                     metrics.push({ name: sigmaDisplayName(alias), formula: formula });
                 } else {
                     if (alias) columns.push(alias);
@@ -14248,16 +14257,12 @@ explores:
                     var srcColId = ensureSqlColumn(primaryElem, join.leftKey);
                     var tgtColId = ensureSqlColumn(joinEntry.elem, join.rightKey);
 
-                    var sigmaJoinType = {
-                        LEFT_JOIN: 'left', INNER_JOIN: 'inner',
-                        RIGHT_JOIN: 'right', FULL_JOIN: 'full',
-                        CROSS_JOIN: 'inner', JOIN: 'inner'
-                    }[join.joinType] || 'left';
-
                     primaryElem.relationships.push({
+                        id: sigmaShortId(),
                         targetElementId: joinEntry.id,
-                        joinType: sigmaJoinType,
-                        columnPairs: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }]
+                        keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
+                        name: sigmaDisplayName(join.path[join.path.length - 1]),
+                        relationshipType: 'N:1'
                     });
                 });
 
