@@ -91,7 +91,7 @@ console.log('\n── 2. Single-table → warehouse-table ──');
   const elements = model?.pages?.[0]?.elements || [];
   check('exactly 1 element',            elements.length === 1, `got ${elements.length}`);
   const el = elements[0];
-  check('element name = Orders',         el?.name === 'Orders');
+  check('element name = ORDERS',          el?.name === 'ORDERS');
   check('source kind = warehouse-table', el?.source?.kind === 'warehouse-table');
   check('path = [ANALYTICS, PUBLIC, ORDERS]',
     JSON.stringify(el?.source?.path) === JSON.stringify(['ANALYTICS', 'PUBLIC', 'ORDERS']));
@@ -147,8 +147,8 @@ GROUP BY o.order_id, o.order_date, c.customer_name, p.product_name
   check('3 elements (primary + 2 join targets)', elements.length === 3, `got ${elements.length}`);
 
   // Primary element is named after the physical table (ORDERS), not the SQL view (sales_summary)
-  const primary = elements.find(e => e.name === 'Orders');
-  check('primary element named after physical table (Orders)', !!primary);
+  const primary = elements.find(e => e.name === 'ORDERS');
+  check('primary element named after physical table (ORDERS)', !!primary);
   check('primary source = warehouse-table',    primary?.source?.kind === 'warehouse-table');
   check('primary path = DB.SCH.ORDERS',
     JSON.stringify(primary?.source?.path) === JSON.stringify(['DB', 'SCH', 'ORDERS']));
@@ -166,8 +166,8 @@ GROUP BY o.order_id, o.order_date, c.customer_name, p.product_name
   const innerRel = rels.find(r => r.name === 'Customers');
   const leftRel  = rels.find(r => r.name === 'Products');
   // joinType not stored in relationship per schema — keys/targetElementId are the join wiring
-  check('customers element exists',  elements.some(e => e.name === 'Customers'));
-  check('products element exists',   elements.some(e => e.name === 'Products'));
+  check('customers element exists',  elements.some(e => e.name === 'CUSTOMERS'));
+  check('products element exists',   elements.some(e => e.name === 'PRODUCTS'));
 
   // FK key columns wired (sourceColumnId / targetColumnId present in keys)
   const firstKeys = rels[0]?.keys || [];
@@ -266,13 +266,13 @@ JOIN DB.SCH.STORE_DIM d ON r.store_id = d.store_id;
   check('valid JSON with 2 statements + shared dim', model !== null);
   const elements = model?.pages?.[0]?.elements || [];
   // 2 primary + 1 shared STORE_DIM (not 4)
-  check('3 elements (2 primary + 1 shared Store Dim)', elements.length === 3, `got ${elements.length}`);
-  check('Store Dim appears exactly once',
-    elements.filter(e => e.name === 'Store Dim').length === 1);
-  check('both primaries have a relationship to the same Store Dim element', (() => {
-    const dim = elements.find(e => e.name === 'Store Dim');
+  check('3 elements (2 primary + 1 shared STORE_DIM)', elements.length === 3, `got ${elements.length}`);
+  check('STORE_DIM appears exactly once',
+    elements.filter(e => e.name === 'STORE_DIM').length === 1);
+  check('both primaries have a relationship to the same STORE_DIM element', (() => {
+    const dim = elements.find(e => e.name === 'STORE_DIM');
     if (!dim) return false;
-    const primaries = elements.filter(e => e.name !== 'Store Dim');
+    const primaries = elements.filter(e => e.name !== 'STORE_DIM');
     return primaries.every(p =>
       (p.relationships || []).some(r => r.targetElementId === dim.id)
     );
@@ -355,13 +355,13 @@ console.log('\n── 10. DB/schema overrides ──');
 console.log('\n── 11. Column formula format: [ElementName/Column] ──');
 
 {
-  // Physical table is FACT_ORDERS → element named "Fact Orders" regardless of view name
+  // Physical table is FACT_ORDERS → element named "FACT_ORDERS" regardless of view name
   const model = await convert(
     'CREATE VIEW any_view_name AS SELECT order_id, total_amount FROM ANALYTICS.PUBLIC.FACT_ORDERS'
   );
   const el = model?.pages?.[0]?.elements?.[0];
   const cols = el?.columns || [];
-  check('element named after physical table (Fact Orders)', el?.name === 'Fact Orders');
+  check('element named after physical table (FACT_ORDERS)', el?.name === 'FACT_ORDERS');
   check('columns present',                         cols.length >= 2, `got ${cols.length}`);
   // Formula prefix = raw physical table name (uppercase, underscores), NOT the display name
   check('order_id col = [FACT_ORDERS/Order Id]',   cols.some(c => c.formula === '[FACT_ORDERS/Order Id]'));
@@ -381,15 +381,15 @@ FROM PROD.DW.ORDERS o
 JOIN PROD.DW.CUSTOMERS c ON o.cust_id = c.cust_id
 `);
   const elements = model?.pages?.[0]?.elements || [];
-  const dimElem = elements.find(e => e.name === 'Customers');
+  const dimElem = elements.find(e => e.name === 'CUSTOMERS');
   check('dimension element exists',            !!dimElem);
   const dimCols = dimElem?.columns || [];
   check('dim FK col = [CUSTOMERS/Cust Id]',
     dimCols.some(c => c.formula === '[CUSTOMERS/Cust Id]'),
     dimCols.map(c => c.formula).join(', '));
-  // Primary table is ORDERS → element named "Orders"
+  // Primary table is ORDERS → element named "ORDERS"
   check('primary FK col = [ORDERS/Cust Id]',
-    (model?.pages?.[0]?.elements?.find(e => e.name === 'Orders')?.columns || [])
+    (model?.pages?.[0]?.elements?.find(e => e.name === 'ORDERS')?.columns || [])
       .some(c => c.formula === '[ORDERS/Cust Id]'));
 }
 
@@ -415,8 +415,8 @@ GROUP BY store_id
 
   // The inner columns referenced by each metric must exist in el.columns
   // with [ElementName/Column] self-reference format
-  // Element name = sigmaDisplayName("FACT_ORDERS") = "Fact Orders"
-  // Element source table is FACT_ORDERS — prefix uses raw physical name
+  // Element name = "FACT_ORDERS" (raw physical table name)
+  // Formula prefix = raw physical name (self-reference)
   check('gross_revenue column = [FACT_ORDERS/Gross Revenue]',
     colFormulas.some(f => f === '[FACT_ORDERS/Gross Revenue]'),
     'found: ' + colFormulas.join(', '));
@@ -456,7 +456,7 @@ JOIN DB.SCH.CUSTOMERS c ON o.cust_id = c.cust_id
 JOIN DB.SCH.DATE_DIM d  ON o.date_key = d.date_key
 `);
   check('valid JSON', model !== null);
-  const el = model?.pages?.[0]?.elements?.find(e => e.name === 'Orders');
+  const el = model?.pages?.[0]?.elements?.find(e => e.name === 'ORDERS');
   const cols = el?.columns || [];
   const formulas = cols.map(c => c.formula);
 

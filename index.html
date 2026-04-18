@@ -14258,7 +14258,7 @@ explores:
                 var primaryId   = sigmaShortId();
                 var primaryElem = {
                     id: primaryId, kind: 'table',
-                    name: sigmaDisplayName(primaryTableName),
+                    name: primaryTableName,
                     source: makeSource(parsed.primaryPath),
                     columns: [], order: [], metrics: [], relationships: []
                 };
@@ -14299,7 +14299,7 @@ explores:
                         var jId  = sigmaShortId();
                         var jElem = {
                             id: jId, kind: 'table',
-                            name: sigmaDisplayName(join.path[join.path.length - 1]),
+                            name: join.path[join.path.length - 1],
                             source: makeSource(join.path),
                             columns: [], order: []
                         };
