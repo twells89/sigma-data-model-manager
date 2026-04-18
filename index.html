@@ -14265,17 +14265,13 @@ explores:
                 allElements.push(primaryElem);
 
                 // Regular columns from SELECT list
-                var primaryTable = primaryElem.source.path[primaryElem.source.path.length - 1];
+                // Dim-attributed columns (col.joinTable) are NOT added to the primary element —
+                // they belong to the dimension element and Sigma exposes them via the relationship.
+                // Adding cross-element formulas to the primary element causes Sigma's
+                // pre-save warehouse validator to flag them as unresolvable.
                 parsed.columns.forEach(function(col) {
                     if (typeof col === 'object' && col.joinTable) {
-                        // Column attributed to a joined dimension → [PRIMARY/DIM/Column] formula
-                        var dn = sigmaDisplayName(col.name);
-                        var formula = '[' + primaryTable + '/' + col.joinTable + '/' + dn + ']';
-                        if (!primaryElem.columns.find(function(c) { return c.formula === formula; })) {
-                            var cId = sigmaShortId();
-                            primaryElem.columns.push({ id: cId, formula: formula });
-                            primaryElem.order.push(cId);
-                        }
+                        // skip — will be added to the dim element in the second pass below
                     } else {
                         ensureSqlColumn(primaryElem, typeof col === 'string' ? col : col.name);
                     }

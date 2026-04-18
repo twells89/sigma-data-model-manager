@@ -456,7 +456,8 @@ JOIN DB.SCH.CUSTOMERS c ON o.cust_id = c.cust_id
 JOIN DB.SCH.DATE_DIM d  ON o.date_key = d.date_key
 `);
   check('valid JSON', model !== null);
-  const el = model?.pages?.[0]?.elements?.find(e => e.name === 'ORDERS');
+  const elems = model?.pages?.[0]?.elements || [];
+  const el = elems.find(e => e.name === 'ORDERS');
   const cols = el?.columns || [];
   const formulas = cols.map(c => c.formula);
 
@@ -466,20 +467,13 @@ JOIN DB.SCH.DATE_DIM d  ON o.date_key = d.date_key
   check('amount → [ORDERS/Amount]',
     formulas.some(f => f === '[ORDERS/Amount]'));
 
-  // Joined dimension columns → [ORDERS/DIM/Column]
-  check('c.customer_name → [ORDERS/CUSTOMERS/Customer Name]',
-    formulas.some(f => f === '[ORDERS/CUSTOMERS/Customer Name]'));
-  check('c.email AS alias → physical name customer_email used... or email → [ORDERS/CUSTOMERS/Email]',
-    formulas.some(f => f === '[ORDERS/CUSTOMERS/Email]'));
-  check('d.date_label → [ORDERS/DATE_DIM/Date Label]',
-    formulas.some(f => f === '[ORDERS/DATE_DIM/Date Label]'));
+  // Dim-attributed columns do NOT appear on the primary element (Sigma warehouse validator rejects them)
+  check('primary has no cross-element Customer Name formula',
+    !formulas.some(f => f.includes('Customer Name')));
+  check('primary has no cross-element Date Label formula',
+    !formulas.some(f => f.includes('Date Label')));
 
-  // No bare [Column] or [Table/Column] formulas for attributed columns
-  check('no unattributed joined cols on primary element',
-    !formulas.some(f => f === '[Customer Name]' || f === '[Date Label]'));
-
-  // Dimension elements must also have the SELECT columns in their own columns array
-  const elems = model?.pages?.[0]?.elements || [];
+  // Dimension elements have the SELECT columns in their own columns array
   const custElem = elems.find(e => e.name === 'CUSTOMERS');
   const custCols  = (custElem?.columns || []).map(c => c.formula);
   check('CUSTOMERS elem has [CUSTOMERS/Customer Name]',
