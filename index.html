@@ -2635,6 +2635,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                             <option value="omni">🌐 Omni Analytics</option>
                             <option value="qlik">🔮 Qlik Sense</option>
                             <option value="oac">☁️ Oracle Analytics Cloud</option>
+                            <option value="sql">🗄️ Custom SQL</option>
                             <option value="ssas" class="dev-mode-only" style="display:none">🧊 SSAS/MSAS Cube</option>
                         </select>
                     </div>
@@ -3715,6 +3716,117 @@ How it works:
                     </div>
                 </div>
                 <!-- ── End SSAS/MSAS Panel ───────────────────────────────────────────── -->
+
+                <!-- ── Custom SQL Inverter Panel ─────────────────────────────────── -->
+                <div class="converter-panel" id="subPanelSql">
+
+                    <!-- Left: Input + Config -->
+                    <div class="dbt-pane" style="max-width: 380px; min-width: 300px; flex: 0 0 360px;">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Custom SQL</span>
+                            <button class="btn-example" onclick="loadSqlExample()">Load example</button>
+                        </div>
+
+                        <div id="sqlDropZone" class="lookml-drop-zone"
+                             onclick="document.getElementById('sqlFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleSqlDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">🗄️</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop .sql files here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">Multiple files supported · or paste below</div>
+                        </div>
+                        <input type="file" id="sqlFileInput" accept=".sql,.ddl" multiple style="display:none" onchange="handleSqlFileInput(event)">
+
+                        <div id="sqlFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0; margin-top: 4px;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                                <label style="font-size: 11px; margin: 0;">Or paste SQL directly</label>
+                                <button class="btn btn-secondary btn-small" onclick="parseSqlPaste()" style="font-size:10px;padding:2px 8px;">Parse</button>
+                            </div>
+                            <textarea id="sqlPasteInput" style="min-height:90px;font-size:11px;resize:vertical;font-family:monospace;"
+                                      placeholder="Paste one or more SQL statements...
+
+CREATE VIEW orders AS SELECT order_id, customer_id, total FROM raw.orders;
+CREATE VIEW customers AS SELECT customer_id, name, email FROM raw.customers;"></textarea>
+                        </div>
+
+                        <div id="sqlStatementSection" style="display:none; flex-shrink:0;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                                <label style="font-size:11px;font-weight:600;">Detected statements <span id="sqlStatementCount" style="color:var(--accent);"></span></label>
+                                <div style="display:flex;gap:6px;">
+                                    <button class="btn btn-secondary btn-small" onclick="setSqlAllSelected(true)" style="font-size:10px;padding:2px 7px;">All</button>
+                                    <button class="btn btn-secondary btn-small" onclick="setSqlAllSelected(false)" style="font-size:10px;padding:2px 7px;">None</button>
+                                    <button class="btn btn-secondary btn-small" onclick="clearSqlFiles()" style="font-size:10px;padding:2px 7px;color:var(--text-muted);">Clear</button>
+                                </div>
+                            </div>
+                            <div id="sqlStatementList" style="max-height:190px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);"></div>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Connection</label>
+                            <select id="sqlConnectionId" class="form-input" style="font-size: 12px;">
+                                <option value="">— Connect to Sigma to load —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="sqlDatabase" placeholder="e.g. ANALYTICS" style="font-size: 12px;">
+                        </div>
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Schema override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="sqlSchema" placeholder="e.g. PUBLIC" style="font-size: 12px;">
+                        </div>
+
+                        <div class="dbt-badge-row" id="sqlInputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" id="sqlConvertBtn" onclick="runSqlConversion()">
+                                🗄️ Convert to Sigma JSON
+                            </button>
+                        </div>
+
+                        <div style="font-size: 10px; color: var(--text-muted); padding: 0 4px; line-height: 1.4;">
+                            <strong>What gets converted:</strong><br>
+                            • <b>CREATE VIEW / TABLE</b> → one SQL element per statement<br>
+                            • <b>Bare SELECT</b> → SQL element with extracted columns<br>
+                            • <b>SELECT list</b> → column names auto-extracted<br>
+                            • Multiple files merged into a single model
+                        </div>
+                    </div>
+
+                    <!-- Right: Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copySqlOutput()" id="sqlCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadSqlOutputToEditor()" id="sqlLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="sqlWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="sqlJsonOutput" readonly placeholder="Convert SQL to see the Sigma model here...
+
+How it works:
+• Each CREATE VIEW/TABLE statement → one SQL element
+• SELECT list columns auto-extracted as named columns
+• Multiple files and paste blocks merged into one model
+• Database/schema overrides noted in warnings if set"></textarea>
+
+                        <div class="dbt-badge-row" id="sqlOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="sqlLoadAndSave()" id="sqlSaveBtn" disabled>
+                                💾 Load &amp; Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <!-- ── End Custom SQL Panel ──────────────────────────────────────────── -->
 
                 </div>
                 <!-- ── End Converters Container ─────────────────────────────────── -->
@@ -6329,7 +6441,7 @@ ${JSON.stringify(failedJson, null, 2)}`;
         async function populateConverterConnections() {
             if (!state.accessToken) return;
             const connections = await fetchConnectionsList();
-            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'qlikConnectionId', 'oacConnectionId', 'ssasConnectionId'];
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'qlikConnectionId', 'oacConnectionId', 'ssasConnectionId', 'sqlConnectionId'];
             targetIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (!sel) return;
@@ -9222,8 +9334,8 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         }
 
         function switchConverter(format) {
-            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Qlik', 'Oac', 'Ssas'];
-            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', qlik: 'Qlik', oac: 'Oac', ssas: 'Ssas' };
+            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Qlik', 'Oac', 'Ssas', 'Sql'];
+            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', qlik: 'Qlik', oac: 'Oac', ssas: 'Ssas', sql: 'Sql' };
             const target = map[format] || 'Dbt';
             panels.forEach(p => {
                 const el = document.getElementById('subPanel' + p);
@@ -13620,6 +13732,363 @@ explores:
                 return;
             }
             openSaveLocationModal();
+        }
+
+        // ── Custom SQL Converter ─────────────────────────────────────────────
+
+        var sqlFiles = []; // [{ id, filename, statements: [{ id, name, sql, type, selected }] }]
+
+        // Split raw SQL text into individual statements.
+        // Detects CREATE [OR REPLACE] [TEMP] [MATERIALIZED] VIEW/TABLE … AS blocks
+        // and bare SELECT/WITH queries separated by semicolons.
+        function parseSqlStatements(rawText, filename) {
+            var text = rawText.replace(/\r\n/g, '\n');
+            if (!text.trim()) return [];
+            var results = [];
+            // Match CREATE … VIEW/TABLE … AS — capture the object name (last dotted segment)
+            var createRe = /(?:^|\n)\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:MATERIALIZED\s+)?(?:VIEW|TABLE)\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[\w"`[\].]+\.)*?([\w"`[\]]+)\s+AS\s*/gi;
+            var boundaries = [];
+            var m;
+            while ((m = createRe.exec(text)) !== null) {
+                var rawName = m[1].replace(/["`[\]]/g, '');
+                boundaries.push({ name: rawName, start: m.index === 0 ? 0 : m.index + 1, sqlBodyStart: createRe.lastIndex });
+            }
+            if (boundaries.length === 0) {
+                // No CREATE statements — split on ; and treat each chunk as a bare query
+                var chunks = text.split(/;\s*(?:\n|$)/);
+                var qIdx = 0;
+                chunks.forEach(function(chunk) {
+                    var sql = chunk.trim();
+                    if (!sql) return;
+                    qIdx++;
+                    var base = (filename || 'query').replace(/\.sql$/i, '').replace(/[^a-zA-Z0-9_]/g, '_');
+                    results.push({ name: chunks.length === 1 ? base : base + '_' + qIdx, sql: sql, type: 'query' });
+                });
+                return results;
+            }
+            // Text before the first CREATE (bare queries)
+            var preText = text.slice(0, boundaries[0].start).trim();
+            if (preText) {
+                preText.split(/;\s*(?:\n|$)/).forEach(function(chunk, i) {
+                    var sql = chunk.trim();
+                    if (sql && /SELECT\b/i.test(sql)) {
+                        var base = (filename || 'query').replace(/\.sql$/i, '').replace(/[^a-zA-Z0-9_]/g, '_');
+                        results.push({ name: base + '_q' + (i + 1), sql: sql, type: 'query' });
+                    }
+                });
+            }
+            // Each CREATE block runs until the next boundary or end of text
+            for (var i = 0; i < boundaries.length; i++) {
+                var b = boundaries[i];
+                var end = i + 1 < boundaries.length ? boundaries[i + 1].start : text.length;
+                var body = text.slice(b.sqlBodyStart, end).trim().replace(/;\s*$/, '').trim();
+                results.push({ name: b.name, sql: body, type: 'view' });
+            }
+            return results;
+        }
+
+        // Extract column names from the outer SELECT list of a SQL statement.
+        // Handles CTEs, DISTINCT, depth-0 comma splitting, and AS aliases.
+        function extractSqlColumns(sql) {
+            var workSql = sql;
+            if (/^\s*WITH\s/i.test(sql)) {
+                // Walk at depth 0 to find the last top-level SELECT (after all CTE bodies)
+                var depth = 0, lastTopSel = -1;
+                for (var i = 0; i < sql.length; i++) {
+                    var ch = sql[i];
+                    if (ch === '(') depth++;
+                    else if (ch === ')') depth--;
+                    else if (depth === 0 && /^SELECT\b/i.test(sql.slice(i))) lastTopSel = i;
+                }
+                if (lastTopSel >= 0) workSql = sql.slice(lastTopSel);
+            }
+            // Strip SELECT [DISTINCT|ALL]
+            var afterSelect = workSql.replace(/^\s*SELECT\s+(?:DISTINCT\s+|ALL\s+)?/i, '');
+            // Find FROM at depth 0
+            var depth2 = 0, fromIdx = afterSelect.length;
+            for (var j = 0; j < afterSelect.length; j++) {
+                var c = afterSelect[j];
+                if (c === '(') depth2++;
+                else if (c === ')') depth2--;
+                else if (depth2 === 0 && /^FROM\b/i.test(afterSelect.slice(j))) { fromIdx = j; break; }
+            }
+            var selectList = afterSelect.slice(0, fromIdx).trim();
+            if (!selectList || selectList === '*') return [];
+            // Split on depth-0 commas
+            var parts = [], cur = '', d = 0;
+            for (var k = 0; k < selectList.length; k++) {
+                var ck = selectList[k];
+                if (ck === '(') { d++; cur += ck; }
+                else if (ck === ')') { d--; cur += ck; }
+                else if (ck === ',' && d === 0) { parts.push(cur.trim()); cur = ''; }
+                else cur += ck;
+            }
+            if (cur.trim()) parts.push(cur.trim());
+            return parts.map(function(part, idx) {
+                // Explicit AS alias
+                var asM = part.match(/\bAS\s+([\w"`[\]]+)\s*$/i);
+                if (asM) return asM[1].replace(/["`[\]]/g, '');
+                // Bare col ref (no spaces or parens) — take last dotted segment
+                if (!/[\s(]/.test(part.trim())) {
+                    var colM = part.match(/(?:[^.]+\.)*([^.]+)$/);
+                    if (colM) return colM[1].replace(/["`[\]]/g, '');
+                }
+                return 'col_' + (idx + 1);
+            }).filter(Boolean);
+        }
+
+        function handleSqlFileInput(event) {
+            Array.from(event.target.files).forEach(function(f) { processSqlFile(f); });
+            event.target.value = '';
+        }
+
+        function handleSqlDrop(event) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('drag-over');
+            Array.from(event.dataTransfer.files).forEach(function(f) {
+                if (/\.(sql|ddl)$/i.test(f.name)) processSqlFile(f);
+                else showToast('⚠️ Skipped ' + f.name + ' — not a .sql file', 'warning');
+            });
+        }
+
+        function processSqlFile(file) {
+            var reader = new FileReader();
+            reader.onload = function(e) { ingestSqlText(e.target.result, file.name); };
+            reader.readAsText(file);
+        }
+
+        function parseSqlPaste() {
+            var text = document.getElementById('sqlPasteInput').value.trim();
+            if (!text) { showToast('⚠️ Paste area is empty', 'warning'); return; }
+            ingestSqlText(text, null);
+            document.getElementById('sqlPasteInput').value = '';
+        }
+
+        function ingestSqlText(text, filename) {
+            var stmts = parseSqlStatements(text, filename || 'paste');
+            if (stmts.length === 0) {
+                showToast('⚠️ No SQL statements found in ' + (filename || 'paste'), 'warning');
+                return;
+            }
+            sqlFiles.push({
+                id: sigmaShortId(8),
+                filename: filename || 'paste',
+                statements: stmts.map(function(s) {
+                    return { id: sigmaShortId(8), name: s.name, sql: s.sql, type: s.type, selected: true };
+                })
+            });
+            renderSqlStatements();
+            showToast('✅ ' + stmts.length + ' statement' + (stmts.length !== 1 ? 's' : '') + ' loaded from ' + (filename || 'paste'), 'success');
+        }
+
+        function renderSqlStatements() {
+            var allStmts = [];
+            sqlFiles.forEach(function(f) { f.statements.forEach(function(s) { allStmts.push({ file: f, stmt: s }); }); });
+            var section = document.getElementById('sqlStatementSection');
+            var listEl  = document.getElementById('sqlStatementList');
+            var countEl = document.getElementById('sqlStatementCount');
+            if (allStmts.length === 0) { section.style.display = 'none'; return; }
+            section.style.display = 'block';
+            countEl.textContent = '(' + allStmts.length + ')';
+            listEl.innerHTML = allStmts.map(function(item, idx) {
+                var s = item.stmt;
+                var preview = s.sql.replace(/\s+/g, ' ').slice(0, 58);
+                if (s.sql.length > 58) preview += '…';
+                var badge = s.type === 'view'
+                    ? '<span style="font-size:9px;background:var(--accent);color:#fff;border-radius:3px;padding:0 4px;margin-left:4px;">VIEW</span>'
+                    : '<span style="font-size:9px;background:var(--bg-secondary);color:var(--text-muted);border:1px solid var(--border);border-radius:3px;padding:0 4px;margin-left:4px;">QUERY</span>';
+                return '<label style="display:flex;align-items:flex-start;gap:6px;padding:5px 8px;border-bottom:1px solid var(--border);cursor:pointer;">' +
+                    '<input type="checkbox"' + (s.selected ? ' checked' : '') + ' style="margin-top:2px;flex-shrink:0;" onchange="toggleSqlStatement(' + idx + ',this.checked)">' +
+                    '<div style="min-width:0;flex:1;">' +
+                    '<div style="font-size:11px;font-weight:600;color:var(--text-primary);">' + escapeHtml(s.name) + badge + '</div>' +
+                    '<div style="font-size:10px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(preview) + '</div>' +
+                    '</div></label>';
+            }).join('');
+            renderSqlFileList();
+            updateSqlInputStats(allStmts);
+        }
+
+        function renderSqlFileList() {
+            var listEl = document.getElementById('sqlFileList');
+            if (!listEl) return;
+            listEl.innerHTML = sqlFiles.map(function(f, fi) {
+                return '<div style="display:flex;align-items:center;gap:6px;padding:3px 6px;background:var(--bg-tertiary);border-radius:4px;">' +
+                    '<span style="flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary);">📄 ' + escapeHtml(f.filename) + '</span>' +
+                    '<span style="font-size:10px;color:var(--text-muted);">' + f.statements.length + ' stmt' + (f.statements.length !== 1 ? 's' : '') + '</span>' +
+                    '<button onclick="removeSqlFile(' + fi + ')" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:14px;padding:0;line-height:1;">×</button>' +
+                    '</div>';
+            }).join('');
+        }
+
+        function updateSqlInputStats(allStmts) {
+            var total    = allStmts.length;
+            var selected = allStmts.filter(function(x) { return x.stmt.selected; }).length;
+            var statsEl  = document.getElementById('sqlInputStats');
+            if (statsEl) {
+                statsEl.innerHTML =
+                    '<span class="dbt-stat-badge models">🗄️ ' + total + ' statement' + (total !== 1 ? 's' : '') + '</span>' +
+                    '<span class="dbt-stat-badge dimensions">' + selected + ' selected</span>';
+            }
+        }
+
+        function toggleSqlStatement(flatIdx, checked) {
+            var flat = [];
+            sqlFiles.forEach(function(f) { f.statements.forEach(function(s) { flat.push(s); }); });
+            if (flat[flatIdx]) flat[flatIdx].selected = checked;
+            var allStmts = flat.map(function(s) { return { stmt: s }; });
+            updateSqlInputStats(allStmts);
+        }
+
+        function setSqlAllSelected(val) {
+            sqlFiles.forEach(function(f) { f.statements.forEach(function(s) { s.selected = val; }); });
+            renderSqlStatements();
+        }
+
+        function removeSqlFile(fileIdx) {
+            sqlFiles.splice(fileIdx, 1);
+            renderSqlStatements();
+        }
+
+        function clearSqlFiles() {
+            sqlFiles = [];
+            document.getElementById('sqlPasteInput').value = '';
+            document.getElementById('sqlStatementSection').style.display = 'none';
+            document.getElementById('sqlFileList').innerHTML = '';
+            document.getElementById('sqlInputStats').innerHTML = '';
+            document.getElementById('sqlJsonOutput').value = '';
+            document.getElementById('sqlOutputStats').innerHTML = '';
+            document.getElementById('sqlWarningBox').style.display = 'none';
+            ['sqlCopyBtn', 'sqlLoadBtn', 'sqlSaveBtn'].forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) el.disabled = true;
+            });
+        }
+
+        function runSqlConversion() {
+            var connectionId = document.getElementById('sqlConnectionId').value.trim();
+            var database = document.getElementById('sqlDatabase').value.trim().toUpperCase();
+            var schema   = document.getElementById('sqlSchema').value.trim().toUpperCase();
+            var warnings = [];
+
+            var selected = [];
+            sqlFiles.forEach(function(f) {
+                f.statements.forEach(function(s) { if (s.selected) selected.push(s); });
+            });
+            if (selected.length === 0) { showToast('❌ No statements selected', 'error'); return; }
+
+            var elements = [];
+            selected.forEach(function(stmt) {
+                var cols   = extractSqlColumns(stmt.sql);
+                var elemId = sigmaShortId();
+                var colObjs = cols.map(function(colName) {
+                    return { id: sigmaInodeId(colName.toUpperCase()), formula: '[' + sigmaDisplayName(colName) + ']' };
+                });
+                var source = { kind: 'sql', statement: stmt.sql };
+                if (connectionId) source.connectionId = connectionId;
+                if (cols.length === 0) {
+                    warnings.push('"' + stmt.name + '": columns not auto-extracted — add them manually in Sigma after loading.');
+                }
+                elements.push({
+                    id: elemId,
+                    kind: 'table',
+                    name: sigmaDisplayName(stmt.name),
+                    source: source,
+                    columns: colObjs,
+                    order: colObjs.map(function(c) { return c.id; })
+                });
+            });
+
+            if ((database || schema) && selected.length > 0) {
+                warnings.push('Database/schema overrides are noted but not substituted into SQL bodies — apply prefixes manually if needed.');
+            }
+
+            var sigmaModel = {
+                name: 'Custom SQL Model',
+                pages: [{ id: sigmaShortId(), name: 'Page 1', elements: elements }]
+            };
+            var json = JSON.stringify(sigmaModel, null, 2);
+            document.getElementById('sqlJsonOutput').value = json;
+            ['sqlCopyBtn', 'sqlLoadBtn', 'sqlSaveBtn'].forEach(function(id) {
+                var el = document.getElementById(id); if (el) el.disabled = false;
+            });
+            var totalCols = elements.reduce(function(s, e) { return s + (e.columns || []).length; }, 0);
+            document.getElementById('sqlOutputStats').innerHTML =
+                '<span class="dbt-stat-badge models">🔷 ' + elements.length + ' element' + (elements.length !== 1 ? 's' : '') + '</span>' +
+                '<span class="dbt-stat-badge dimensions">' + totalCols + ' column' + (totalCols !== 1 ? 's' : '') + '</span>';
+            var warnBox = document.getElementById('sqlWarningBox');
+            if (warnings.length > 0) {
+                warnBox.style.display = 'block';
+                warnBox.innerHTML = warnings.map(function(w) { return '<div>⚠️ ' + escapeHtml(w) + '</div>'; }).join('');
+            } else { warnBox.style.display = 'none'; }
+            showToast('✅ Converted ' + elements.length + ' SQL element' + (elements.length !== 1 ? 's' : ''), 'success');
+        }
+
+        function copySqlOutput() {
+            var val = document.getElementById('sqlJsonOutput').value;
+            if (!val) return;
+            navigator.clipboard.writeText(val).then(function() { showToast('📋 Copied to clipboard', 'success'); });
+        }
+
+        function loadSqlOutputToEditor() {
+            var val = document.getElementById('sqlJsonOutput').value;
+            if (!val) return;
+            try {
+                var obj = JSON.parse(val);
+                editorMode = 'json';
+                _updateModeToggleUI();
+                setEditorContent(obj);
+            } catch(e) { setEditorRaw(val); }
+            state.isNewModel = true;
+            state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from Custom SQL (unsaved)';
+            ['findBtn', 'treeViewBtn', 'formatBtn', 'diffBtn', 'copyBtn', 'saveBtn', 'aiBtn'].forEach(function(id) {
+                var el = document.getElementById(id); if (el) el.disabled = false;
+            });
+            enableEditorModeToggle();
+            switchEditorTab('json');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
+        }
+
+        async function sqlLoadAndSave() {
+            loadSqlOutputToEditor();
+            if (!state.accessToken) {
+                showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning');
+                return;
+            }
+            openSaveLocationModal();
+        }
+
+        function loadSqlExample() {
+            var example = [
+                'CREATE VIEW customers AS',
+                'SELECT',
+                '  customer_id,',
+                '  first_name,',
+                '  last_name,',
+                '  email,',
+                '  created_at',
+                'FROM raw.public.customers;',
+                '',
+                'CREATE VIEW orders AS',
+                'SELECT',
+                '  order_id,',
+                '  customer_id,',
+                '  order_date,',
+                '  status,',
+                '  total_amount',
+                'FROM raw.public.orders;',
+                '',
+                'CREATE VIEW revenue_summary AS',
+                'SELECT',
+                '  customer_id,',
+                '  Count(order_id)   AS order_count,',
+                '  Sum(total_amount) AS lifetime_value,',
+                '  Max(order_date)   AS last_order_date',
+                'FROM orders',
+                'GROUP BY customer_id;'
+            ].join('\n');
+            document.getElementById('sqlPasteInput').value = example;
+            parseSqlPaste();
         }
 
         // ── dbt Import Modal ────────────────────────────────────────────────
