@@ -13841,59 +13841,162 @@ explores:
         // Given a SQL body (the part after AS), try to resolve its primary warehouse source.
         // Returns { kind:'warehouse-table', path:['DB','SCHEMA','TABLE'], hasJoins, hasAgg }
         // or null if too complex to auto-resolve (subquery, CTE-only, multiple FROM tables, etc.)
-        function extractSqlSource(sql) {
-            // Skip CTEs: find the outermost (last top-level) SELECT
+        // ── Full SQL parser: primary table, JOINs, SELECT columns, aggregates ──
+
+        // Build a warehouse path array from a table reference and db/schema overrides.
+        function buildSqlPath(tableRef, db, schema) {
+            var raw = tableRef.replace(/["`[\]]/g, '');
+            if (!raw) return null;
+            var parts = raw.split('.').map(function(p) { return p.toUpperCase(); });
+            if (parts.length >= 3) return parts.slice(-3);
+            if (parts.length === 2) return db ? [db].concat(parts) : parts;
+            if (db && schema) return [db, schema, parts[0]];
+            if (schema)       return [schema, parts[0]];
+            return parts;
+        }
+
+        // Find matching close-paren index starting from openIdx.
+        function sqlFindClose(str, openIdx) {
+            var d = 0;
+            for (var i = openIdx; i < str.length; i++) {
+                if (str[i] === '(') d++;
+                else if (str[i] === ')') { d--; if (d === 0) return i; }
+            }
+            return str.length;
+        }
+
+        // Split a comma-separated string at depth 0.
+        function splitDepthZero(str) {
+            var parts = [], cur = '', d = 0;
+            for (var i = 0; i < str.length; i++) {
+                var ch = str[i];
+                if (ch === '(') { d++; cur += ch; }
+                else if (ch === ')') { d--; cur += ch; }
+                else if (ch === ',' && d === 0) { parts.push(cur.trim()); cur = ''; }
+                else cur += ch;
+            }
+            if (cur.trim()) parts.push(cur.trim());
+            return parts;
+        }
+
+        // Extract the alias or final name from one SELECT item (e.g. "s.amount AS revenue" → "revenue").
+        function sqlExtractAlias(part) {
+            var asM = part.match(/\bAS\s+([\w"`[\]]+)\s*$/i);
+            if (asM) return asM[1].replace(/["`[\]]/g, '');
+            // No parens → bare column ref, take last dotted segment
+            if (!/[()]/.test(part)) {
+                var m = part.trim().match(/(?:[^.]+\.)*([^.\s]+)\s*$/);
+                return m ? m[1].replace(/["`[\]]/g, '') : null;
+            }
+            return null; // function without alias → skip
+        }
+
+        // Comprehensive parser: primary table, explicit JOINs, columns, metrics.
+        // Returns null if the query is too complex (subquery in FROM, implicit cross-join, etc.)
+        function parseSqlFull(sql) {
+            // Skip CTEs: find the last top-level SELECT after all CTE definitions.
             var workSql = sql;
             if (/^\s*WITH\s/i.test(sql)) {
-                var depth = 0, lastTopSel = -1;
-                for (var i = 0; i < sql.length; i++) {
-                    if (sql[i] === '(') depth++;
-                    else if (sql[i] === ')') depth--;
-                    else if (depth === 0 && /^SELECT\b/i.test(sql.slice(i))) lastTopSel = i;
+                var d0 = 0, lastSel = -1;
+                for (var ci = 0; ci < sql.length; ci++) {
+                    if (sql[ci] === '(') d0++;
+                    else if (sql[ci] === ')') d0--;
+                    else if (d0 === 0 && /^SELECT\b/i.test(sql.slice(ci))) lastSel = ci;
                 }
-                if (lastTopSel < 0) return null;
-                workSql = sql.slice(lastTopSel);
+                if (lastSel < 0) return null;
+                workSql = sql.slice(lastSel);
             }
-            // Strip SELECT … down to FROM
+
+            // Locate FROM at depth 0
             var afterSel = workSql.replace(/^\s*SELECT\s+(?:DISTINCT\s+|ALL\s+)?/i, '');
-            var d = 0, fromIdx = -1;
-            for (var j = 0; j < afterSel.length; j++) {
-                if (afterSel[j] === '(') d++;
-                else if (afterSel[j] === ')') d--;
-                else if (d === 0 && /^FROM\b/i.test(afterSel.slice(j))) { fromIdx = j; break; }
+            var d1 = 0, fromAt = -1;
+            for (var fi = 0; fi < afterSel.length; fi++) {
+                if (afterSel[fi] === '(') d1++;
+                else if (afterSel[fi] === ')') d1--;
+                else if (d1 === 0 && /^FROM\b/i.test(afterSel.slice(fi))) { fromAt = fi; break; }
             }
-            if (fromIdx < 0) return null;
-            var afterFrom = afterSel.slice(fromIdx + 4).replace(/^\s+/, '');
-            // Subquery in FROM
-            if (/^\s*\(/.test(afterFrom)) return null;
-            // Find end of FROM clause (WHERE/JOIN/GROUP/ORDER/HAVING/LIMIT/UNION)
-            var stopRe = /\b(WHERE|(?:INNER|LEFT|RIGHT|FULL|CROSS)?\s*JOIN|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|UNION)\b/i;
-            var stopM  = stopRe.exec(afterFrom);
-            var fromClause = (stopM ? afterFrom.slice(0, stopM.index) : afterFrom).trim();
-            // Comma-separated = implicit cross join
-            if (/,/.test(fromClause)) return null;
-            // Bare table token (first word before alias)
-            var tableRef = fromClause.split(/\s+/)[0].replace(/["`[\]]/g, '');
-            if (!tableRef) return null;
-            var rawParts = tableRef.split('.');
-            var parts = rawParts.map(function(p) { return p.toUpperCase(); });
-            // Fill in db/schema overrides for short paths
+            if (fromAt < 0) return null;
+
+            var selectListStr = afterSel.slice(0, fromAt).trim();
+            var restStr = afterSel.slice(fromAt + 4).replace(/^\s+/, '');
+
+            // Parse primary table (before first JOIN / WHERE / GROUP / etc.)
+            var stopRe = /\b(WHERE|(?:INNER|LEFT(?:\s+OUTER)?|RIGHT(?:\s+OUTER)?|FULL(?:\s+OUTER)?|CROSS)?\s*JOIN|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|UNION)\b/i;
+            var firstStop = stopRe.exec(restStr);
+            var primaryClause = (firstStop ? restStr.slice(0, firstStop.index) : restStr).trim();
+
+            if (/^\s*\(/.test(primaryClause)) return null; // subquery
+            if (/,/.test(primaryClause))       return null; // implicit cross-join
+
+            var ptokens = primaryClause.split(/\s+/);
+            var primaryTableRef = ptokens[0];
+            var aliasIdx = (ptokens[1] || '').toUpperCase() === 'AS' ? 2 : 1;
+            // (alias is unused for path-building but kept for ON clause resolution)
+
             var db     = document.getElementById('sqlDatabase').value.trim().toUpperCase();
             var schema = document.getElementById('sqlSchema').value.trim().toUpperCase();
-            var path;
-            if (parts.length >= 3) {
-                path = parts.slice(-3); // use last 3 segments
-            } else if (parts.length === 2) {
-                path = db ? [db].concat(parts) : parts;
-            } else {
-                // bare table name
-                if (db && schema)     path = [db, schema, parts[0]];
-                else if (schema)      path = [schema, parts[0]];
-                else                  path = parts;
+            var primaryPath = buildSqlPath(primaryTableRef, db, schema);
+            if (!primaryPath) return null;
+
+            // Parse explicit JOINs using regex over workSql
+            var joins = [];
+            var joinRe = /\b(INNER\s+JOIN|LEFT\s+(?:OUTER\s+)?JOIN|RIGHT\s+(?:OUTER\s+)?JOIN|FULL\s+(?:OUTER\s+)?JOIN|CROSS\s+JOIN|JOIN)\s+([\w"`[\].]+)(?:\s+(?:AS\s+)?([\w"`[\]]+))?\s+ON\s+([\w"`.[\]]+)\s*=\s*([\w"`.[\]]+)/gi;
+            var jm;
+            while ((jm = joinRe.exec(workSql)) !== null) {
+                var jType = jm[1].replace(/\s+OUTER\s*/i, ' ').replace(/\s+/g, '_').trim().toUpperCase();
+                var jTable = jm[2];
+                var jAlias = jm[3] ? jm[3].replace(/["`[\]]/g, '') : jm[2].split('.').pop().replace(/["`[\]]/g, '');
+                var onLeft  = jm[4].split('.').pop().replace(/["`[\]]/g, '').toUpperCase();
+                var onRight = jm[5].split('.').pop().replace(/["`[\]]/g, '').toUpperCase();
+                var jPath = buildSqlPath(jTable, db, schema);
+                if (jPath) joins.push({ path: jPath, alias: jAlias, joinType: jType, leftKey: onLeft, rightKey: onRight });
             }
-            var hasJoins = !!(stopM && /JOIN/i.test(stopM[1]));
-            var hasAgg   = /\b(GROUP\s+BY|SUM\s*\(|COUNT\s*\(|AVG\s*\(|MIN\s*\(|MAX\s*\()\b/i.test(sql);
-            return { kind: 'warehouse-table', path: path, hasJoins: hasJoins, hasAgg: hasAgg };
+
+            // Parse SELECT items into regular columns and aggregate metrics
+            var columns = [], metrics = [];
+            splitDepthZero(selectListStr).forEach(function(part) {
+                if (!part || /^\s*\*/.test(part) || /\.\*\s*$/.test(part)) return; // skip *
+                var alias = sqlExtractAlias(part);
+                var aggM  = part.match(/\b(SUM|COUNT\s+DISTINCT|COUNT|AVG|AVERAGE|MIN|MAX)\s*\(/i);
+                if (aggM) {
+                    if (!alias) alias = aggM[1].replace(/\s+/g, '').toLowerCase() + '_result';
+                    var funcName = aggM[1].replace(/\s+/g, '').toUpperCase();
+                    var parenOpen = part.indexOf('(');
+                    var parenClose = sqlFindClose(part, parenOpen);
+                    var inner = part.slice(parenOpen + 1, parenClose).trim();
+                    var innerCol = inner.split('.').pop().replace(/["`[\]]/g, '').replace(/^\*$/, 'rows') || alias;
+                    var sigmaFn = { SUM: 'Sum', COUNT: 'CountIf', COUNTDISTINCT: 'CountDistinct', AVG: 'Avg', AVERAGE: 'Avg', MIN: 'Min', MAX: 'Max' }[funcName] || 'Sum';
+                    var formula = funcName === 'COUNT'
+                        ? 'CountIf(IsNotNull([' + sigmaDisplayName(innerCol) + ']))'
+                        : sigmaFn + '([' + sigmaDisplayName(innerCol) + '])';
+                    metrics.push({ name: sigmaDisplayName(alias), formula: formula });
+                } else {
+                    if (alias) columns.push(alias);
+                }
+            });
+
+            return { primaryPath: primaryPath, joins: joins, columns: columns, metrics: metrics };
+        }
+
+        // For the statement list preview: lightweight source resolution (same as before).
+        function extractSqlSource(sql) {
+            var parsed = parseSqlFull(sql);
+            if (!parsed) return null;
+            var hasJoins = parsed.joins.length > 0;
+            var hasAgg   = parsed.metrics.length > 0;
+            return { kind: 'warehouse-table', path: parsed.primaryPath, hasJoins: hasJoins, hasAgg: hasAgg };
+        }
+
+        // Ensure a column exists on an element, return its ID.
+        function ensureSqlColumn(elem, colName) {
+            var dn = sigmaDisplayName(colName);
+            var existing = (elem.columns || []).find(function(c) { return c.formula === '[' + dn + ']'; });
+            if (existing) return existing.id;
+            var id = sigmaInodeId(colName.toUpperCase());
+            if (!elem.columns) { elem.columns = []; elem.order = []; }
+            elem.columns.push({ id: id, formula: '[' + dn + ']' });
+            elem.order.push(id);
+            return id;
         }
 
         // After ingesting statements, scan all sources to auto-suggest db/schema overrides.
@@ -13901,14 +14004,22 @@ explores:
             var dbCounts = {}, schemaCounts = {};
             sqlFiles.forEach(function(f) {
                 f.statements.forEach(function(s) {
-                    var src = extractSqlSource(s.sql);
-                    if (!src) return;
-                    if (src.path.length >= 3) {
-                        dbCounts[src.path[0]] = (dbCounts[src.path[0]] || 0) + 1;
-                        schemaCounts[src.path[1]] = (schemaCounts[src.path[1]] || 0) + 1;
-                    } else if (src.path.length === 2) {
-                        schemaCounts[src.path[0]] = (schemaCounts[src.path[0]] || 0) + 1;
+                    var parsed = parseSqlFull(s.sql);
+                    if (!parsed) return;
+                    var path = parsed.primaryPath;
+                    if (path.length >= 3) {
+                        dbCounts[path[0]]     = (dbCounts[path[0]] || 0) + 1;
+                        schemaCounts[path[1]] = (schemaCounts[path[1]] || 0) + 1;
+                    } else if (path.length === 2) {
+                        schemaCounts[path[0]] = (schemaCounts[path[0]] || 0) + 1;
                     }
+                    // Also scan JOIN paths
+                    parsed.joins.forEach(function(j) {
+                        if (j.path.length >= 3) {
+                            dbCounts[j.path[0]]     = (dbCounts[j.path[0]] || 0) + 1;
+                            schemaCounts[j.path[1]] = (schemaCounts[j.path[1]] || 0) + 1;
+                        }
+                    });
                 });
             });
             var topDb     = Object.keys(dbCounts).sort(function(a,b){ return dbCounts[b]-dbCounts[a]; })[0];
@@ -14063,67 +14174,117 @@ explores:
             });
             if (selected.length === 0) { showToast('❌ No statements selected', 'error'); return; }
 
-            var elements = [];
+            var allElements  = [];  // final element list (primary + join targets)
+            var joinElemCache = {}; // path key → { id, elem } — reuse shared dimension tables
             var nativeCount = 0, sqlFallback = 0;
 
+            function makeSource(path) {
+                var s = { kind: 'warehouse-table', path: path };
+                if (connectionId) s.connectionId = connectionId;
+                return s;
+            }
+
             selected.forEach(function(stmt) {
-                var cols    = extractSqlColumns(stmt.sql);
-                var elemId  = sigmaShortId();
-                var colObjs = cols.map(function(colName) {
-                    return { id: sigmaInodeId(colName.toUpperCase()), formula: '[' + sigmaDisplayName(colName) + ']' };
-                });
+                var parsed = parseSqlFull(stmt.sql);
 
-                var src = extractSqlSource(stmt.sql);
-                var source;
-
-                if (src) {
-                    // Native warehouse-table element
-                    source = { kind: 'warehouse-table', path: src.path };
-                    if (connectionId) source.connectionId = connectionId;
-                    nativeCount++;
-                    if (src.hasJoins) {
-                        warnings.push('"' + stmt.name + '": JOINs detected — only the primary table was mapped. Wire additional joins in Sigma.');
-                    }
-                    if (src.hasAgg) {
-                        warnings.push('"' + stmt.name + '": aggregations detected (GROUP BY / SUM etc.) — not auto-applied. Add metrics in Sigma.');
-                    }
-                } else {
-                    // Complex query — fall back to SQL element
-                    source = { kind: 'sql', statement: stmt.sql };
-                    if (connectionId) source.connectionId = connectionId;
+                if (!parsed) {
+                    // Complex query (subquery, implicit cross-join, unresolvable CTE) → SQL element
+                    var fallbackCols = extractSqlColumns(stmt.sql);
+                    var fallbackColObjs = fallbackCols.map(function(c) {
+                        return { id: sigmaInodeId(c.toUpperCase()), formula: '[' + sigmaDisplayName(c) + ']' };
+                    });
+                    var fallbackSrc = { kind: 'sql', statement: stmt.sql };
+                    if (connectionId) fallbackSrc.connectionId = connectionId;
+                    allElements.push({
+                        id: sigmaShortId(), kind: 'table',
+                        name: sigmaDisplayName(stmt.name),
+                        source: fallbackSrc,
+                        columns: fallbackColObjs,
+                        order: fallbackColObjs.map(function(c) { return c.id; })
+                    });
                     sqlFallback++;
-                    warnings.push('"' + stmt.name + '": complex query (subquery, CTE, or multi-table) — kept as custom SQL element.');
+                    warnings.push('"' + stmt.name + '": subquery or implicit cross-join — kept as custom SQL element.');
+                    return;
                 }
 
-                if (cols.length === 0) {
-                    warnings.push('"' + stmt.name + '": could not auto-extract columns — add them manually in Sigma.');
-                }
+                nativeCount++;
 
-                elements.push({
-                    id: elemId,
-                    kind: 'table',
+                // ── Primary element (named after the view) ──────────────────
+                var primaryId   = sigmaShortId();
+                var primaryElem = {
+                    id: primaryId, kind: 'table',
                     name: sigmaDisplayName(stmt.name),
-                    source: source,
-                    columns: colObjs,
-                    order: colObjs.map(function(c) { return c.id; })
+                    source: makeSource(parsed.primaryPath),
+                    columns: [], order: [], metrics: [], relationships: []
+                };
+                allElements.push(primaryElem);
+
+                // Regular columns from SELECT list
+                parsed.columns.forEach(function(colName) { ensureSqlColumn(primaryElem, colName); });
+
+                // Aggregate metrics (SUM/COUNT/AVG/MIN/MAX)
+                parsed.metrics.forEach(function(m) {
+                    var mId = sigmaInodeId(m.name.replace(/\s+/g, '_').toUpperCase());
+                    primaryElem.metrics.push({ id: mId, name: m.name, formula: m.formula });
                 });
+
+                // ── JOIN targets → dimension elements + relationships ────────
+                parsed.joins.forEach(function(join) {
+                    var jKey = join.path.join('.');
+                    if (!joinElemCache[jKey]) {
+                        var jId  = sigmaShortId();
+                        var jElem = {
+                            id: jId, kind: 'table',
+                            name: sigmaDisplayName(join.path[join.path.length - 1]),
+                            source: makeSource(join.path),
+                            columns: [], order: []
+                        };
+                        allElements.push(jElem);
+                        joinElemCache[jKey] = { id: jId, elem: jElem };
+                    }
+                    var joinEntry = joinElemCache[jKey];
+
+                    // Ensure FK columns exist on both sides
+                    var srcColId = ensureSqlColumn(primaryElem, join.leftKey);
+                    var tgtColId = ensureSqlColumn(joinEntry.elem, join.rightKey);
+
+                    var sigmaJoinType = {
+                        LEFT_JOIN: 'left', INNER_JOIN: 'inner',
+                        RIGHT_JOIN: 'right', FULL_JOIN: 'full',
+                        CROSS_JOIN: 'inner', JOIN: 'inner'
+                    }[join.joinType] || 'left';
+
+                    primaryElem.relationships.push({
+                        targetElementId: joinEntry.id,
+                        joinType: sigmaJoinType,
+                        columnPairs: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }]
+                    });
+                });
+
+                // ── Clean up empty arrays ───────────────────────────────────
+                if (!primaryElem.columns.length)      { delete primaryElem.columns;      delete primaryElem.order; }
+                if (!primaryElem.metrics.length)      delete primaryElem.metrics;
+                if (!primaryElem.relationships.length) delete primaryElem.relationships;
             });
 
             var sigmaModel = {
                 name: 'Converted SQL Model',
-                pages: [{ id: sigmaShortId(), name: 'Page 1', elements: elements }]
+                pages: [{ id: sigmaShortId(), name: 'Page 1', elements: allElements }]
             };
+
             var json = JSON.stringify(sigmaModel, null, 2);
             document.getElementById('sqlJsonOutput').value = json;
             ['sqlCopyBtn', 'sqlLoadBtn', 'sqlSaveBtn'].forEach(function(id) {
                 var el = document.getElementById(id); if (el) el.disabled = false;
             });
 
-            var totalCols = elements.reduce(function(s, e) { return s + (e.columns || []).length; }, 0);
+            var totalCols = allElements.reduce(function(s, e) { return s + (e.columns || []).length; }, 0);
+            var totalMets = allElements.reduce(function(s, e) { return s + (e.metrics  || []).length; }, 0);
             document.getElementById('sqlOutputStats').innerHTML =
-                '<span class="dbt-stat-badge models">🔷 ' + elements.length + ' element' + (elements.length !== 1 ? 's' : '') + '</span>' +
-                (nativeCount  ? '<span class="dbt-stat-badge dimensions">✅ ' + nativeCount  + ' native</span>' : '') +
-                (sqlFallback  ? '<span class="dbt-stat-badge">' + sqlFallback + ' SQL fallback</span>' : '') +
+                '<span class="dbt-stat-badge models">🔷 ' + allElements.length + ' element' + (allElements.length !== 1 ? 's' : '') + '</span>' +
+                (nativeCount ? '<span class="dbt-stat-badge dimensions">✅ ' + nativeCount + ' native</span>' : '') +
+                (sqlFallback ? '<span class="dbt-stat-badge">' + sqlFallback + ' SQL fallback</span>' : '') +
+                (totalMets   ? '<span class="dbt-stat-badge metrics">' + totalMets + ' metric' + (totalMets !== 1 ? 's' : '') + '</span>' : '') +
                 '<span class="dbt-stat-badge dimensions">' + totalCols + ' col' + (totalCols !== 1 ? 's' : '') + '</span>';
 
             var warnBox = document.getElementById('sqlWarningBox');
@@ -14132,7 +14293,7 @@ explores:
                 warnBox.innerHTML = warnings.map(function(w) { return '<div>⚠️ ' + escapeHtml(w) + '</div>'; }).join('');
             } else { warnBox.style.display = 'none'; }
 
-            showToast('✅ ' + nativeCount + ' native + ' + sqlFallback + ' SQL element' + (elements.length !== 1 ? 's' : ''), 'success');
+            showToast('✅ ' + nativeCount + ' native + ' + sqlFallback + ' SQL fallback', 'success');
         }
 
         function copySqlOutput() {
