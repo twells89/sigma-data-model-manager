@@ -14251,14 +14251,13 @@ explores:
 
                 nativeCount++;
 
-                // ── Primary element (named after the physical table) ────────
-                // Column formulas use [ElementName/Column] self-reference, so the
-                // element name must match the physical table display name, not the SQL view name.
+                // ── Primary element ─────────────────────────────────────────
+                // No explicit `name` — Sigma auto-assigns from the path's last component
+                // (e.g. "ORDER_FACT"), which is what makes [ORDER_FACT/Col] self-references resolve.
                 var primaryTableName = parsed.primaryPath[parsed.primaryPath.length - 1];
                 var primaryId   = sigmaShortId();
                 var primaryElem = {
                     id: primaryId, kind: 'table',
-                    name: primaryTableName,
                     source: makeSource(parsed.primaryPath),
                     columns: [], order: [], metrics: [], relationships: []
                 };
@@ -14295,7 +14294,6 @@ explores:
                         var jId  = sigmaShortId();
                         var jElem = {
                             id: jId, kind: 'table',
-                            name: join.path[join.path.length - 1],
                             source: makeSource(join.path),
                             columns: [], order: []
                         };
@@ -14312,8 +14310,7 @@ explores:
                         id: sigmaShortId(),
                         targetElementId: joinEntry.id,
                         keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
-                        name: sigmaDisplayName(join.path[join.path.length - 1]),
-                        relationshipType: 'N:1'
+                        name: join.path[join.path.length - 1]
                     });
                 });
 

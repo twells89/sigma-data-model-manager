@@ -13,6 +13,13 @@ function check(label, cond, detail = '') {
   else fail.push(label + (detail ? ': ' + detail : ''));
 }
 
+// Find a warehouse-table element by the last component of its source path
+function byTable(elements, tableName) {
+  return elements.find(e =>
+    e.source?.path && e.source.path[e.source.path.length - 1] === tableName
+  );
+}
+
 // ─── Helper: reset SQL state between sub-tests ───────────────────────────────
 async function resetSql() {
   await page.evaluate(() => {
@@ -91,7 +98,7 @@ console.log('\n── 2. Single-table → warehouse-table ──');
   const elements = model?.pages?.[0]?.elements || [];
   check('exactly 1 element',            elements.length === 1, `got ${elements.length}`);
   const el = elements[0];
-  check('element name = ORDERS',          el?.name === 'ORDERS');
+  check('no explicit name on warehouse-table element', !el?.name);
   check('source kind = warehouse-table', el?.source?.kind === 'warehouse-table');
   check('path = [ANALYTICS, PUBLIC, ORDERS]',
     JSON.stringify(el?.source?.path) === JSON.stringify(['ANALYTICS', 'PUBLIC', 'ORDERS']));
@@ -146,9 +153,10 @@ GROUP BY o.order_id, o.order_date, c.customer_name, p.product_name
   // Primary + 2 join targets
   check('3 elements (primary + 2 join targets)', elements.length === 3, `got ${elements.length}`);
 
-  // Primary element is named after the physical table (ORDERS), not the SQL view (sales_summary)
-  const primary = elements.find(e => e.name === 'ORDERS');
-  check('primary element named after physical table (ORDERS)', !!primary);
+  // Primary element is the ORDERS physical table (no explicit name — Sigma auto-assigns)
+  const primary = byTable(elements, 'ORDERS');
+  check('primary element found by path (ORDERS)', !!primary);
+  check('primary has no explicit name',        !primary?.name);
   check('primary source = warehouse-table',    primary?.source?.kind === 'warehouse-table');
   check('primary path = DB.SCH.ORDERS',
     JSON.stringify(primary?.source?.path) === JSON.stringify(['DB', 'SCH', 'ORDERS']));
@@ -159,15 +167,16 @@ GROUP BY o.order_id, o.order_date, c.customer_name, p.product_name
   check('every relationship has id',              rels.every(r => !!r.id));
   check('every relationship has keys array',       rels.every(r => Array.isArray(r.keys) && r.keys.length > 0));
   check('every relationship has targetElementId',  rels.every(r => !!r.targetElementId));
-  check('every relationship has name',             rels.every(r => !!r.name));
-  check('every relationship has relationshipType = N:1', rels.every(r => r.relationshipType === 'N:1'));
+  check('every relationship name = raw table name', rels.every(r => !!r.name && r.name === r.name.toUpperCase()));
+  check('no relationshipType field (not in Sigma schema)', rels.every(r => !('relationshipType' in r)));
 
-  // Join types
-  const innerRel = rels.find(r => r.name === 'Customers');
-  const leftRel  = rels.find(r => r.name === 'Products');
-  // joinType not stored in relationship per schema — keys/targetElementId are the join wiring
-  check('customers element exists',  elements.some(e => e.name === 'CUSTOMERS'));
-  check('products element exists',   elements.some(e => e.name === 'PRODUCTS'));
+  // Relationship names use raw table name
+  const custRel = rels.find(r => r.name === 'CUSTOMERS');
+  const prodRel = rels.find(r => r.name === 'PRODUCTS');
+  check('customers relationship name = CUSTOMERS', !!custRel);
+  check('products relationship name = PRODUCTS',   !!prodRel);
+  check('customers element exists',  !!byTable(elements, 'CUSTOMERS'));
+  check('products element exists',   !!byTable(elements, 'PRODUCTS'));
 
   // FK key columns wired (sourceColumnId / targetColumnId present in keys)
   const firstKeys = rels[0]?.keys || [];
@@ -268,11 +277,11 @@ JOIN DB.SCH.STORE_DIM d ON r.store_id = d.store_id;
   // 2 primary + 1 shared STORE_DIM (not 4)
   check('3 elements (2 primary + 1 shared STORE_DIM)', elements.length === 3, `got ${elements.length}`);
   check('STORE_DIM appears exactly once',
-    elements.filter(e => e.name === 'STORE_DIM').length === 1);
+    elements.filter(e => e.source?.path?.[e.source.path.length-1] === 'STORE_DIM').length === 1);
   check('both primaries have a relationship to the same STORE_DIM element', (() => {
-    const dim = elements.find(e => e.name === 'STORE_DIM');
+    const dim = byTable(elements, 'STORE_DIM');
     if (!dim) return false;
-    const primaries = elements.filter(e => e.name !== 'STORE_DIM');
+    const primaries = elements.filter(e => e.source?.path?.[e.source.path.length-1] !== 'STORE_DIM');
     return primaries.every(p =>
       (p.relationships || []).some(r => r.targetElementId === dim.id)
     );
@@ -315,7 +324,8 @@ JOIN PROD.DW.CUSTOMERS c ON o.cust_id = c.cust_id
   check('relationship id is non-empty string',  typeof rel?.id === 'string' && rel.id.length > 0);
   check('relationship has no joinType field (not part of schema)', !('joinType' in (rel || {})));
   check('relationship has no columnPairs field (renamed to keys)', !('columnPairs' in (rel || {})));
-  check('relationshipType is N:1',               rel?.relationshipType === 'N:1');
+  check('relationship has no relationshipType field (not in Sigma schema)', !('relationshipType' in (rel || {})));
+  check('relationship name = raw table name (CUSTOMERS)', rel?.name === 'CUSTOMERS');
   check('keys is array with 1 entry',            Array.isArray(rel?.keys) && rel?.keys?.length === 1);
   check('sourceColumnId is inode format',        /^inode-/.test(rel?.keys?.[0]?.sourceColumnId || ''));
   check('targetColumnId is inode format',        /^inode-/.test(rel?.keys?.[0]?.targetColumnId || ''));
@@ -355,13 +365,14 @@ console.log('\n── 10. DB/schema overrides ──');
 console.log('\n── 11. Column formula format: [ElementName/Column] ──');
 
 {
-  // Physical table is FACT_ORDERS → element named "FACT_ORDERS" regardless of view name
+  // Physical table is FACT_ORDERS — element has no explicit name, Sigma auto-assigns from path
   const model = await convert(
     'CREATE VIEW any_view_name AS SELECT order_id, total_amount FROM ANALYTICS.PUBLIC.FACT_ORDERS'
   );
-  const el = model?.pages?.[0]?.elements?.[0];
+  const el = byTable(model?.pages?.[0]?.elements || [], 'FACT_ORDERS');
   const cols = el?.columns || [];
-  check('element named after physical table (FACT_ORDERS)', el?.name === 'FACT_ORDERS');
+  check('element found by path (FACT_ORDERS)', !!el);
+  check('no explicit name on warehouse-table element', !el?.name);
   check('columns present',                         cols.length >= 2, `got ${cols.length}`);
   // Formula prefix = raw physical table name (uppercase, underscores), NOT the display name
   check('order_id col = [FACT_ORDERS/Order Id]',   cols.some(c => c.formula === '[FACT_ORDERS/Order Id]'));
@@ -381,15 +392,15 @@ FROM PROD.DW.ORDERS o
 JOIN PROD.DW.CUSTOMERS c ON o.cust_id = c.cust_id
 `);
   const elements = model?.pages?.[0]?.elements || [];
-  const dimElem = elements.find(e => e.name === 'CUSTOMERS');
-  check('dimension element exists',            !!dimElem);
+  const dimElem = byTable(elements, 'CUSTOMERS');
+  check('dimension element exists (CUSTOMERS)',  !!dimElem);
   const dimCols = dimElem?.columns || [];
   check('dim FK col = [CUSTOMERS/Cust Id]',
     dimCols.some(c => c.formula === '[CUSTOMERS/Cust Id]'),
     dimCols.map(c => c.formula).join(', '));
-  // Primary table is ORDERS → element named "ORDERS"
+  // Primary table is ORDERS — found by path
   check('primary FK col = [ORDERS/Cust Id]',
-    (model?.pages?.[0]?.elements?.find(e => e.name === 'ORDERS')?.columns || [])
+    (byTable(model?.pages?.[0]?.elements || [], 'ORDERS')?.columns || [])
       .some(c => c.formula === '[ORDERS/Cust Id]'));
 }
 
@@ -457,7 +468,7 @@ JOIN DB.SCH.DATE_DIM d  ON o.date_key = d.date_key
 `);
   check('valid JSON', model !== null);
   const elems = model?.pages?.[0]?.elements || [];
-  const el = elems.find(e => e.name === 'ORDERS');
+  const el = byTable(elems, 'ORDERS');
   const cols = el?.columns || [];
   const formulas = cols.map(c => c.formula);
 
@@ -473,15 +484,20 @@ JOIN DB.SCH.DATE_DIM d  ON o.date_key = d.date_key
   check('primary has no cross-element Date Label formula',
     !formulas.some(f => f.includes('Date Label')));
 
+  // Relationship names use raw table names
+  const rels13 = el?.relationships || [];
+  check('relationship to CUSTOMERS uses raw name', rels13.some(r => r.name === 'CUSTOMERS'));
+  check('relationship to DATE_DIM uses raw name',  rels13.some(r => r.name === 'DATE_DIM'));
+
   // Dimension elements have the SELECT columns in their own columns array
-  const custElem = elems.find(e => e.name === 'CUSTOMERS');
+  const custElem = byTable(elems, 'CUSTOMERS');
   const custCols  = (custElem?.columns || []).map(c => c.formula);
   check('CUSTOMERS elem has [CUSTOMERS/Customer Name]',
     custCols.some(f => f === '[CUSTOMERS/Customer Name]'));
   check('CUSTOMERS elem has [CUSTOMERS/Email]',
     custCols.some(f => f === '[CUSTOMERS/Email]'));
 
-  const dateDimElem = elems.find(e => e.name === 'DATE_DIM');
+  const dateDimElem = byTable(elems, 'DATE_DIM');
   const dateCols    = (dateDimElem?.columns || []).map(c => c.formula);
   check('DATE_DIM elem has [DATE_DIM/Date Label]',
     dateCols.some(f => f === '[DATE_DIM/Date Label]'));
