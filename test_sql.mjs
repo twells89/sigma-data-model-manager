@@ -150,8 +150,13 @@ GROUP BY o.order_id, o.order_date, c.customer_name, p.product_name
 `);
   check('valid JSON with JOINs', model !== null);
   const elements = model?.pages?.[0]?.elements || [];
-  // Primary + 2 join targets
-  check('3 elements (primary + 2 join targets)', elements.length === 3, `got ${elements.length}`);
+  // 2 dim elements + 1 primary + 1 derived view element
+  check('4 elements (2 dims + primary + view)', elements.length === 4, `got ${elements.length}`);
+
+  // Dim elements come before the primary (matching Sigma's native order)
+  check('CUSTOMERS element before ORDER element',
+    elements.findIndex(e => e.source?.path?.[e.source.path.length-1] === 'CUSTOMERS') <
+    elements.findIndex(e => e.source?.path?.[e.source.path.length-1] === 'ORDERS'));
 
   // Primary element is the ORDERS physical table (no explicit name — Sigma auto-assigns)
   const primary = byTable(elements, 'ORDERS');
@@ -183,6 +188,19 @@ GROUP BY o.order_id, o.order_date, c.customer_name, p.product_name
   check('keys[0] has sourceColumnId', !!firstKeys[0]?.sourceColumnId);
   check('keys[0] has targetColumnId', !!firstKeys[0]?.targetColumnId);
   check('sourceColumnId starts with inode-', firstKeys[0]?.sourceColumnId?.startsWith('inode-'));
+
+  // Derived view element
+  const viewElem = elements.find(e => e.source?.kind === 'table' && e.source?.elementId === primary?.id);
+  check('derived view element exists',              !!viewElem);
+  check('view element has name (SQL view name)',    !!viewElem?.name);
+  check('view source kind = table',                 viewElem?.source?.kind === 'table');
+  check('view source elementId = primary id',       viewElem?.source?.elementId === primary?.id);
+  const viewFormulas = (viewElem?.columns || []).map(c => c.formula);
+  check('view has own col [ORDERS/Order Id]',       viewFormulas.some(f => f === '[ORDERS/Order Id]'));
+  check('view has dim col [ORDERS/CUSTOMERS/Customer Name]',
+    viewFormulas.some(f => f === '[ORDERS/CUSTOMERS/Customer Name]'));
+  check('view has dim col [ORDERS/PRODUCTS/Product Name]',
+    viewFormulas.some(f => f === '[ORDERS/PRODUCTS/Product Name]'));
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -274,14 +292,18 @@ JOIN DB.SCH.STORE_DIM d ON r.store_id = d.store_id;
 `);
   check('valid JSON with 2 statements + shared dim', model !== null);
   const elements = model?.pages?.[0]?.elements || [];
-  // 2 primary + 1 shared STORE_DIM (not 4)
-  check('3 elements (2 primary + 1 shared STORE_DIM)', elements.length === 3, `got ${elements.length}`);
+  // 1 shared STORE_DIM + 2 primary warehouse elements + 2 derived view elements = 5
+  check('5 elements (1 shared dim + 2 primary + 2 view)', elements.length === 5, `got ${elements.length}`);
   check('STORE_DIM appears exactly once',
     elements.filter(e => e.source?.path?.[e.source.path.length-1] === 'STORE_DIM').length === 1);
+  check('2 derived view elements', elements.filter(e => e.source?.kind === 'table' && e.source?.elementId).length === 2);
   check('both primaries have a relationship to the same STORE_DIM element', (() => {
     const dim = byTable(elements, 'STORE_DIM');
     if (!dim) return false;
-    const primaries = elements.filter(e => e.source?.path?.[e.source.path.length-1] !== 'STORE_DIM');
+    const primaries = elements.filter(e =>
+      e.source?.kind === 'warehouse-table' &&
+      e.source?.path?.[e.source.path.length-1] !== 'STORE_DIM'
+    );
     return primaries.every(p =>
       (p.relationships || []).some(r => r.targetElementId === dim.id)
     );
@@ -501,6 +523,19 @@ JOIN DB.SCH.DATE_DIM d  ON o.date_key = d.date_key
   const dateCols    = (dateDimElem?.columns || []).map(c => c.formula);
   check('DATE_DIM elem has [DATE_DIM/Date Label]',
     dateCols.some(f => f === '[DATE_DIM/Date Label]'));
+
+  // Derived view element surfaces ALL SELECT columns including cross-element references
+  const ordersElem  = byTable(elems, 'ORDERS');
+  const viewElem13  = elems.find(e => e.source?.kind === 'table' && e.source?.elementId === ordersElem?.id);
+  check('derived view element exists (sales_detail)', !!viewElem13);
+  check('view name = Sales Detail', viewElem13?.name === 'Sales Detail');
+  const vf = (viewElem13?.columns || []).map(c => c.formula);
+  check('view has [ORDERS/Order Id]',                   vf.some(f => f === '[ORDERS/Order Id]'));
+  check('view has [ORDERS/Amount]',                     vf.some(f => f === '[ORDERS/Amount]'));
+  check('view has [ORDERS/CUSTOMERS/Customer Name]',    vf.some(f => f === '[ORDERS/CUSTOMERS/Customer Name]'));
+  check('view has [ORDERS/CUSTOMERS/Email]',            vf.some(f => f === '[ORDERS/CUSTOMERS/Email]'));
+  check('view has [ORDERS/DATE_DIM/Date Label]',        vf.some(f => f === '[ORDERS/DATE_DIM/Date Label]'));
+  check('view source has no connectionId (derived)',    !viewElem13?.source?.connectionId);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

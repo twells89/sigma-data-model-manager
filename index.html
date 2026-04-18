@@ -14251,43 +14251,10 @@ explores:
 
                 nativeCount++;
 
-                // ── Primary element ─────────────────────────────────────────
-                // No explicit `name` — Sigma auto-assigns from the path's last component
-                // (e.g. "ORDER_FACT"), which is what makes [ORDER_FACT/Col] self-references resolve.
                 var primaryTableName = parsed.primaryPath[parsed.primaryPath.length - 1];
-                var primaryId   = sigmaShortId();
-                var primaryElem = {
-                    id: primaryId, kind: 'table',
-                    source: makeSource(parsed.primaryPath),
-                    columns: [], order: [], metrics: [], relationships: []
-                };
-                allElements.push(primaryElem);
 
-                // Regular columns from SELECT list
-                // Dim-attributed columns (col.joinTable) are NOT added to the primary element —
-                // they belong to the dimension element and Sigma exposes them via the relationship.
-                // Adding cross-element formulas to the primary element causes Sigma's
-                // pre-save warehouse validator to flag them as unresolvable.
-                parsed.columns.forEach(function(col) {
-                    if (typeof col === 'object' && col.joinTable) {
-                        // skip — will be added to the dim element in the second pass below
-                    } else {
-                        ensureSqlColumn(primaryElem, typeof col === 'string' ? col : col.name);
-                    }
-                });
-
-                // Aggregate metrics (SUM/COUNT/AVG/MIN/MAX)
-                parsed.metrics.forEach(function(m) {
-                    var mId = sigmaInodeId(m.name.replace(/\s+/g, '_').toUpperCase());
-                    primaryElem.metrics.push({ id: mId, name: m.name, formula: m.formula });
-                    // Ensure the source column referenced by the metric formula exists on the element,
-                    // otherwise Sigma can't resolve Sum([Column Name]) etc.
-                    if (m.sourceCol && m.sourceCol !== 'rows') {
-                        ensureSqlColumn(primaryElem, m.sourceCol);
-                    }
-                });
-
-                // ── JOIN targets → dimension elements + relationships ────────
+                // ── Dimension elements FIRST (matches Sigma's native element order) ──
+                // Create dim elements before the primary so they appear earlier in the page.
                 parsed.joins.forEach(function(join) {
                     var jKey = join.path.join('.');
                     if (!joinElemCache[jKey]) {
@@ -14300,12 +14267,39 @@ explores:
                         allElements.push(jElem);
                         joinElemCache[jKey] = { id: jId, elem: jElem };
                     }
-                    var joinEntry = joinElemCache[jKey];
+                });
 
-                    // Ensure FK columns exist on both sides
+                // ── Primary warehouse element ────────────────────────────────
+                // No explicit `name` — Sigma auto-assigns from path's last component
+                // (e.g. "ORDER_FACT"), making [ORDER_FACT/Col] self-references resolve.
+                var primaryId   = sigmaShortId();
+                var primaryElem = {
+                    id: primaryId, kind: 'table',
+                    source: makeSource(parsed.primaryPath),
+                    columns: [], order: [], metrics: [], relationships: []
+                };
+                allElements.push(primaryElem);
+
+                // Own SELECT columns only (dim-attributed columns skip — go to dim elements + view)
+                parsed.columns.forEach(function(col) {
+                    if (typeof col === 'object' && col.joinTable) return;
+                    ensureSqlColumn(primaryElem, typeof col === 'string' ? col : col.name);
+                });
+
+                // Aggregate metrics (SUM/COUNT/AVG/MIN/MAX)
+                parsed.metrics.forEach(function(m) {
+                    var mId = sigmaInodeId(m.name.replace(/\s+/g, '_').toUpperCase());
+                    primaryElem.metrics.push({ id: mId, name: m.name, formula: m.formula });
+                    if (m.sourceCol && m.sourceCol !== 'rows') {
+                        ensureSqlColumn(primaryElem, m.sourceCol);
+                    }
+                });
+
+                // FK columns + relationships
+                parsed.joins.forEach(function(join) {
+                    var joinEntry = joinElemCache[join.path.join('.')];
                     var srcColId = ensureSqlColumn(primaryElem, join.leftKey);
                     var tgtColId = ensureSqlColumn(joinEntry.elem, join.rightKey);
-
                     primaryElem.relationships.push({
                         id: sigmaShortId(),
                         targetElementId: joinEntry.id,
@@ -14314,8 +14308,7 @@ explores:
                     });
                 });
 
-                // ── Add dim-attributed SELECT columns to each dimension element ──
-                // joinElemCache is now populated; loop again to wire non-FK dim columns.
+                // Dim-attributed SELECT columns → add to each dim element
                 parsed.columns.forEach(function(col) {
                     if (typeof col !== 'object' || !col.joinTable) return;
                     var jEntry = null;
@@ -14325,9 +14318,34 @@ explores:
                     if (jEntry) ensureSqlColumn(jEntry.elem, col.name);
                 });
 
+                // ── Derived view element ──────────────────────────────────────
+                // Represents the SQL view: sources from the primary warehouse element
+                // and surfaces all SELECT columns — including cross-element
+                // [PRIMARY/DIM/Column] formulas for joined dimension columns.
+                // Derived elements bypass the warehouse schema validator, so these
+                // three-part formulas resolve correctly via the relationship.
+                var viewCols = [], viewOrder = [];
+                parsed.columns.forEach(function(col) {
+                    var colName = typeof col === 'string' ? col : col.name;
+                    var formula = (typeof col === 'object' && col.joinTable)
+                        ? '[' + primaryTableName + '/' + col.joinTable + '/' + sigmaDisplayName(colName) + ']'
+                        : '[' + primaryTableName + '/' + sigmaDisplayName(colName) + ']';
+                    var cId = sigmaShortId();
+                    viewCols.push({ id: cId, formula: formula });
+                    viewOrder.push(cId);
+                });
+                if (parsed.joins.length > 0 && viewCols.length > 0) {
+                    allElements.push({
+                        id: sigmaShortId(), kind: 'table',
+                        name: sigmaDisplayName(stmt.name),
+                        source: { kind: 'table', elementId: primaryId },
+                        columns: viewCols, order: viewOrder
+                    });
+                }
+
                 // ── Clean up empty arrays ───────────────────────────────────
-                if (!primaryElem.columns.length)      { delete primaryElem.columns;      delete primaryElem.order; }
-                if (!primaryElem.metrics.length)      delete primaryElem.metrics;
+                if (!primaryElem.columns.length)       { delete primaryElem.columns;      delete primaryElem.order; }
+                if (!primaryElem.metrics.length)       delete primaryElem.metrics;
                 if (!primaryElem.relationships.length) delete primaryElem.relationships;
             });
 
