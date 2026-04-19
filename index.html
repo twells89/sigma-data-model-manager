@@ -19414,9 +19414,44 @@ ${cleanedSql}`;
                 if (!getResp.ok) throw new Error('Could not retrieve saved spec for relationship wiring');
                 const savedSpec = await getResp.json();
 
+                // ── Build position-keyed formula maps ─────────────────────
+                // Sigma replaces all submitted column IDs (including inode-format) on POST.
+                // We must look up each column's Sigma-assigned ID by formula match.
+                //
+                // Plain formula keying breaks when two elements share the same warehouse
+                // table — e.g. customer_dim and vip_customer both produce formula
+                // "[CUSTOMER_DIM/Customer Key]", so the last entry silently overwrites the first.
+                //
+                // Fix: key by "pageIndex|elementIndex|formula" so each element position gets
+                // its own bucket regardless of formula duplication. Positional matching works
+                // because Sigma preserves element order from the POST (same assumption that
+                // elemIdRemap already relies on).
+
+                // "pi|ei|formula" → { elementId, colId } from the saved spec
+                const savedPosFormulaToCol = {};
+                (savedSpec.pages || []).forEach((page, pi) => {
+                    (page.elements || []).forEach((el, ei) => {
+                        (el.columns || []).forEach(col => {
+                            if (col.formula) {
+                                savedPosFormulaToCol[`${pi}|${ei}|${col.formula}`] = { elementId: el.id, colId: col.id };
+                            }
+                        });
+                    });
+                });
+
+                // local colId → { pi, ei, formula }
+                const localColToInfo = {};
+                (fullSpec.pages || []).forEach((page, pi) => {
+                    (page.elements || []).forEach((el, ei) => {
+                        (el.columns || []).forEach(col => {
+                            if (col.formula && col.id) {
+                                localColToInfo[col.id] = { pi, ei, formula: col.formula };
+                            }
+                        });
+                    });
+                });
+
                 // Map local element IDs to saved element IDs via positional match
-                // (Sigma assigns its own element IDs on POST; column IDs are inode-format
-                // and are preserved by Sigma, so only element IDs need remapping)
                 const elemIdRemap = {};
                 (fullSpec.pages || []).forEach((origPage, pi) => {
                     const savedPage = (savedSpec.pages || [])[pi];
@@ -19427,13 +19462,14 @@ ${cleanedSql}`;
                     });
                 });
 
-                // Column IDs are inode-format (e.g. inode-xxx/COL_NAME) — Sigma preserves
-                // these on POST, so no column ID remapping is needed. Formula-based remapping
-                // was removed because it collides when two elements share the same warehouse
-                // table (e.g. customer_dim and vip_customer both map to CUSTOMER_DIM, so both
-                // have formula "[CUSTOMER_DIM/Customer Key]" — the last one wins and breaks
-                // the relationship for the other element).
-                const remapColId = (localColId) => localColId;
+                // Translate a local column ID to the Sigma-assigned column ID by looking up
+                // its formula in the saved spec at the same element position.
+                const remapColId = (localColId) => {
+                    const info = localColToInfo[localColId];
+                    if (!info) return localColId;
+                    const saved = savedPosFormulaToCol[`${info.pi}|${info.ei}|${info.formula}`];
+                    return saved ? saved.colId : localColId;
+                };
 
                 // ── Build PUT body: saved spec + relationships ────────────────
                 // Deep-clone the saved spec and inject relationships using remapped IDs
