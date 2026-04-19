@@ -9760,12 +9760,15 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                     }
 
                     if (keys.length) {
+                        // Use raw target table name as relationship name — it becomes the middle
+                        // segment in three-part cross-element formulas [SRC/TARGET/Col].
+                        var snowRelName = refTable || (rel.name || '').toUpperCase();
                         if (!srcEntry.element.relationships) srcEntry.element.relationships = [];
                         srcEntry.element.relationships.push({
                             id: sigmaShortId(),
                             targetElementId: tgtEntry.elementId,
                             keys: keys,
-                            name: (rel.name || '').replace(/_/g, ' ')
+                            name: snowRelName
                         });
                     }
                 });
@@ -9796,13 +9799,14 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 });
 
                 if (keys.length) {
+                    // Use raw right_table name for relationship name — the middle segment
+                    // in three-part [LEFT_TABLE/RIGHT_TABLE/Col] cross-element formulas.
                     if (!left.element.relationships) left.element.relationships = [];
                     left.element.relationships.push({
                         id: sigmaShortId(),
                         targetElementId: right.elementId,
                         keys: keys,
-                        name: rel.name ? rel.name.replace(/_/g, ' ')
-                            : sigmaDisplayName(rel.left_table) + ' to ' + sigmaDisplayName(rel.right_table)
+                        name: rightKey || sigmaDisplayName(rel.right_table)
                     });
                 }
             });
@@ -9843,6 +9847,65 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
 
                 if (srcEl.relationships.length === 0) delete srcEl.relationships;
             });
+
+            // ── Pass 6: Derived elements for tables with relationships ──────────
+            // Each source table that has outgoing relationships gets a derived element
+            // surfacing all own + related fields via [SRC/TARGET/Col] cross-element formulas.
+            var snowDerivedElements = [];
+            elements.forEach(function(srcEl) {
+                if (!srcEl.relationships || !srcEl.relationships.length) return;
+                if (!srcEl.source || srcEl.source.kind !== 'warehouse-table') return;
+
+                var srcPath = srcEl.source.path;
+                var srcTableName = srcPath[srcPath.length - 1];
+
+                // Helper: extract display-name portion from [TABLE/Display Name] or [Display Name]
+                function snowDispName(formula) {
+                    var m = formula.match(/^\[([^\]]+)\]$/);
+                    if (!m) return null;
+                    var inner = m[1];
+                    var s = inner.lastIndexOf('/');
+                    return s >= 0 ? inner.slice(s + 1) : inner;
+                }
+
+                var snowViewCols = [], snowViewOrder = [];
+
+                // Own columns
+                srcEl.columns.forEach(function(col) {
+                    if (!col.formula) return;
+                    var cId = sigmaShortId();
+                    snowViewCols.push({ id: cId, formula: col.formula });
+                    snowViewOrder.push(cId);
+                });
+
+                // Related dimension columns via [SRC/REL_NAME/Col]
+                srcEl.relationships.forEach(function(rel) {
+                    var tgtEl = elements.find(function(e) { return e.id === rel.targetElementId; });
+                    if (!tgtEl || tgtEl.source?.kind !== 'warehouse-table') return;
+                    tgtEl.columns.forEach(function(col) {
+                        if (!col.formula) return;
+                        var dispName = snowDispName(col.formula);
+                        if (!dispName) return;
+                        var cId = sigmaShortId();
+                        snowViewCols.push({ id: cId, formula: '[' + srcTableName + '/' + rel.name + '/' + dispName + ']' });
+                        snowViewOrder.push(cId);
+                    });
+                });
+
+                if (snowViewCols.length > 0) {
+                    // Table entry to get display name
+                    var snowTable = allTables.find(function(t) { return t.name.toUpperCase() === srcTableName; });
+                    snowDerivedElements.push({
+                        id: sigmaShortId(),
+                        kind: 'table',
+                        name: snowTable ? sigmaDisplayName(snowTable.name) : sigmaDisplayName(srcTableName),
+                        source: { kind: 'table', elementId: srcEl.id },
+                        columns: snowViewCols,
+                        order: snowViewOrder
+                    });
+                }
+            });
+            snowDerivedElements.forEach(function(de) { elements.push(de); });
 
             var sigmaModel = {
                 name: sigmaDisplayName(viewName),
@@ -11074,13 +11137,16 @@ relationships:
                         continue;
                     }
 
+                    // Use raw target table name as relationship name — this is the middle segment of
+                    // three-part cross-element formulas [SRC_TABLE/TARGET_TABLE/Col] in derived elements.
+                    const tgtElPath = elements[targetIdx].source?.path;
+                    const tgtTableName = tgtElPath ? tgtElPath[tgtElPath.length - 1] : semanticModels[targetIdx].name.toUpperCase();
                     if (!element.relationships) element.relationships = [];
                     element.relationships.push({
                         id: sigmaShortId(),
                         targetElementId: targetEl.id,
                         keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
-                        name: `${sigmaDisplayName(model.name)} to ${sigmaDisplayName(semanticModels[targetIdx].name)}`,
-                        relationshipType: 'N:1'
+                        name: tgtTableName
                     });
                 }
             });
@@ -11166,6 +11232,64 @@ relationships:
                     }
                 });
             }
+
+            // ── Derived elements for models with foreign-entity relationships ──────
+            // Each model that joins to dimension tables gets a derived element that
+            // surfaces all fields (own + related) via [SRC_TABLE/REL_TABLE/Col] formulas.
+            // This mirrors the SQL converter's derived view pattern.
+            const dbtDerivedElements = [];
+            elements.forEach((el, i) => {
+                if (i >= semanticModels.length) return; // skip time-spine elements
+                if (!el.relationships?.length) return;
+                if (el.source?.kind !== 'warehouse-table') return;
+
+                const elPath = el.source.path;
+                const elTableName = elPath[elPath.length - 1];
+                const dbtViewCols = [], dbtViewOrder = [];
+
+                // Helper: extract display-name portion from [TABLE/Display Name] or [Display Name]
+                const _dbtDispName = (formula) => {
+                    const m = formula.match(/^\[([^\]]+)\]$/);
+                    if (!m) return null;
+                    const inner = m[1];
+                    const s = inner.lastIndexOf('/');
+                    return s >= 0 ? inner.slice(s + 1) : inner;
+                };
+
+                // Own columns first
+                el.columns.forEach(col => {
+                    if (!col.formula) return;
+                    const cId = sigmaShortId();
+                    dbtViewCols.push({ id: cId, formula: col.formula });
+                    dbtViewOrder.push(cId);
+                });
+
+                // Related dimension columns via [SRC_TABLE/TARGET_TABLE/Col]
+                el.relationships.forEach(rel => {
+                    const tgtEl = elements.find(e => e.id === rel.targetElementId);
+                    if (!tgtEl || tgtEl.source?.kind !== 'warehouse-table') return;
+                    tgtEl.columns.forEach(col => {
+                        if (!col.formula) return;
+                        const dispName = _dbtDispName(col.formula);
+                        if (!dispName) return;
+                        const cId = sigmaShortId();
+                        dbtViewCols.push({ id: cId, formula: `[${elTableName}/${rel.name}/${dispName}]` });
+                        dbtViewOrder.push(cId);
+                    });
+                });
+
+                if (dbtViewCols.length > 0) {
+                    dbtDerivedElements.push({
+                        id: sigmaShortId(),
+                        kind: 'table',
+                        name: sigmaDisplayName(semanticModels[i].name),
+                        source: { kind: 'table', elementId: el.id },
+                        columns: dbtViewCols,
+                        order: dbtViewOrder
+                    });
+                }
+            });
+            elements.push(...dbtDerivedElements);
 
             const sigmaModel = {
                 name: semanticModels.length === 1
@@ -13939,6 +14063,9 @@ explores:
             if (!primaryPath) return null;
 
             // Parse explicit JOINs using regex over workSql
+            // Pass 1: ON expr = expr  (Snowflake, Redshift, SQL Server, most dialects)
+            // Multi-condition ON (AND) — only the first equality pair is extracted;
+            // additional predicates can be added as element filters in Sigma after import.
             var joins = [];
             var joinRe = /\b(INNER\s+JOIN|LEFT\s+(?:OUTER\s+)?JOIN|RIGHT\s+(?:OUTER\s+)?JOIN|FULL\s+(?:OUTER\s+)?JOIN|CROSS\s+JOIN|JOIN)\s+([\w"`[\].]+)(?:\s+(?:AS\s+)?([\w"`[\]]+))?\s+ON\s+([\w"`.[\]]+)\s*=\s*([\w"`.[\]]+)/gi;
             var jm;
@@ -13950,6 +14077,22 @@ explores:
                 var onRight = jm[5].split('.').pop().replace(/["`[\]]/g, '').toUpperCase();
                 var jPath = buildSqlPath(jTable, db, schema);
                 if (jPath) joins.push({ path: jPath, alias: jAlias, joinType: jType, leftKey: onLeft, rightKey: onRight });
+            }
+
+            // Pass 2: USING (col)  (Postgres, BigQuery, MySQL, DuckDB)
+            // USING implies identical column name on both sides; treat as FK = PK on both elements.
+            var usingRe = /\b(INNER\s+JOIN|LEFT\s+(?:OUTER\s+)?JOIN|RIGHT\s+(?:OUTER\s+)?JOIN|FULL\s+(?:OUTER\s+)?JOIN|CROSS\s+JOIN|JOIN)\s+([\w"`[\].]+)(?:\s+(?:AS\s+)?([\w"`[\]]+))?\s+USING\s*\(\s*([\w"`[\]]+)\s*\)/gi;
+            while ((jm = usingRe.exec(workSql)) !== null) {
+                var ujType  = jm[1].replace(/\s+OUTER\s*/i, ' ').replace(/\s+/g, '_').trim().toUpperCase();
+                var ujTable = jm[2];
+                var ujAlias = jm[3] ? jm[3].replace(/["`[\]]/g, '') : jm[2].split('.').pop().replace(/["`[\]]/g, '');
+                var uCol    = jm[4].replace(/["`[\]]/g, '').toUpperCase();
+                var ujPath  = buildSqlPath(ujTable, db, schema);
+                if (ujPath && !joins.some(function(j) {
+                    return j.alias.toLowerCase() === ujAlias.toLowerCase();
+                })) {
+                    joins.push({ path: ujPath, alias: ujAlias, joinType: ujType, leftKey: uCol, rightKey: uCol });
+                }
             }
 
             // Build alias map: alias → null (primary) or 'JOIN_TABLE_NAME' (join target)
@@ -15776,6 +15919,61 @@ ${cleanedSql}`;
                 if (aHasRel === bHasRel) return 0;
                 return aHasRel ? 1 : -1;  // dims first, fact last
             });
+
+            // ── Derived explore element (relationships strategy only) ─────────────
+            // Surfaces all base + joined view fields in a single flat element via
+            // cross-element formulas [BASE_TABLE/alias/Col], giving users access to
+            // all explore fields without navigating the relationship graph manually.
+            // Only emitted when the base element is a warehouse-table (SQL-based base
+            // views are already flat single-element custom SQL elements).
+            if (relJoins.length > 0 && baseEl.source?.kind === 'warehouse-table') {
+                const basePath = baseEl.source.path;
+                const lkBaseName = basePath[basePath.length - 1]; // e.g. "ORDER_FACT"
+
+                // Extract the display name from a [TABLE/Display Name] or [Display Name] formula.
+                const _lkDispName = (formula) => {
+                    const m = formula.match(/^\[([^\]]+)\]$/);
+                    if (!m) return null;
+                    const inner = m[1];
+                    const s = inner.lastIndexOf('/');
+                    return s >= 0 ? inner.slice(s + 1) : inner;
+                };
+
+                const lkViewCols = [], lkViewOrder = [];
+
+                // Base element columns — re-use their existing [TABLE/Col] formulas as-is
+                baseEl.columns.forEach(col => {
+                    if (!col.formula || col.formula.startsWith('/*')) return;
+                    const cId = sigmaShortId();
+                    lkViewCols.push({ id: cId, formula: col.formula });
+                    lkViewOrder.push(cId);
+                });
+
+                // Joined element columns via [BASE/alias/Col] cross-element refs
+                relJoins.forEach(j => {
+                    const targetRes = elementMap[j.alias];
+                    if (!targetRes || targetRes.element.source?.kind !== 'warehouse-table') return;
+                    targetRes.element.columns.forEach(col => {
+                        if (!col.formula || col.formula.startsWith('/*')) return;
+                        const dispName = _lkDispName(col.formula);
+                        if (!dispName) return;
+                        const cId = sigmaShortId();
+                        lkViewCols.push({ id: cId, formula: `[${lkBaseName}/${j.alias}/${dispName}]` });
+                        lkViewOrder.push(cId);
+                    });
+                });
+
+                if (lkViewCols.length > 0) {
+                    allElements.push({
+                        id: sigmaShortId(),
+                        kind: 'table',
+                        name: explore.label || sigmaDisplayName(exploreName),
+                        source: { kind: 'table', elementId: baseEl.id },
+                        columns: lkViewCols,
+                        order: lkViewOrder
+                    });
+                }
+            }
 
             if (physicalJoins.length > 0) {
                 // Build a joined element that starts from base and left-joins each physical join
@@ -20551,7 +20749,7 @@ models:
     <li><b>Tier dimensions</b> → Bucketed <code>If()</code> calculated columns (e.g. "0 to 99", "100 to 499", "500 or Above")</li>
     <li><b>Yesno dimensions</b> → Boolean calculated columns with "(T/F)" suffix</li>
     <li><b>Measures</b> → Sigma metrics (sum, count, count_distinct, average, min, max, median)</li>
-    <li><b>Explore joins</b> → Sigma relationships; use <b>Convert Explore</b> for a single explore or <b>All Explores</b> to batch-convert all explores at once into one combined data model — shared views (e.g. <code>date_dim</code>, <code>store_dim</code>) are deduplicated into a single element with relationships wired from each fact table. One-to-many and many-to-many joins are skipped in batch mode (use single-explore mode for those).</li>
+    <li><b>Explore joins</b> → Sigma relationships plus a <b>derived explore element</b> that surfaces all base-view and joined-view fields together. Joined-view fields appear as <code>[BASE_TABLE/join_alias/Col]</code> cross-element formulas, so the full explore is browsable in one flat element without navigating relationships manually. Use <b>Convert Explore</b> for a single explore or <b>All Explores</b> to batch-convert all explores at once into one combined data model — shared views (e.g. <code>date_dim</code>, <code>store_dim</code>) are deduplicated into a single element with relationships wired from each fact table. One-to-many and many-to-many joins are skipped in batch mode (use single-explore mode for those). The derived explore element is only created for warehouse-table base views; SQL-based (derived-table) base views are already flat Custom SQL elements.</li>
     <li><b>Dimension groups (type:time)</b> → Expanded into individual columns per timeframe (DateTrunc / DatePart), all grouped into a folder named after the group. Supported standard timeframes: raw, date, week, month, quarter, year, hour, minute, day_of_week, day_of_month, week_of_year, month_num, quarter_of_year, hour_of_day. Binned timeframes (e.g. <code>minute15</code>, <code>hour4</code>) use <code>DateAdd + Floor</code> arithmetic. Fiscal timeframes (<code>fiscal_year</code>, <code>fiscal_quarter_of_year</code>, etc.) are skipped with a warning — they require <code>fiscal_month_offset</code> from the model-level config, which is not available in view files.</li>
     <li><b>Dimension groups (type:duration)</b> → <code>DateDiff()</code> columns per interval (day, week, month, quarter, year, hour, minute, second), grouped into a folder named after the group</li>
     <li><b>datatype: epoch</b> → <code>DateFromUnix()</code> wrapper applied automatically to all timeframe and duration formulas</li>
@@ -20605,7 +20803,7 @@ models:
 <ul>
     <li><b>Semantic models</b> → Sigma elements; warehouse path from <code>node_relation</code>, <code>model: ref()</code>, or <code>source()</code></li>
     <li><b>Entities — primary &amp; unique</b> → Join-key columns; logical alias registered when <code>expr</code> differs from <code>name</code></li>
-    <li><b>Entities — foreign</b> → N:1 relationships, auto-resolved across multiple uploaded files</li>
+    <li><b>Entities — foreign</b> → Sigma relationships (named after the target table for cross-element formula compatibility), auto-resolved across multiple uploaded files; each model with foreign-entity relationships also gets a <b>derived element</b> that surfaces own + related dimension columns via <code>[SRC_TABLE/TARGET_TABLE/Col]</code> formulas</li>
     <li><b>Entities — natural</b> → Source column (no join)</li>
     <li><b>Dimensions — categorical</b> → Sigma columns; complex <code>expr</code> SQL auto-converted (see table below)</li>
     <li><b>Dimensions — time</b> → <code>DateTrunc("granularity", [col])</code> columns</li>
@@ -20664,7 +20862,7 @@ models:
     <li><b>Time dimensions</b> → Sigma columns (datetime type)</li>
     <li><b>Facts</b> → Sigma columns + optional Sum() metrics (when "Auto-generate metrics" is checked)</li>
     <li><b>Primary keys</b> → Tracked for relationship target resolution</li>
-    <li><b>Relationships</b> → Sigma relationships (supports both inline per-table and top-level relationship blocks)</li>
+    <li><b>Relationships</b> → Sigma relationships using the target table name as the relationship name (supports both inline per-table and top-level relationship blocks); source tables with outgoing relationships also get a <b>derived element</b> surfacing all own + related columns via <code>[SRC_TABLE/TARGET_TABLE/Col]</code> cross-element formulas</li>
     <li><b>Descriptions</b> → Preserved on elements and columns</li>
 </ul>
 
@@ -20686,7 +20884,7 @@ models:
     <li><b>Unsupported SQL functions</b> — Snowflake-specific functions without Sigma equivalents (<code>FLATTEN</code>, <code>LATERAL</code>, <code>QUALIFY</code>, <code>PIVOT</code>, <code>UNPIVOT</code>, <code>GENERATOR</code>, <code>TABLESAMPLE</code>, <code>OBJECT_CONSTRUCT</code>, <code>ARRAY_CONSTRUCT</code>) are automatically detected and <b>skipped with a warning</b>. The column is omitted from the output and a warning message is shown — add it manually in the Sigma UI after saving.</li>
     <li><b>Semantic view filters</b> — Filter definitions in the semantic YAML are not converted. Consider adding these as RLS in Sigma after conversion.</li>
     <li><b>Verified queries / sample values</b> — These Cortex Analyst features are informational and are skipped during conversion.</li>
-    <li><b>Cross-element columns</b> — Expressions referencing columns from other tables are removed with a warning. Add manually in the Sigma UI after saving.</li>
+    <li><b>Cross-element <code>expr:</code> references</b> — Dimension <code>expr:</code> fields that reference columns from other tables via SQL joins are removed with a warning. Relationship-based cross-element access is handled automatically via the derived element; custom SQL cross-references must be added manually after import.</li>
     <li><b>Multiple semantic views</b> — If your YAML contains multiple top-level semantic views, all tables across all views are merged into one Sigma data model.</li>
 </ul>
 
