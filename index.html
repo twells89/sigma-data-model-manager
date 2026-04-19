@@ -9405,6 +9405,63 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             return map[agg?.toLowerCase()] || `Sum([${dn}])`;
         }
 
+        // ── Derived Element Builder (shared across all converters) ───────────
+        // For every warehouse-table element that has outgoing relationships, create a
+        // derived element that surfaces own + related-dim columns via cross-element
+        // formulas [SRC_TABLE/REL_NAME/Display Name].  Returns the new elements to push.
+        // Call after all relationship wiring is complete but before final model assembly.
+        function buildDerivedElements(elements) {
+            var derived = [];
+            elements.forEach(function(srcEl) {
+                if (!srcEl.relationships || !srcEl.relationships.length) return;
+                if (!srcEl.source || srcEl.source.kind !== 'warehouse-table') return;
+
+                var srcPath = srcEl.source.path;
+                var srcTableName = srcPath[srcPath.length - 1]; // raw uppercase, e.g. "ORDER_FACT"
+
+                var viewCols = [], viewOrder = [];
+
+                // Own columns — re-use existing [TABLE/Col] formulas as-is
+                (srcEl.columns || []).forEach(function(col) {
+                    if (!col.formula || col.formula.startsWith('/*')) return;
+                    var cId = sigmaShortId();
+                    viewCols.push({ id: cId, formula: col.formula });
+                    viewOrder.push(cId);
+                });
+
+                // Dim columns via [SRC/REL_NAME/Col] cross-element references
+                srcEl.relationships.forEach(function(rel) {
+                    if (!rel.name) return; // name required for formula middle-segment
+                    var tgtEl = elements.find(function(e) { return e.id === rel.targetElementId; });
+                    if (!tgtEl || !tgtEl.source || tgtEl.source.kind !== 'warehouse-table') return;
+                    (tgtEl.columns || []).forEach(function(col) {
+                        if (!col.formula || col.formula.startsWith('/*')) return;
+                        // Extract display name portion: "[TABLE/Display Name]" → "Display Name"
+                        var fm = col.formula.match(/^\[([^\]]+)\]$/);
+                        if (!fm) return;
+                        var inner = fm[1];
+                        var s = inner.lastIndexOf('/');
+                        var dispName = s >= 0 ? inner.slice(s + 1) : inner;
+                        var cId = sigmaShortId();
+                        viewCols.push({ id: cId, formula: '[' + srcTableName + '/' + rel.name + '/' + dispName + ']' });
+                        viewOrder.push(cId);
+                    });
+                });
+
+                if (viewCols.length > 0) {
+                    derived.push({
+                        id: sigmaShortId(),
+                        kind: 'table',
+                        name: srcEl.name || sigmaDisplayName(srcTableName),
+                        source: { kind: 'table', elementId: srcEl.id },
+                        columns: viewCols,
+                        order: viewOrder
+                    });
+                }
+            });
+            return derived;
+        }
+
         // ── Format Utilities (shared across all converters) ─────────────────
 
         // Map LookML/Omni value_format_name to a Sigma format object.
@@ -12062,11 +12119,15 @@ metrics:
                         tgtColId = toEntry.pkColId || null;
                     }
 
+                    // Relationship name = target table's raw path segment, used as the middle
+                    // segment in three-part [SRC/NAME/Col] cross-element formulas.
+                    const toElPath = toEntry.element.source?.path;
+                    const omniRelName = toElPath ? toElPath[toElPath.length - 1] : toViewName.toUpperCase();
                     const rel = {
                         id: sigmaShortId(),
                         targetElementId: toEntry.elementId,
-                        name: `${sigmaDisplayName(fromViewName)} to ${sigmaDisplayName(toViewName)}`,
-                        relationshipType: join.relationship === 'one_to_many' ? '1:N' : 'N:1'
+                        name: omniRelName,
+                        keys: []
                     };
                     if (srcColId && tgtColId) {
                         rel.keys = [{ sourceColumnId: srcColId, targetColumnId: tgtColId }];
@@ -12078,6 +12139,10 @@ metrics:
                     fromEntry.element.relationships.push(rel);
                 }
             }
+
+            // Add derived element for each view that has outgoing relationships, surfacing
+            // base + joined-view fields via [SRC/REL/Col] cross-element formulas.
+            buildDerivedElements(elements).forEach(de => elements.push(de));
 
             const sigmaModel = {
                 name: views.length === 1
@@ -12623,10 +12688,12 @@ explores:
                             if (!fromColInfo || !toColInfo) continue;
 
                             if (!fromInfo.element.relationships) fromInfo.element.relationships = [];
+                            const qlikAutoPath = toInfo.element.source?.path;
                             fromInfo.element.relationships.push({
                                 id: sigmaShortId(),
                                 targetElementId: toInfo.elementId,
-                                keys: [{ sourceColumnId: fromColInfo.colId, targetColumnId: toColInfo.colId }]
+                                keys: [{ sourceColumnId: fromColInfo.colId, targetColumnId: toColInfo.colId }],
+                                name: qlikAutoPath ? qlikAutoPath[qlikAutoPath.length - 1] : fieldName.toUpperCase()
                             });
                         }
                     }
@@ -12654,10 +12721,12 @@ explores:
                     createdRels.add(relKey);
 
                     if (!fromInfo.element.relationships) fromInfo.element.relationships = [];
+                    const qlikExpPath = toInfo.element.source?.path;
                     fromInfo.element.relationships.push({
                         id: sigmaShortId(),
                         targetElementId: toInfo.elementId,
-                        keys: [{ sourceColumnId: fromColInfo.colId, targetColumnId: toColInfo.colId }]
+                        keys: [{ sourceColumnId: fromColInfo.colId, targetColumnId: toColInfo.colId }],
+                        name: qlikExpPath ? qlikExpPath[qlikExpPath.length - 1] : rel.toTable.toUpperCase()
                     });
                 }
 
@@ -12732,6 +12801,9 @@ explores:
                     targetEl.columns.push(_qlikCol);
                     targetEl.order.push(colId);
                 }
+
+                // Add derived element for each table with outgoing relationships
+                buildDerivedElements(elements).forEach(de => elements.push(de));
 
                 // ── Build output ────────────────────────────────────────────
                 const sigma = {
@@ -13209,23 +13281,30 @@ explores:
                             }
                         }
 
+                        // Relationship name = raw target table name (for [SRC/TARGET/Col] formulas)
+                        const oacRelName = tgtName.toUpperCase();
                         if (!srcInfo.element.relationships) srcInfo.element.relationships = [];
                         if (srcEntry && tgtEntry) {
                             srcInfo.element.relationships.push({
                                 id:              sigmaShortId(),
                                 targetElementId: tgtInfo.elementId,
-                                keys:            [{ sourceColumnId: srcEntry.colId, targetColumnId: tgtEntry.colId }]
+                                keys:            [{ sourceColumnId: srcEntry.colId, targetColumnId: tgtEntry.colId }],
+                                name:            oacRelName
                             });
                         } else {
                             warnings.push(`⚠ "${table.name}" → "${tgtName}": no shared key column found — relationship added without keys. Set join keys manually in Sigma.`);
                             srcInfo.element.relationships.push({
                                 id:              sigmaShortId(),
                                 targetElementId: tgtInfo.elementId,
-                                keys:            []
+                                keys:            [],
+                                name:            oacRelName
                             });
                         }
                     }
                 }
+
+                // Add derived element for each table with outgoing relationships
+                buildDerivedElements(elements).forEach(de => elements.push(de));
 
                 // ── Write output ───────────────────────────────────────────────
                 const outputJson = {
@@ -19133,6 +19212,9 @@ ${cleanedSql}`;
                     if (el.relationships && el.relationships.length === 0) delete el.relationships;
                 });
 
+                // Add derived element for each table with outgoing relationships
+                buildDerivedElements(elements).forEach(de => elements.push(de));
+
                 const modelName = _pbiModel.name || model.name || 'Power BI Import';
                 const outputJson = {
                     name: modelName,
@@ -20072,6 +20154,9 @@ view: date_dim {
                     warnings.unshift('⚠ Connection ID not set — update in JSON before saving to Sigma');
                 }
 
+                // Add derived element for each source table with outgoing relationships
+                buildDerivedElements(elements).forEach(de => elements.push(de));
+
                 const metaEl = _alteryxParsed.nodeMap ? null : null;
                 const modelName = _alteryxParsed.filename.replace(/\.yxmd$/i, '').replace(/[_-]/g, ' ');
 
@@ -20376,6 +20461,9 @@ view: date_dim {
                     const bR = !!(b.relationships && b.relationships.length > 0);
                     return aR === bR ? 0 : aR ? 1 : -1;
                 });
+
+                // Add derived element for each model with outgoing relationships
+                buildDerivedElements(elements).forEach(de => elements.push(de));
 
                 if (!connectionId || connectionId === '<CONNECTION_ID>') {
                     warnings.unshift('⚠ Connection ID not set — update before saving to Sigma');
@@ -20702,7 +20790,7 @@ models:
 <ul>
     <li><b>Tables</b> → Sigma elements with source paths extracted from M expressions</li>
     <li><b>Columns</b> → Sigma columns with display names</li>
-    <li><b>Relationships</b> → Sigma relationships (fromTable = many side, toTable = one side)</li>
+    <li><b>Relationships</b> → Sigma relationships (fromTable = many side, toTable = one side); fact tables with outgoing relationships also get a <b>derived element</b> surfacing all own + related columns via <code>[SRC_TABLE/TARGET_TABLE/Col]</code> cross-element formulas</li>
     <li><b>DAX measures</b> → Sigma metrics with formula conversion</li>
     <li><b>Calculated columns</b> → Sigma calculated columns</li>
     <li><b>Display folders</b> → Sigma folders</li>
@@ -20901,7 +20989,7 @@ models:
 <h3>What Gets Converted</h3>
 <ul>
     <li><b>Input Data tools</b> → Sigma elements with warehouse table paths (extracted from ODBC connection strings)</li>
-    <li><b>Join tools</b> → Sigma relationships (join keys mapped from Left/Right field configuration)</li>
+    <li><b>Join tools</b> → Sigma relationships (join keys mapped from Left/Right field configuration); fact elements with outgoing relationships also get a <b>derived element</b> surfacing all own + related columns via <code>[SRC/TARGET/Col]</code> cross-element formulas</li>
     <li><b>Formula tools</b> → Calculated columns with formula conversion (IF/ELSEIF/ELSE/ENDIF → nested If(), function mapping; CASE WHEN and CONCAT/SPLIT_PART auto-converted)</li>
     <li><b>Summarize tools</b> → Sigma metrics (Sum, Avg, Min, Max, Count, CountDistinct, CountNonNull)</li>
     <li><b>Select tools</b> → Column rename warnings (review in JSON editor)</li>
@@ -20920,7 +21008,7 @@ models:
 <h3>Known Limitations</h3>
 <ul>
     <li><b>ETL vs semantic model</b> — Alteryx workflows are data pipelines, not star schemas. The converter extracts Input tools as elements and infers relationships from Join tools, but intermediate transformations (Union, Append, Transpose, Cross Tab) are simplified or ignored. The output is a starting point, not a complete model.</li>
-    <li><b>Cross-element columns</b> — Alteryx formulas run after all joins are flattened, so they can reference columns from any table. Formulas referencing columns from other elements are removed with a warning. Add these manually in the Sigma UI after saving.</li>
+    <li><b>Cross-element formula expressions</b> — Alteryx Formula tool expressions that reference columns from other tables (after joins are flattened) are removed with a warning. Raw cross-element column references are surfaced automatically via the derived element; complex calculated expressions that span elements must be added manually in the Sigma UI after saving.</li>
     <li><b>Complex formulas</b> — Multi-row formulas (REGEX_Match, REGEX_Replace), spatial functions, custom macros, and dynamic/batch macros generate warnings but are not converted. Use the AI Assistant to help convert these manually.</li>
     <li><b>Connection graph tracing</b> — Join relationships are resolved by tracing the connection graph backwards from each Join tool to find the source Input tool. Complex branching workflows (multiple paths to the same Join, conditional routing) may not trace correctly.</li>
     <li><b>Non-ODBC inputs</b> — Only Input Data tools with ODBC/database connections produce valid warehouse paths. File inputs (CSV, Excel), API inputs, and in-database tools are flagged but may produce incorrect source paths.</li>
@@ -20936,7 +21024,7 @@ models:
 <ul>
     <li><b>Models</b> → Sigma elements with warehouse table paths</li>
     <li><b>Fields</b> → Sigma columns with display names and descriptions</li>
-    <li><b>References</b> (e.g. <code>references: customers.customer_id</code>) → Sigma relationships</li>
+    <li><b>References</b> (e.g. <code>references: customers.customer_id</code>) → Sigma relationships; models with outgoing references also get a <b>derived element</b> surfacing all own + referenced model columns via <code>[SRC/TARGET/Col]</code> cross-element formulas</li>
     <li><b>Primary keys</b> → Used as relationship target columns</li>
     <li><b>Numeric fields</b> → Auto-generated Sum() metrics (excluding key columns)</li>
     <li><b>Field descriptions</b> → Preserved as column descriptions</li>
@@ -21071,7 +21159,7 @@ models:
     <li><b>Dimensions — primary_key: true</b> → Tracked as the join key for relationship wiring</li>
     <li><b>Measures</b> → Sigma metrics with appropriate aggregation (<code>Sum</code>, <code>Avg</code>, <code>Min</code>, <code>Max</code>, <code>CountDistinct</code>, <code>CountIf</code>)</li>
     <li><b>Measures with filters</b> → Conditional aggregates</li>
-    <li><b>Explores + joins</b> → Sigma relationships; <code>sql_on</code> parsed to extract FK/PK column pairs; <code>foreign_key</code> shorthand also supported</li>
+    <li><b>Explores + joins</b> → Sigma relationships; <code>sql_on</code> parsed to extract FK/PK column pairs; <code>foreign_key</code> shorthand also supported; explore base views with joins also get a <b>derived element</b> surfacing all own + joined view columns via <code>[SRC/TARGET/Col]</code> cross-element formulas</li>
     <li><b>Multi-file drop</b> → Drop all <code>.view.yaml</code> and <code>.model.yaml</code> files at once; views and explores are merged automatically</li>
     <li><b>Database/Schema overrides</b> → Fill in incomplete paths when <code>sql_table_name</code> is only a table name or <code>schema.table</code></li>
 </ul>
@@ -21122,7 +21210,7 @@ models:
 <ul>
     <li><b>Tables</b> → Sigma elements; one element per Qlik data model table</li>
     <li><b>Fields</b> → Sigma columns with display names (<code>FIELD_NAME</code> → <i>Field Name</i>)</li>
-    <li><b>Associations</b> → Sigma relationships; fields shared between two tables are automatically detected and converted to FK/PK relationships. Direction (one vs. many side) is inferred from row counts and field cardinality.</li>
+    <li><b>Associations</b> → Sigma relationships; fields shared between two tables are automatically detected and converted to FK/PK relationships; direction (one vs. many side) is inferred from row counts and field cardinality; tables with outgoing associations also get a <b>derived element</b> surfacing all own + associated table columns via <code>[SRC/TARGET/Col]</code> cross-element formulas</li>
     <li><b>Master Measures</b> → Sigma metrics with formula conversion (include a <code>masterMeasures</code> array in your JSON)</li>
     <li><b>Master Dimensions (calculated)</b> → Sigma calculated columns; plain field references are skipped, calculated expressions are converted</li>
     <li><b>System tables</b> → Skipped (<code>$</code>-prefix and synthetic key tables like <code>%TableName%</code>)</li>
@@ -21201,7 +21289,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <li><b>Dimension columns</b> (<code>aggregation.rule: NONE</code> or no rule) → Sigma dimension columns with warehouse column references</li>
     <li><b>Measure columns</b> (SUM, AVG, COUNT, COUNT_DISTINCT, MIN, MAX, MEDIAN, STD_DEV, STD_DEV_POP) → Sigma <b>metrics</b> (in the element's <code>metrics</code> array); the underlying physical column is also kept in <code>columns</code> so derived formulas can reference the row-level value</li>
     <li><b>Derived / calculated columns</b> → Sigma calculated column formulas; common OAC Logical SQL functions are remapped to Sigma equivalents (see Expression Conversion below)</li>
-    <li><b>Joins</b> → Sigma relationships; join keys are inferred by matching column names shared between the source and target logical tables</li>
+    <li><b>Joins</b> → Sigma relationships; join keys are inferred by matching column names shared between the source and target logical tables; logical tables with outgoing joins also get a <b>derived element</b> surfacing all own + joined table columns via <code>[SRC/TARGET/Col]</code> cross-element formulas</li>
 </ul>
 
 <h3>How to Export from OAC</h3>

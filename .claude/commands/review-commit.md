@@ -1,3 +1,6 @@
+**MANDATORY: Run this review before EVERY `git commit` in the sigma-data-model-manager / smm-push repo.**
+This applies whenever you work on index.html in /tmp/sigma-data-model-manager or /tmp/smm-push — no exceptions.
+
 Run a pre-commit review of the sigma conversion tool before committing.
 
 Follow these steps in order:
