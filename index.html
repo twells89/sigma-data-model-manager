@@ -5983,9 +5983,9 @@ PRODUCT_NAME
 
                 const cleanedPages = cleanPages(jsonData.pages);
 
-                // Build the full spec — columns, metrics, relationships all in one POST
                 // dataModelId is our local tracking field, not a valid API field — strip it
                 const { dataModelId: _dmId, ...specBase } = jsonData;
+
                 const spec = {
                     schemaVersion: specBase.schemaVersion || 1,
                     name: specBase.name,
@@ -6027,6 +6027,7 @@ PRODUCT_NAME
                 }
 
                 const dataModelId = result.dataModelId || jsonData.dataModelId || state.selectedModel?.dataModelId;
+
                 const refreshResponse = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`);
                 if (!refreshResponse.ok) throw new Error('Saved but failed to refresh data');
 
@@ -16917,7 +16918,7 @@ ${cleanedSql}`;
                         const val = boolMatch[2];
                         let physColId = colIdMap[physicalCol];
                         if (!physColId) {
-                            physColId = sigmaShortId();
+                            physColId = sigmaInodeId(physicalCol);
                             colIdMap[physicalCol] = physColId;
                             element.columns.push({
                                 id: physColId,
@@ -16980,7 +16981,7 @@ ${cleanedSql}`;
                     // Ensure the source warehouse column exists
                     let srcColId = colIdMap[physicalCol];
                     if (!srcColId) {
-                        srcColId = sigmaShortId();
+                        srcColId = sigmaInodeId(physicalCol);
                         colIdMap[physicalCol] = srcColId;
                         element.columns.push({
                             id: srcColId,
@@ -17019,7 +17020,7 @@ ${cleanedSql}`;
                     colIdMap[colName] = colIdMap[physicalCol];
                     continue;
                 }
-                const colId = sigmaShortId();
+                const colId = sigmaInodeId(physicalCol);
                 colIdMap[colName] = colId;
                 colIdMap[physicalCol] = colId;
                 const dimCol = { id: colId, formula: colRef(physicalCol) };
@@ -17268,7 +17269,7 @@ ${cleanedSql}`;
                 if (CALC_COL_MEASURE_TYPES.has(msType)) {
                     // Ensure source column exists
                     if (!colIdMap[physicalCol]) {
-                        const colId = sigmaShortId();
+                        const colId = sigmaInodeId(physicalCol);
                         colIdMap[physicalCol] = colId;
                         element.columns.push({ id: colId, formula: colRef(physicalCol) });
                         element.order.push(colId);
@@ -17311,7 +17312,7 @@ ${cleanedSql}`;
                             const dn = colLabel(cleanField);
                             // Ensure filter column exists
                             if (!colIdMap[cleanField]) {
-                                const colId = sigmaShortId();
+                                const colId = sigmaInodeId(cleanField);
                                 colIdMap[cleanField] = colId;
                                 element.columns.push({ id: colId, formula: colRef(cleanField) });
                                 element.order.push(colId);
@@ -17325,7 +17326,7 @@ ${cleanedSql}`;
                     if (conditions.length > 0) {
                         const condition = conditions.length === 1 ? conditions[0] : conditions.map(c => `(${c})`).join(' And ');
                         if (!colIdMap[physicalCol]) {
-                            const colId = sigmaShortId();
+                            const colId = sigmaInodeId(physicalCol);
                             colIdMap[physicalCol] = colId;
                             element.columns.push({ id: colId, formula: colRef(physicalCol) });
                             element.order.push(colId);
@@ -17359,7 +17360,7 @@ ${cleanedSql}`;
                 } else if (msType === 'count_distinct') {
                     const cdCol = physicalCol && physicalCol !== msName ? physicalCol : msName;
                     if (!colIdMap[cdCol]) {
-                        const colId = sigmaShortId();
+                        const colId = sigmaInodeId(cdCol);
                         colIdMap[cdCol] = colId;
                         element.columns.push({ id: colId, formula: colRef(cdCol) });
                         element.order.push(colId);
@@ -17371,7 +17372,7 @@ ${cleanedSql}`;
                 } else {
                     // Ensure source column exists
                     if (!colIdMap[physicalCol]) {
-                        const colId = sigmaShortId();
+                        const colId = sigmaInodeId(physicalCol);
                         colIdMap[physicalCol] = colId;
                         element.columns.push({ id: colId, formula: colRef(physicalCol) });
                         element.order.push(colId);
@@ -19413,32 +19414,9 @@ ${cleanedSql}`;
                 if (!getResp.ok) throw new Error('Could not retrieve saved spec for relationship wiring');
                 const savedSpec = await getResp.json();
 
-                // ── Build lookup maps from the saved spec ─────────────────────
-                // formula → { elementId, columnId } for the saved spec
-                const savedFormulaToCol = {};  // "[TABLE/Col]" → { elementId, colId }
-                (savedSpec.pages || []).forEach(page => {
-                    (page.elements || []).forEach(el => {
-                        (el.columns || []).forEach(col => {
-                            if (col.formula) {
-                                savedFormulaToCol[col.formula] = { elementId: el.id, colId: col.id };
-                            }
-                        });
-                    });
-                });
-
-                // Also build formula → { elementId, columnId } for our local spec
-                const localFormulaToCol = {};  // formula → { elementId, colId }
-                (fullSpec.pages || []).forEach(page => {
-                    (page.elements || []).forEach(el => {
-                        (el.columns || []).forEach(col => {
-                            if (col.formula && col.id) {
-                                localFormulaToCol[col.id] = col.formula;  // colId → formula
-                            }
-                        });
-                    });
-                });
-
                 // Map local element IDs to saved element IDs via positional match
+                // (Sigma assigns its own element IDs on POST; column IDs are inode-format
+                // and are preserved by Sigma, so only element IDs need remapping)
                 const elemIdRemap = {};
                 (fullSpec.pages || []).forEach((origPage, pi) => {
                     const savedPage = (savedSpec.pages || [])[pi];
@@ -19449,14 +19427,13 @@ ${cleanedSql}`;
                     });
                 });
 
-                // Translate a local column ID to the matching saved column ID
-                // by looking up its formula in the saved spec
-                const remapColId = (localColId) => {
-                    const formula = localFormulaToCol[localColId];
-                    if (!formula) return localColId;
-                    const saved = savedFormulaToCol[formula];
-                    return saved ? saved.colId : localColId;
-                };
+                // Column IDs are inode-format (e.g. inode-xxx/COL_NAME) — Sigma preserves
+                // these on POST, so no column ID remapping is needed. Formula-based remapping
+                // was removed because it collides when two elements share the same warehouse
+                // table (e.g. customer_dim and vip_customer both map to CUSTOMER_DIM, so both
+                // have formula "[CUSTOMER_DIM/Customer Key]" — the last one wins and breaks
+                // the relationship for the other element).
+                const remapColId = (localColId) => localColId;
 
                 // ── Build PUT body: saved spec + relationships ────────────────
                 // Deep-clone the saved spec and inject relationships using remapped IDs
