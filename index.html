@@ -14100,6 +14100,7 @@ explores:
         function parseSqlFull(sql) {
             // Skip CTEs: find the last top-level SELECT after all CTE definitions.
             var workSql = sql;
+            var cteNames = new Set();
             if (/^\s*WITH\s/i.test(sql)) {
                 var d0 = 0, lastSel = -1;
                 for (var ci = 0; ci < sql.length; ci++) {
@@ -14109,6 +14110,11 @@ explores:
                 }
                 if (lastSel < 0) return null;
                 workSql = sql.slice(lastSel);
+                // Collect CTE names so we can ignore them as warehouse-table references
+                var withBlock = sql.slice(0, lastSel);
+                var ctePat = /\b(\w+)(?:\s*\([^)]*\))?\s+AS\s*\(/gi;
+                var cm;
+                while ((cm = ctePat.exec(withBlock)) !== null) { cteNames.add(cm[1].toUpperCase()); }
             }
 
             // Locate FROM at depth 0
@@ -14139,6 +14145,8 @@ explores:
 
             var db     = document.getElementById('sqlDatabase').value.trim().toUpperCase();
             var schema = document.getElementById('sqlSchema').value.trim().toUpperCase();
+            var primaryTableBase = primaryTableRef.replace(/["`[\]]/g, '').split('.').pop().toUpperCase();
+            if (cteNames.has(primaryTableBase)) return null; // FROM targets a CTE, not a warehouse table
             var primaryPath = buildSqlPath(primaryTableRef, db, schema);
             if (!primaryPath) return null;
 
@@ -14156,6 +14164,8 @@ explores:
                 var onLeft  = jm[4].split('.').pop().replace(/["`[\]]/g, '').toUpperCase();
                 var onRight = jm[5].split('.').pop().replace(/["`[\]]/g, '').toUpperCase();
                 var jPath = buildSqlPath(jTable, db, schema);
+                var jTableBase = jTable.replace(/["`[\]]/g, '').split('.').pop().toUpperCase();
+                if (cteNames.has(jTableBase)) continue; // skip CTE "tables" in JOIN
                 if (jPath) joins.push({ path: jPath, alias: jAlias, joinType: jType, leftKey: onLeft, rightKey: onRight });
             }
 
@@ -14167,7 +14177,10 @@ explores:
                 var ujTable = jm[2];
                 var ujAlias = jm[3] ? jm[3].replace(/["`[\]]/g, '') : jm[2].split('.').pop().replace(/["`[\]]/g, '');
                 var uCol    = jm[4].replace(/["`[\]]/g, '').toUpperCase();
+
                 var ujPath  = buildSqlPath(ujTable, db, schema);
+                var ujTableBase = ujTable.replace(/["`[\]]/g, '').split('.').pop().toUpperCase();
+                if (cteNames.has(ujTableBase)) continue; // skip CTE "tables" in JOIN
                 if (ujPath && !joins.some(function(j) {
                     return j.alias.toLowerCase() === ujAlias.toLowerCase();
                 })) {
@@ -14362,7 +14375,7 @@ explores:
                 var srcBadge = src
                     ? '<span style="font-size:9px;background:#1a6b3c;color:#7ef2ab;border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle;">NATIVE</span>'
                     : '<span style="font-size:9px;background:#4a3000;color:#ffcc66;border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle;">SQL</span>';
-                return '<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border);cursor:pointer;text-align:left;width:100%;box-sizing:border-box;">' +
+                return '<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border);cursor:pointer;text-align:left;width:100%;box-sizing:border-box;color:var(--text-primary);margin-bottom:0;">' +
                     '<input type="checkbox"' + (s.selected ? ' checked' : '') + ' style="margin-top:3px;flex-shrink:0;cursor:pointer;" onchange="toggleSqlStatement(' + idx + ',this.checked)">' +
                     '<div style="flex:1;min-width:0;overflow:hidden;">' +
                     '<div style="font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s.name) + badge + srcBadge + '</div>' +
