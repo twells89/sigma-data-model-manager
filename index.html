@@ -14375,12 +14375,11 @@ explores:
                 var srcBadge = src
                     ? '<span style="font-size:9px;background:#1a6b3c;color:#7ef2ab;border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle;">NATIVE</span>'
                     : '<span style="font-size:9px;background:#4a3000;color:#ffcc66;border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle;">SQL</span>';
-                return '<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border);cursor:pointer;text-align:left;width:100%;box-sizing:border-box;color:var(--text-primary);margin-bottom:0;">' +
-                    '<input type="checkbox"' + (s.selected ? ' checked' : '') + ' style="margin-top:3px;flex-shrink:0;cursor:pointer;" onchange="toggleSqlStatement(' + idx + ',this.checked)">' +
-                    '<div style="flex:1;min-width:0;overflow:hidden;">' +
-                    '<div style="font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s.name) + badge + srcBadge + '</div>' +
-                    '<div style="font-size:10px;opacity:0.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;">' + escapeHtml(preview) + '</div>' +
-                    '</div></label>';
+                return '<label style="display:grid;grid-template-columns:16px 1fr;column-gap:8px;row-gap:2px;padding:6px 10px;border-bottom:1px solid var(--border);cursor:pointer;box-sizing:border-box;color:var(--text-primary);margin:0;">' +
+                    '<input type="checkbox"' + (s.selected ? ' checked' : '') + ' style="grid-row:span 2;margin-top:3px;cursor:pointer;" onchange="toggleSqlStatement(' + idx + ',this.checked)">' +
+                    '<div style="font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(s.name) + badge + srcBadge + '</div>' +
+                    '<div style="font-size:10px;opacity:0.65;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(preview) + '</div>' +
+                    '</label>';
             }).join('');
             renderSqlFileList();
             updateSqlInputStats(allStmts);
