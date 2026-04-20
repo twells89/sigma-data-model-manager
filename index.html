@@ -5835,6 +5835,9 @@ PRODUCT_NAME
             const lines = [];
             for (let i = 1; i <= count; i++) lines.push(`<span>${i}</span>`);
             gutter.innerHTML = lines.join('');
+            // innerHTML reset the gutter's scrollTop to 0 — re-sync immediately
+            // so line numbers stay aligned with the textarea's current scroll pos.
+            syncLineScroll();
         }
 
         function syncLineScroll() {
