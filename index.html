@@ -5965,19 +5965,6 @@ PRODUCT_NAME
                     (typeof key === 'string' && key.startsWith('_')) ? undefined : value
                 ));
                 for (const page of (stripped || [])) {
-                    // Controls belong inside a table element's "elements" array, not at page level
-                    // Move any page-level controls into the first table element
-                    const pageControls = (page.elements || []).filter(el => el.kind === 'control');
-                    const tablEls = (page.elements || []).filter(el => el.kind !== 'control');
-                    if (pageControls.length > 0) {
-                        page.elements = tablEls;
-                        // Find the first table element to attach controls to
-                        const firstTable = page.elements[0];
-                        if (firstTable) {
-                            if (!firstTable.elements) firstTable.elements = [];
-                            firstTable.elements.push(...pageControls);
-                        }
-                    }
                     // Strip metrics with comment-only formulas (LOD placeholders)
                     for (const el of (page.elements || [])) {
                         if (el.metrics) {
@@ -19534,11 +19521,9 @@ ${cleanedSql}`;
                 updateStatus('loading', 'Creating model (step 1/2)…');
 
                 // Deep-clone pages, strip relationships + comment-only metrics
-                // Also move page-level controls into the first table's elements array
                 const pagesNoRels = JSON.parse(JSON.stringify(fullSpec.pages)).map(page => {
-                    const pageControls = (page.elements || []).filter(el => el.kind === 'control');
-                    const tableEls = (page.elements || []).filter(el => el.kind !== 'control');
-                    const mappedEls = tableEls.map(el => {
+                    const mappedEls = (page.elements || []).map(el => {
+                        if (el.kind === 'control') return el;
                         const { relationships, ...rest } = el;
                         if (rest.metrics) {
                             rest.metrics = rest.metrics.filter(m => {
@@ -19548,10 +19533,6 @@ ${cleanedSql}`;
                         }
                         return rest;
                     });
-                    if (pageControls.length > 0 && mappedEls.length > 0) {
-                        if (!mappedEls[0].elements) mappedEls[0].elements = [];
-                        mappedEls[0].elements.push(...pageControls);
-                    }
                     return { ...page, elements: mappedEls };
                 });
 
