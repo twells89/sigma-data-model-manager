@@ -9364,7 +9364,8 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         }
 
         function switchConverter(format) {
-            phTrack('converter_selected', { converter: format });
+            const _convNames = { dbt: 'dbt', snow: 'snowflake', look: 'lookml', tableau: 'tableau', pbi: 'power_bi', alteryx: 'alteryx', contract: 'atlan', omni: 'omni', qlik: 'qlik', oac: 'oac', ssas: 'ssas', sql: 'sql' };
+            phTrack('converter_selected', { converter: _convNames[format] || format });
             const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Qlik', 'Oac', 'Ssas', 'Sql'];
             const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', qlik: 'Qlik', oac: 'Oac', ssas: 'Ssas', sql: 'Sql' };
             const target = map[format] || 'Dbt';
