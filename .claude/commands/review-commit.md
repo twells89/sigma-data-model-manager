@@ -90,10 +90,41 @@ If new UI controls were added (buttons, inputs, dropdowns), check they have mean
 - **Docs need update** — list exactly what is stale or missing and where (line numbers
   if possible), then make the updates before committing
 
-## Step 7 — Final verdict
+## Step 7 — README sync
+
+The `README.md` in the repo root is generated from the in-tool `HELP_CONTENT` object. It must stay in sync with the help modal tabs.
+
+**A. Check if README needs updating**
+Look at the diff. If any of these changed, the README section(s) for the affected converter(s) must be updated to match:
+- `HELP_CONTENT` tab content (any tab)
+- The converter panel UI text (What gets converted / Known limitations blocks in the HTML)
+- The Custom SQL panel placeholder text or feature list
+
+**B. Update README sections that are out of date**
+For each affected converter tab, update the corresponding section in `README.md`:
+- Heading text, What gets converted bullets, Expression conversion table, Known limitations, links
+- If a limitation was fixed, remove it from Known Limitations
+- If a new capability was added, add it to the What gets converted list
+- If a new converter was added (new `HELP_CONTENT` tab + panel), add a full new section to the README
+
+**C. Custom SQL section**
+The Custom SQL section in README.md (under `### Custom SQL`) is the canonical doc for the SQL converter panel. If `parseSqlFull`, `runSqlConversion`, or the SQL panel UI changed, update that section.
+
+**D. Stage README**
+If any README changes were made, run:
+```
+git add README.md
+```
+The README must be committed in the same commit as the HELP_CONTENT / converter changes it documents.
+
+**E. Verdict on README**
+- **README OK** — in sync with current HELP_CONTENT and converter behavior
+- **README updated** — list which sections were changed and what was updated
+
+## Step 8 — Final verdict
 Report one of:
-- **PASS** — code and docs are both correct; safe to commit
-- **FAIL** — list specific issues found (code or docs); do NOT commit; suggest fixes
+- **PASS** — code, docs, and README are all correct; safe to commit
+- **FAIL** — list specific issues found (code, docs, or README); do NOT commit; suggest fixes
 - **WARN** — commit is likely safe but flag items to monitor
 
 Only after a PASS verdict should you proceed with `git commit`.

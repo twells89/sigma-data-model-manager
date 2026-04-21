@@ -1,0 +1,532 @@
+# Sigma Data Model Manager
+
+A single-file browser tool for managing [Sigma Computing](https://sigmacomputing.com) data models via the Sigma REST API. Create, edit, import, and validate data models without leaving your browser — no installation required.
+
+## What is this?
+
+The Data Model Manager is a self-contained HTML file that runs entirely in your browser. It connects directly to the Sigma API, lets you edit data model JSON, and includes converters for ten BI/semantic layer tools so you can migrate existing definitions to Sigma.
+
+**Key capabilities:**
+
+- **JSON Editor** — View and edit data model JSON with syntax highlighting, formatting, undo/redo (50 steps, Ctrl+Z / Ctrl+Y), and Find & Replace (Ctrl+F)
+- **Structure Panel** — Collapsible tree view of all elements, columns, metrics, and relationships; click any item to jump to it in the editor
+- **Diff Viewer** — Line-by-line unified diff against the original loaded model (Ctrl+D)
+- **AI Assistant** — Generate columns, metrics, descriptions, RLS, and more using natural language (Claude, OpenAI, or Gemini)
+- **Fix with AI** — When a save fails, the error banner offers one-click AI repair of common structural issues
+- **Converters** — Import from dbt, Snowflake Cortex Analyst, LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, Omni Analytics, Qlik, Oracle Analytics Cloud, and raw SQL
+- **Bulk Upload** — Create multiple elements from warehouse tables at once
+- **MCP Server** — Use these converters inside Claude Code, Claude Desktop, Cursor, and other MCP-compatible AI tools
+
+## Quick Start
+
+1. Open `index.html` in any modern browser (Chrome, Edge, Firefox, Safari)
+2. Enter your Sigma Client ID and Client Secret in the credentials panel
+3. Click **Connect** — the tool authenticates and loads your data models
+4. Select an existing model or click **New** to create one
+5. Edit JSON directly, use the Structure Panel for navigation, or run a converter
+6. Click **Save** (or Ctrl+S) to write the model back to Sigma
+
+> Your Client Secret is held in JavaScript memory only — never written to disk, localStorage, or any server. See [Security](#security) for details.
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+Z` | Undo |
+| `Ctrl+Y` / `Ctrl+Shift+Z` | Redo |
+| `Ctrl+F` | Find & Replace |
+| `Ctrl+Shift+F` | Format JSON |
+| `Ctrl+S` | Save to Sigma |
+| `Ctrl+D` | Open Diff viewer |
+| `Escape` | Close any open panel or modal |
+
+---
+
+## Converters
+
+### Tableau
+
+Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) to Sigma data model JSON.
+
+**What gets converted:**
+- Data sources → Sigma elements with warehouse table paths
+- Joins / Relationships → Sigma relationships on the fact element
+- Calculated fields → Sigma calculated columns with formula conversion
+- Simple aggregates → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)
+- Parameters → Sigma controls (list, date-range, text)
+- LOD FIXED expressions → Child elements with groupings
+- Sets → Boolean calculated columns; condition sets → formula column, member sets → `In([Field], ...)` column
+- Bins → Bucketed `Floor()` calculated columns
+- Table calculations → `RUNNING_SUM` → `CumulativeSum()`, `RANK` → `Rank()` / `DenseRank()`, `INDEX` → `RowNumber()`
+
+**Known limitations:**
+- LOD INCLUDE / EXCLUDE — Cannot be auto-converted; generates a warning with guidance to use groupings
+- Complex table calculations (LOOKUP, PREVIOUS_VALUE, nested) — Flagged but not converted
+- Cross-element columns — Formulas referencing related dimension columns are removed; add manually in Sigma UI
+- Role-playing dimensions — Supported; each relationship includes the join key in its name (e.g. "DATE_DIM via Order Date Key")
+- Top N / Bottom N sets — Cannot be auto-converted; recreate as filters in Sigma UI
+- Custom SQL data sources — Converted to Sigma custom SQL elements; Tableau-specific SQL syntax may need manual adjustment
+- Extracts (`.hyper`) — Extract-only fields and extract filters not converted
+- Data blending — Multi-connection sources not supported; each data source converted independently
+
+**Useful resources:** [Tableau LOD Calculations in Sigma](https://help.sigmacomputing.com) · [Period over Period Comparisons](https://help.sigmacomputing.com) · [Rollup Function](https://help.sigmacomputing.com)
+
+---
+
+### Power BI
+
+Converts Power BI models (`.pbit`, `.bim`, or `.json`) to Sigma data model JSON. Parses tables, columns, DAX measures, calculated columns, and relationships.
+
+**What gets converted:**
+- Tables → Sigma elements; source paths extracted from M expressions
+- Columns → Sigma columns with display names
+- Relationships → Sigma relationships (fromTable = many side, toTable = one side)
+- Fact tables with outgoing relationships → derived element surfacing own + related columns via cross-element formulas
+- DAX measures → Sigma metrics with formula conversion
+- Calculated columns → Sigma calculated columns
+- Display folders → Sigma folders
+- Measures-only tables → Measures moved to the fact element
+- `CALCULATE` (simple) → `SumIf` / `CountIf` with correct argument order
+- `DIVIDE` → Null-safe division with `If(den = 0, alt, num / den)`
+
+**DAX patterns that generate warnings:**
+- `CALCULATE` + `ALL` / `ALLEXCEPT` → Use groupings for different aggregation contexts
+- Iterators (`SUMX`, `AVERAGEX`) → Use groupings or calculated columns
+- Time intelligence (`TOTALYTD`, `SAMEPERIODLASTYEAR`) → Use Period over Period feature
+- `VAR` / `RETURN` blocks → Break into multiple calculated columns
+
+**Known limitations:**
+- M expression parsing — Works for common data sources (Snowflake, SQL Server, BigQuery, Databricks); complex Power Query with parameters or custom functions may not extract paths correctly
+- Complex DAX — `CALCULATE` with `ALL` / `ALLEXCEPT`, iterators, time intelligence, and `VAR` / `RETURN` generate warnings but are not auto-converted
+- Composite models — DirectQuery vs Import mode distinction not preserved
+- Calculation groups — Not converted
+- Row-level security — Simple equality filters (e.g. `[Region] = "East"`) converted to Sigma RLS using `CurrentUserAttributeText()`; complex DAX filter expressions generate a warning
+
+**Useful resources:** [Complex Leveled Aggregations](https://help.sigmacomputing.com) · [Sigma Differences from Other BI Tools](https://help.sigmacomputing.com) · [Period over Period Comparisons](https://help.sigmacomputing.com)
+
+---
+
+### LookML
+
+Converts LookML projects (multiple `.lkml` files) to Sigma data model JSON. Drop multiple files at once — explores and their joined views are resolved across files automatically.
+
+**What gets converted:**
+- Views with `sql_table_name` → Sigma elements with warehouse paths
+- Derived tables (SQL) → Sigma custom SQL elements; PDT views referenced via `${view.SQL_TABLE_NAME}` are auto-converted into their own Custom SQL element and referenced via `sigma_element('Name')`
+- Dimensions → Sigma columns with formula conversion; complex SQL expressions auto-converted
+- Tier dimensions → Bucketed `If()` calculated columns (e.g. "0 to 99", "100 to 499")
+- Yesno dimensions → Boolean calculated columns with "(T/F)" suffix
+- Measures → Sigma metrics (`sum`, `count`, `count_distinct`, `average`, `min`, `max`, `median`)
+- Explore joins → Sigma relationships + a derived explore element surfacing all base-view and joined-view fields together
+- All Explores mode → Batch-converts all explores into one combined data model; shared views are deduplicated
+- Dimension groups (type:time) → One column per timeframe (DateTrunc / DatePart), grouped into a folder
+- Dimension groups (type:duration) → `DateDiff()` columns per interval (day, week, month, etc.), grouped into a folder
+- `datatype: epoch` → `DateFromUnix()` wrapper applied automatically
+- `percent_of_total` → `Sum([Col]) / GrandTotal(Sum([Col]))`
+- `running_total` → `CumulativeSum([Col])`
+- Filtered measures → Conditional aggregates: `SumIf([Col], [Filter] = "value")`
+- `extends` / `refinements` → Merged automatically when both files are uploaded
+
+**Expression conversion:**
+
+| LookML SQL | Sigma formula |
+|---|---|
+| `CASE WHEN … THEN … END` | `If(…, …, …)` |
+| `CONCAT(a, b)` | `a & b` |
+| `SPLIT_PART(col, delim, n)` | `splitpart([Col], "delim", n)` |
+| `ROUND(x, n)` | `Round(x, n)` |
+| `DATEDIFF('day', a, b)` | `DateDiff("day", [A], [B])` |
+| `NULLIF(x, 0)` | `If(x = 0, null, x)` |
+| `COALESCE(a, b)` | `Coalesce([A], [B])` |
+| `${TABLE}.col_name` | `[Col Name]` |
+
+**Known limitations:**
+- Liquid templating — `{% %}` and `{{ }}` blocks are stripped with warnings
+- Cross-element columns — Formulas referencing other elements' columns are removed; add manually in Sigma UI
+- Fiscal timeframes — Skipped with a warning (require `fiscal_month_offset` from model-level config)
+- Access filters — `access_filter` blocks converted to Sigma RLS using `CurrentUserAttributeText()`; `access_grant` blocks not converted
+- Trailing comma before SQL keywords, incremental PDT leading-comma CTEs, Snowflake `::TYPE` cast shorthand — All automatically corrected with warnings
+
+**Useful resources:** [Groupings & Aggregate Calculations](https://help.sigmacomputing.com) · [Running Total / CumulativeSum](https://help.sigmacomputing.com)
+
+---
+
+### dbt
+
+Converts dbt semantic model YAML files and `semantic_manifest.json` artifacts to Sigma data model JSON. Implements the same conversion logic as the [official Sigma GitHub Action](https://github.com/sigmacomputing/dbt-sigma-action), adapted for standalone use.
+
+**What gets converted:**
+- Semantic models → Sigma elements; warehouse path from `node_relation`, `model: ref()`, or `source()`
+- Entities (primary / unique) → Join-key columns
+- Entities (foreign) → Sigma relationships + a derived element surfacing all own + related dimension columns
+- Dimensions (categorical) → Sigma columns with formula conversion
+- Dimensions (time) → `DateTrunc("granularity", [col])` columns
+- Measures → Sigma metrics; `filter:` → conditional aggregates (`SumIf`, `CountIf`, etc.)
+- Metrics (simple / ratio / derived) → Named Sigma metrics with metric-level filters
+- Time spine (via `semantic_manifest.json`) → `ts_<granularity>` elements with `agg_time_dimension` relationships
+- Multi-file upload → Drop any number of YAML files; cross-file entity relationships resolve automatically
+
+**Expression conversion:**
+
+| dbt expr | Sigma formula |
+|---|---|
+| `CASE WHEN … THEN … END` | `If(…, …, …)` |
+| `CONCAT(a, b)` | `a & b` |
+| `ROUND(x, n)` | `Round(x, n)` |
+| `DATEDIFF('day', a, b)` | `DateDiff("day", [A], [B])` |
+| `NULLIF(x, 0)` | `If(x = 0, null, x)` |
+| `COALESCE(a, b)` | `Coalesce([A], [B])` |
+| `IN (v1, v2)` | `arraycontains(array(v1, v2), [col])` |
+| `{{ Dimension('model__col') }}` | `[Col Name]` |
+
+**Known limitations:**
+- Warehouse paths — For exact paths, use `node_relation` or upload `semantic_manifest.json`; `model: ref('name')` alone uses the model name as the table name
+- Jinja & macros — `ref()` and `source()` strings extracted for path resolution; custom macros and `env_var()` not evaluated
+- Time spine — Requires `project_configuration.time_spines` from `semantic_manifest.json`; not available from standalone YAML files
+- Derived metric chains — One level of metric-to-metric nesting resolved; deeper chains may produce incomplete formulas
+
+**Useful resources:** [dbt Semantic Models](https://docs.getdbt.com/docs/build/semantic-models) · [MetricFlow Time Spine](https://docs.getdbt.com/docs/build/metricflow-time-spine) · [Official Sigma dbt Action](https://github.com/sigmacomputing/dbt-sigma-action)
+
+---
+
+### Snowflake (Cortex Analyst)
+
+Converts Snowflake Cortex Analyst semantic view YAML files to Sigma data model JSON.
+
+**What gets converted:**
+- Tables with `base_table` → Sigma elements with database / schema / table paths
+- Dimensions → Sigma columns (text, number, date based on `data_type`); complex `expr` values auto-converted
+- Time dimensions → Sigma columns (datetime type)
+- Facts → Sigma columns + optional `Sum()` metrics when "Auto-generate metrics" is checked
+- Relationships → Sigma relationships using target table name; source tables with outgoing relationships get a derived element surfacing all own + related columns
+- Descriptions → Preserved on elements and columns
+
+**Expression conversion:**
+
+| Snowflake YAML expr | Sigma formula |
+|---|---|
+| `CASE WHEN … THEN … END` | `If(…, …, …)` |
+| `CONCAT(a, b)` | `a & b` |
+| `ROUND(x, n)` | `Round(x, n)` |
+| `DATEDIFF('day', a, b)` | `DateDiff("day", [A], [B])` |
+| `NULLIF(x, 0)` | `If(x = 0, null, x)` |
+| `COALESCE(a, b)` | `Coalesce([A], [B])` |
+
+**Known limitations:**
+- No Snowflake SQL execution — parses YAML definition only; does not validate column existence
+- Unsupported SQL functions (FLATTEN, LATERAL, QUALIFY, PIVOT, etc.) — automatically skipped with a warning
+- Semantic view filters — Not converted; add as RLS in Sigma after import
+- Multiple semantic views in one YAML — All tables merged into a single Sigma data model
+
+**Useful resources:** [Cortex Analyst Semantic Model Spec](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-analyst/semantic-model-spec)
+
+---
+
+### Alteryx
+
+Converts Alteryx workflows (`.yxmd`) to Sigma data model JSON. Parses Input Data tools, Join tools, Formula tools, Summarize tools, Select tools, and Filter tools.
+
+**What gets converted:**
+- Input Data tools → Sigma elements with warehouse table paths (from ODBC connection strings)
+- Join tools → Sigma relationships + a derived element surfacing all own + joined columns
+- Formula tools → Calculated columns with formula conversion (IF/ELSEIF, CASE WHEN, CONCAT, SPLIT_PART)
+- Summarize tools → Sigma metrics (Sum, Avg, Min, Max, Count, CountDistinct, CountNonNull)
+- Filter tools → Informational warnings; consider adding as RLS via the AI Assistant
+
+**Supported formula conversions:**
+- **Conditional:** `IF/ELSEIF/ELSE/ENDIF`, `IIF`, `CASE WHEN … END` → nested `If()`
+- **String:** `ToString`, `Uppercase`, `Lowercase`, `Trim`, `Left`, `Right`, `Substring`, `Length`, `Contains`, `CONCAT` → `&`, `SPLIT_PART` → `splitpart()`
+- **Math:** `Abs`, `Ceil`, `Floor`, `Round`, `Sqrt`, `Pow`, `Log`
+- **Date:** `DateTimeYear`, `DateTimeMonth`, `DateTimeDay`, `DateTimeDiff`, `DateTimeAdd`, `DateTimeTrim`
+- **Null:** `IsNull`, `IsEmpty`, `NULL()`
+
+**Known limitations:**
+- ETL vs semantic model — Intermediate transformations (Union, Append, Transpose, Cross Tab) are simplified or ignored
+- Complex formulas — Multi-row formulas, spatial functions, and custom macros generate warnings but are not converted
+- Non-ODBC inputs — File inputs (CSV, Excel) and API inputs may produce incorrect source paths
+- Analytic tools — Predictive and spatial tools are ignored entirely
+
+---
+
+### Atlan Data Contracts
+
+Converts Data Contract Specification YAML files to Sigma data model JSON. Compatible with contracts from Atlan, Databricks, dbt, and the `datacontract` CLI.
+
+**What gets converted:**
+- Models → Sigma elements with warehouse table paths
+- Fields → Sigma columns with display names and descriptions
+- References → Sigma relationships + a derived element surfacing all own + referenced model columns
+- Primary keys → Used as relationship target columns
+- Numeric fields → Auto-generated `Sum()` metrics (excluding key columns)
+- Field descriptions → Preserved as column descriptions
+
+**Supported input formats:** Data Contract Specification (`.datacontract.yaml`) and JSON format.
+
+**Known limitations:**
+- No computed columns — Contracts define schema, not computation logic; add calculated columns in Sigma after import
+- Quality rules, SLA / governance blocks — Skipped; no Sigma equivalent
+- Complex YAML features (anchors, multi-document, flow sequences, block scalars) — May not parse correctly; convert to JSON first if parsing fails
+- Field constraints (enum, min/max, pattern, required, unique) — Informational only; not enforced in the Sigma model
+
+**Useful resources:** [Data Contract Specification](https://github.com/datacontract/datacontract-specification) · [Atlan Data Contracts](https://atlan.com)
+
+---
+
+### Omni Analytics
+
+Converts Omni Analytics model files (`.view.yaml` and `.model.yaml`) to Sigma data model JSON.
+
+**What gets converted:**
+- Views with `sql_table_name` → Sigma elements; path parsed from the fully-qualified table name
+- Derived tables → Sigma elements with a warning to complete the source path manually
+- Dimensions → Sigma columns; `${TABLE}.col` and `${field}` references translated to Sigma syntax
+- Dimensions (type:time) → One column per timeframe using `DateTrunc()`
+- Dimensions (type:yesno) → Boolean calculated columns
+- Measures → Sigma metrics with appropriate aggregation; filtered measures → conditional aggregates
+- Explores + joins → Sigma relationships; `sql_on` parsed to extract FK/PK pairs; base view with joins gets a derived element surfacing all own + joined columns
+- Multi-file drop → Drop all `.view.yaml` and `.model.yaml` files at once
+
+**Expression conversion:**
+
+| Omni SQL | Sigma formula |
+|---|---|
+| `${TABLE}.col_name` | `[Source Table/Display Col Name]` |
+| `${field_name}` | `[Display Field Name]` |
+| `CASE WHEN … END` | `If(…, …, …)` |
+| `expr IN (a, b, c)` | `(expr = a Or expr = b Or expr = c)` |
+| `'string'` | `"string"` |
+| `MONTH(x)`, `CONCAT(…)`, `ROUND(…)`, `DATEDIFF(…)`, `NULLIF(…)` | `Month(x)`, `Concat(…)`, `Round(…)`, `DateDiff(…)`, `Nullif(…)` |
+
+**Known limitations:**
+- Role-playing dimensions — If the same view is joined multiple times under different aliases, only one relationship per target view is created; add duplicates manually
+- Topics — Omni Topics (curated field subsets) have no direct Sigma equivalent; ignored
+- `extends` / refinements — View inheritance not resolved across files; upload all parent and child view files together
+- Cross-view `sql` references — `${other_view.field}` table qualifier stripped; resulting formulas may fail Sigma validation if the column is on a different element
+
+**Useful resources:** [Omni Analytics — Views](https://docs.omni.co) · [Omni Analytics — Explores & Joins](https://docs.omni.co)
+
+---
+
+### Qlik Sense
+
+Converts Qlik Sense data model metadata (from the REST API or Engine API) to Sigma data model JSON. Parses tables, fields, automatically inferred associations, master measures, and master dimensions.
+
+**What gets converted:**
+- Tables → Sigma elements (one per Qlik data model table)
+- Fields → Sigma columns with display names (`FIELD_NAME` → `Field Name`)
+- Associations → Sigma relationships; direction inferred from row counts and field cardinality
+- Master Measures → Sigma metrics with formula conversion
+- Master Dimensions (calculated) → Sigma calculated columns
+- System tables and fields ($ prefix, %synthetic keys) → Skipped automatically
+
+**How to get the metadata:**
+
+```bash
+# Qlik Cloud REST API
+GET https://<tenant>.us.qlikcloud.com/api/v1/apps/<appId>/data/metadata
+Authorization: Bearer <API_KEY>
+
+# Qlik CLI
+qlik app data metadata get --app-id <appId> > metadata.json
+```
+
+To include master measures and master dimensions, use the extended format:
+```json
+{
+  "appName": "My App",
+  "tables": [ /* from /data/metadata */ ],
+  "masterMeasures": [
+    { "title": "Total Sales", "expr": "Sum([Sales Amount])" }
+  ],
+  "masterDimensions": [
+    { "title": "High Value", "fieldDef": "=If([Revenue] > 10000, 'Yes', 'No')" }
+  ]
+}
+```
+
+**Expression conversion:** Most Qlik functions share Sigma's syntax directly. Notable mappings: `Only([Field])` → `[Field]`, `Text([Field])` → `ToString([Field])`, `IsNum([Field])` → `IsNumber([Field])`, `Log([x])` → `Ln([x])`, `Fmod(a, b)` → `Mod(a, b)`. Set Analysis expressions generate a warning — use `SumIf` / `CountIf` in Sigma instead.
+
+**Known limitations:**
+- Source paths — REST API metadata does not include database or schema; use the Database / Schema override fields
+- Synthetic keys — `%SyntheticKey%` bridge tables are filtered out; review relationships manually for complex many-to-many joins
+- Master items — Not returned by `/data/metadata`; use the extended JSON format above
+- Set Analysis — Skipped with a warning; no direct Sigma equivalent
+
+**Useful resources:** [Qlik Cloud REST API](https://qlik.dev/apis/rest/apps/) · [Qlik Engine API](https://qlik.dev/apis/engine/)
+
+---
+
+### Oracle Analytics Cloud (OAC)
+
+Converts Oracle Analytics Cloud semantic models exported from the Semantic Modeler (SMML format) to Sigma data model JSON.
+
+**How to export from OAC:**
+1. In OAC, open the Semantic Modeler
+2. Click the ⋯ menu on your semantic model
+3. Choose **Export** — OAC downloads a `.zip` in SMML (Semantic Modeler Markup Language) format
+4. Drop the `.zip` directly into the converter (or upload individual logical table `.json` files)
+
+**What gets converted:**
+- Logical tables → Sigma elements; physical table path resolved from the `physical/` layer in the export ZIP
+- Dimension columns → Sigma dimension columns with warehouse column references
+- Measure columns (SUM, AVG, COUNT, COUNT_DISTINCT, MIN, MAX, MEDIAN, STD_DEV) → Sigma metrics; underlying physical column preserved in columns for formula references
+- Derived / calculated columns → Sigma calculated column formulas with OAC Logical SQL function remapping
+- Joins → Sigma relationships; join keys inferred by matching column names between logical tables
+
+**Expression conversion:**
+
+| OAC Logical SQL | Sigma formula |
+|---|---|
+| `NVL(a, b)` | `Coalesce(a, b)` |
+| `SUBSTR` / `SUBSTRING` | `Mid()` |
+| `INSTR()` | `Search()` |
+| `LENGTH()` | `Len()` |
+| `TO_CHAR()` | `Text()` |
+| `TO_DATE()` | `Date()` |
+| `TO_NUMBER()` | `Number()` |
+| `TIMESTAMPADD()` / `TIMESTAMPDIFF()` | `DateAdd()` / `DateDiff()` |
+| `SQL_TSI_DAY` / `SQL_TSI_MONTH` etc. | `"day"` / `"month"` etc. |
+| `CURRENT_DATE` | `Today()` |
+| `CASE WHEN … END` | `If(…, …, …)` |
+| `expr IN (a, b, c)` | `In(expr, a, b, c)` |
+
+**Known limitations:**
+- OAC time series functions (`AGO()`, `TODATE()`, `PERIODROLLING()`) — No direct Sigma equivalent; converted with a warning for manual review
+- `FILTER(measure USING condition)` — Use `SumIf()` / `CountIf()` in Sigma instead
+- `EVALUATE()` — Native SQL pass-through; no Sigma equivalent
+- Join keys — Inferred by column name matching; may require manual configuration in Sigma if no match found
+- Level-based hierarchies — Not converted; configure in the Sigma data model editor after import
+- Classic RPD files (`.rpd`) — Not supported; convert to SMML using Oracle's tools first
+
+**Useful resources:** [Oracle — What is SMML?](https://docs.oracle.com/en/cloud/paas/analytics-cloud/acabi/whats-smml.html)
+
+---
+
+### Custom SQL
+
+Converts raw SQL files or pasted SQL statements to Sigma data model JSON. Drop `.sql` files or paste queries directly — multiple statements are supported and can be selectively included.
+
+**What gets converted:**
+
+| SQL pattern | Sigma output |
+|---|---|
+| `SELECT col1, col2 FROM db.schema.table` | Native warehouse-table element |
+| `SELECT … FROM table JOIN …` | Native element with relationships |
+| `SELECT … GROUP BY …` with aggregates | Columns + metrics on the element |
+| `CREATE VIEW name AS SELECT …` | Element named after the view |
+| CTEs (`WITH … AS`), subqueries | Custom SQL element (SQL fallback) |
+| Complex / ambiguous queries | Custom SQL element (SQL fallback) |
+
+**How it works:**
+1. The converter parses each SQL statement and attempts to detect a primary warehouse table and any JOINs
+2. If the query maps cleanly to warehouse tables, it creates a **native** element (`source.kind: "warehouse-table"`) — this is the preferred output because it supports Sigma relationships, lineage, and column-level filtering
+3. If the query uses CTEs, subqueries, window functions, or other patterns that can't be expressed as a warehouse-table element, it falls back to a **Custom SQL** element (`source.kind: "sql"`) that stores the raw query
+
+A badge in the output panel shows **NATIVE** or **SQL** for each converted statement so you know which path was taken.
+
+**Database / Schema path detection:**
+- `db.schema.table` notation is parsed automatically
+- Use the **Database** and **Schema** override fields when the SQL uses unqualified table names
+
+**Known limitations:**
+- Window functions (`ROW_NUMBER`, `RANK`, `LAG`, `LEAD`, `SUM OVER`) — Passed through to Custom SQL fallback; wire as calculated columns manually in the Sigma UI
+- Multi-statement files — Each `CREATE VIEW` or top-level `SELECT` is treated as a separate statement; CTEs within a statement are kept together
+- DDL statements (`CREATE TABLE`, `ALTER`, `INSERT`) — Detected and skipped with a warning; only `SELECT` and `CREATE VIEW … AS SELECT` are supported
+- Dialect-specific syntax — The converter does not validate SQL against a specific warehouse dialect; syntax that Sigma does not support will need to be adjusted after import
+
+---
+
+## AI Assistant
+
+The AI Assistant (Claude, OpenAI, or Gemini) generates data model content from natural language prompts.
+
+**Capabilities:**
+- `"Add a Gross Margin % column"` → Calculated column
+- `"Create metrics for total revenue, order count, and AOV"` → Metrics
+- `"Add descriptions to all columns"` → Column descriptions
+- `"Add row-level security filtering by region"` → RLS column
+- `"Add a relationship to the customer dim"` → Relationship
+- `"Create an ORDER_FACT table with these columns"` → New element
+
+**Fix with AI:** When a save to Sigma fails, a red error banner appears with a **🤖 Fix with AI** button. This sends the failed JSON and the error message to your configured AI provider to attempt automatic repair. The AI can fix structural issues (empty arrays, casing mismatches, circular dependencies) but cannot verify warehouse column names against your actual schema.
+
+**Formula syntax rules for AI-generated formulas:**
+- Local columns: `[Column Name]` — no table prefix
+- Cross-element columns: Not supported via API — add manually in Sigma UI
+- Conditional aggregates: `SumIf(field, condition)` — field first; `CountIf(condition)` — condition only, no field argument
+- Booleans: always use `[Col] = True`, never bare `[Col]`
+
+---
+
+## API Notes
+
+### Common Save Errors
+
+**"Cycle in dependency order"** — The most common save error. Usually means:
+- A column formula references a display name that doesn't match the warehouse column (check casing)
+- Empty `metrics: []` or `relationships: []` arrays on elements that have none
+- Deprecated `- link/` cross-element formulas
+
+Use **Fix with AI** in the error banner to attempt automatic repair.
+
+**Column display name casing:** Sigma title-cases every word in display names — including words like "in", "of", "to", "at". `IS_EMAIL_OPT_IN` → `"Is Email Opt In"` (not `"Is Email Opt in"`). Column formulas must use the exact display name Sigma generates.
+
+**Cross-element column references:** Sigma "links" (the `- link/` formula syntax) are being deprecated. The API does not support creating them. Converters automatically detect and remove cross-element formulas with a warning to add them manually in the Sigma UI.
+
+### Column ID Formats
+
+- Warehouse columns: `inode-HASH/PHYSICAL_NAME` — assigned by Sigma on save
+- Calculated columns: Short random IDs — generated by the tool; Sigma keeps them
+
+When saving a new model, Sigma replaces all column IDs with its own inode-based IDs. References in formulas, relationships, and groupings are automatically remapped.
+
+### API Endpoints Used
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v2/datamodels` | List data models |
+| `GET /v2/datamodels/{id}` | Retrieve model JSON |
+| `POST /v2/datamodels` | Create new model |
+| `PUT /v2/datamodels/{id}` | Update existing model |
+| `GET /v2/connections` | List available connections |
+| `GET /v2/connections/{id}/paths` | Browse warehouse schemas / tables |
+
+---
+
+## MCP Server
+
+The same converter logic is available as a hosted [Model Context Protocol](https://modelcontextprotocol.io) server. Connect AI agents (Claude Code, Claude Desktop, Claude.ai, Cursor, and any MCP-compatible client) to convert data models to Sigma using natural language — no installation required.
+
+**Endpoint:** `https://sigma-data-model-mcp.onrender.com/mcp`
+
+**Available tools:**
+- `convert_dbt_to_sigma` — dbt semantic model YAML → Sigma JSON
+- `convert_snowflake_to_sigma` — Snowflake Cortex Analyst YAML → Sigma JSON
+- `convert_lookml_to_sigma` — LookML project files → Sigma JSON
+- `convert_powerbi_to_sigma` — Power BI model (`.bim` / TOM JSON) → Sigma JSON
+- `convert_tableau_to_sigma` — Tableau workbook / data source (`.twb` / `.tds` XML) → Sigma JSON
+- `convert_omni_to_sigma` — Omni Analytics `.view.yaml` + `.model.yaml` → Sigma JSON
+- `convert_sql_to_sigma_formula` — SQL expression → Sigma formula
+- `convert_tableau_formula_to_sigma` — Tableau formula → Sigma formula
+- `get_sigma_data_model_schema` — Sigma data model JSON schema reference
+
+**Client setup:**
+
+```bash
+# Claude Code
+claude mcp add sigma-data-model --transport http https://sigma-data-model-mcp.onrender.com/mcp
+```
+
+For Claude Desktop, add to `claude_desktop_config.json` using `npx mcp-remote`. For Claude.ai, add as a connector in Settings → Connected MCP Servers.
+
+---
+
+## Security
+
+This tool runs entirely in your browser — no credentials are sent to any server other than the Sigma API and your chosen AI provider directly.
+
+- **Storage** — Your Sigma Client Secret is never written anywhere. It is held in JavaScript memory only for the lifetime of the browser tab. Your Client ID and AI API keys are stored in `sessionStorage`, which is cleared automatically when the tab is closed. Nothing is ever written to `localStorage`, cookies, or any external service.
+- **In transit** — Credentials are sent only to `api.sigmacomputing.com` (for Sigma) and to the AI provider's API endpoint (Anthropic, OpenAI, or Google). No intermediary server is involved.
+- **Shared machines** — Close the browser tab when finished rather than just navigating away. This clears session storage and removes credentials from memory.
+- **Key rotation** — Use a dedicated Sigma service account with minimum required permissions (read + write to data models only). Rotate API keys on a regular schedule and revoke immediately if suspected of exposure.
+- **AI keys** — Monitor your AI provider's usage dashboard and set a spending limit as a safety net.
