@@ -5979,20 +5979,20 @@ PRODUCT_NAME
             }
 
             try {
-                // Pre-save column validation — non-blocking if lookup fails
-                if (state.accessToken) {
-                    try {
-                        btn.innerHTML = '<div class="spinner"></div><span>Validating columns...</span>';
-                        const validation = await validateModelColumns(jsonData);
-                        if (validation?.hasIssues) {
-                            const proceed = await showColumnValidationModal(validation);
-                            if (!proceed) return; // finally block re-enables the button
-                        }
-                    } catch (validationErr) {
-                        console.warn('Column validation skipped:', validationErr.message);
-                    }
-                    btn.innerHTML = '<div class="spinner"></div><span>Saving...</span>';
-                }
+                // Pre-save column validation disabled — HAR files ~200MB + API timeouts
+                // if (state.accessToken) {
+                //     try {
+                //         btn.innerHTML = '<div class="spinner"></div><span>Validating columns...</span>';
+                //         const validation = await validateModelColumns(jsonData);
+                //         if (validation?.hasIssues) {
+                //             const proceed = await showColumnValidationModal(validation);
+                //             if (!proceed) return; // finally block re-enables the button
+                //         }
+                //     } catch (validationErr) {
+                //         console.warn('Column validation skipped:', validationErr.message);
+                //     }
+                //     btn.innerHTML = '<div class="spinner"></div><span>Saving...</span>';
+                // }
 
                 const cleanedPages = cleanPages(jsonData.pages);
 
