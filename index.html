@@ -14095,6 +14095,105 @@ explores:
             return null; // function without alias → skip
         }
 
+        // Attempt to convert a multi-aggregate SQL expression to a Sigma metric formula.
+        // Handles: ROUND wrapper, NULLIF(expr,0) denominator guard, single AGG calls,
+        // and arithmetic combinations (+  -  *  /) of those building blocks.
+        // Returns the Sigma formula string, or null when the expression is too complex.
+        function tryConvertRatioMetric(rawExpr) {
+            var expr = rawExpr.trim();
+
+            // Strip outer ROUND(expr, precision) → will wrap result in Round(…, precision)
+            var roundPrecision = '';
+            var roundM = /^ROUND\s*\(/i.exec(expr);
+            if (roundM) {
+                var rc = sqlFindClose(expr, roundM[0].length - 1);
+                if (rc === expr.length - 1) {
+                    var rBody = expr.slice(roundM[0].length, rc);
+                    var lc = -1, rd = 0;
+                    for (var ri = 0; ri < rBody.length; ri++) {
+                        if (rBody[ri] === '(') rd++;
+                        else if (rBody[ri] === ')') rd--;
+                        else if (rBody[ri] === ',' && rd === 0) lc = ri;
+                    }
+                    if (lc >= 0) { roundPrecision = rBody.slice(lc + 1).trim(); expr = rBody.slice(0, lc).trim(); }
+                }
+            }
+
+            // Recursively convert an arithmetic expression of AGG calls to a Sigma formula.
+            function convert(e) {
+                e = e.trim();
+
+                // Strip NULLIF(expr, 0) — Sigma returns null on divide-by-zero natively
+                var nm = /^NULLIF\s*\(/i.exec(e);
+                if (nm) {
+                    var nc = sqlFindClose(e, nm[0].length - 1);
+                    var nb = e.slice(nm[0].length, nc);
+                    var nlc = -1, nd2 = 0;
+                    for (var ni = 0; ni < nb.length; ni++) {
+                        if (nb[ni] === '(') nd2++;
+                        else if (nb[ni] === ')') nd2--;
+                        else if (nb[ni] === ',' && nd2 === 0) nlc = ni;
+                    }
+                    if (nlc >= 0) return convert(nb.slice(0, nlc).trim());
+                }
+
+                // Strip redundant outer parens
+                if (e[0] === '(' && sqlFindClose(e, 0) === e.length - 1) return convert(e.slice(1, -1));
+
+                // Numeric literal (including negative)
+                if (/^-?[\d.]+$/.test(e)) return e;
+
+                // Single aggregate function: SUM / COUNT [DISTINCT] / AVG / MIN / MAX
+                var am = /^(SUM|COUNT|AVG|AVERAGE|MIN|MAX)\s*\(\s*(DISTINCT\s+)?/i.exec(e);
+                if (am) {
+                    var fn = am[1].toUpperCase();
+                    var isDistinct = !!am[2];
+                    var ac = sqlFindClose(e, am[0].length - 1);
+                    var arg = e.slice(am[0].length, ac).trim();
+                    var col = arg.split('.').pop().replace(/["`[\]]/g, '').replace(/^\*$/, 'rows').trim();
+                    if (!col) return null;
+                    if (fn === 'COUNT' && isDistinct) return 'CountDistinct([' + sigmaDisplayName(col) + '])';
+                    if (fn === 'COUNT') return 'CountIf(IsNotNull([' + sigmaDisplayName(col) + ']))';
+                    var fm = { SUM: 'Sum', AVG: 'Avg', AVERAGE: 'Avg', MIN: 'Min', MAX: 'Max' };
+                    return (fm[fn] || 'Sum') + '([' + sigmaDisplayName(col) + '])';
+                }
+
+                // Arithmetic: find depth-0 operators, split at lowest-precedence rightmost one
+                var ops = [], dep = 0;
+                for (var k = 0; k < e.length; k++) {
+                    var ch = e[k];
+                    if (ch === '(') dep++;
+                    else if (ch === ')') dep--;
+                    else if (dep === 0 && (ch === '+' || ch === '-' || ch === '*' || ch === '/')) {
+                        var prev = e.slice(0, k).replace(/\s+$/, '');
+                        if (prev && !/[\+\-\*\/\(]$/.test(prev)) ops.push({ pos: k, op: ch });
+                    }
+                }
+                if (ops.length === 0) return null;
+
+                // Rightmost + or - first (lowest precedence), fall back to rightmost * or /
+                var split = null;
+                for (var oi = ops.length - 1; oi >= 0; oi--) {
+                    if (ops[oi].op === '+' || ops[oi].op === '-') { split = ops[oi]; break; }
+                }
+                if (!split) {
+                    for (var oi2 = ops.length - 1; oi2 >= 0; oi2--) {
+                        if (ops[oi2].op === '*' || ops[oi2].op === '/') { split = ops[oi2]; break; }
+                    }
+                }
+                if (!split) return null;
+
+                var lhs = convert(e.slice(0, split.pos).trim());
+                var rhs = convert(e.slice(split.pos + 1).trim());
+                if (lhs === null || rhs === null) return null;
+                return lhs + ' ' + split.op + ' ' + rhs;
+            }
+
+            var result = convert(expr);
+            if (result === null) return null;
+            return roundPrecision ? 'Round(' + result + ', ' + roundPrecision + ')' : result;
+        }
+
         // Comprehensive parser: primary table, explicit JOINs, columns, metrics.
         // Returns null if the query is too complex (subquery in FROM, implicit cross-join, etc.)
         function parseSqlFull(sql) {
@@ -14213,8 +14312,14 @@ explores:
                     var multiAgg = (part.match(/\b(SUM|COUNT|AVG|MIN|MAX)\s*\(/gi) || []).length > 1;
                     var formula;
                     if (multiAgg) {
-                        // Best-effort placeholder — user should refine in Sigma
-                        formula = '/* TODO: ' + alias + ' — complex expression, wire manually */';
+                        // Try to convert ratio / arithmetic-of-aggregates to a Sigma formula.
+                        // Strip the AS alias suffix before passing to the converter.
+                        var asAtM = part.search(/\bAS\s+[\w"`[\]]+\s*$/i);
+                        var metricExpr = (asAtM >= 0 ? part.slice(0, asAtM) : part).trim();
+                        var ratioFormula = tryConvertRatioMetric(metricExpr);
+                        formula = ratioFormula !== null
+                            ? ratioFormula
+                            : '/* TODO: ' + alias + ' — complex expression, wire manually */';
                     } else {
                         var innerCol = inner.split('.').pop().replace(/["`[\]]/g, '').replace(/^\*$/, 'rows') || alias;
                         var sigmaFn = { SUM: 'Sum', COUNT: 'CountIf', COUNTDISTINCT: 'CountDistinct', AVG: 'Avg', AVERAGE: 'Avg', MIN: 'Min', MAX: 'Max' }[funcName] || 'Sum';
