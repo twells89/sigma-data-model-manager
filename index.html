@@ -7490,7 +7490,8 @@ FORMULA REFERENCE RULES
 - Warehouse columns in element formulas: [TABLE_NAME/Display Name]  (TABLE_NAME = last segment of path)
 - Calculated column formulas:            [Display Name]              (NO table prefix)
 - Metric formulas:                       [Display Name]              (NO table prefix)
-- Custom SQL columns:                    [Custom SQL/Column Alias]  (Title Case, NOT ALL_CAPS)
+- Custom SQL columns (own formulas):     [Column Alias]              (bare — NO table prefix; Title Case, NOT ALL_CAPS)
+- Referencing a SQL element from another element: [Element Name/Column Alias]
 - Join output columns:                   [TABLE_NAME/Display Name]
 - Union output columns:                  [Union of 2 Sources/Column Name]
 - NEVER use dot notation like [table.col] — always slash [TABLE/Col]
@@ -21531,7 +21532,43 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <div class="help-links-title">🔗 Links</div>
     <a href="https://sigma-data-model-mcp.onrender.com/mcp" target="_blank">MCP Server Endpoint</a>
     <a href="https://github.com/twells89/sigma-data-model-mcp" target="_blank">GitHub Repository</a>
-</div>`
+</div>`,
+
+            sql: `
+<h3>Custom SQL Converter</h3>
+<p>Converts raw SQL files or pasted SQL statements to Sigma data model JSON. Drop <code>.sql</code> files or paste queries directly — multiple statements are supported and can be selectively included.</p>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>Simple <code>SELECT … FROM table</code></b> → native <code>warehouse-table</code> element (preferred — supports Sigma relationships, lineage, and column-level filtering)</li>
+    <li><b>SELECT column list</b> → column names auto-extracted and added to the element</li>
+    <li><b><code>db.schema.table</code> notation</b> → path auto-detected; Database / Schema override fields apply when unqualified names are used</li>
+    <li><b>JOINs</b> → separate dimension elements created; relationships wired between them and the primary element</li>
+    <li><b><code>GROUP BY</code> with aggregates</b> → columns + metrics generated on the element</li>
+    <li><b><code>CREATE VIEW name AS SELECT …</code></b> → element named after the view</li>
+    <li><b>CTEs (<code>WITH … AS</code>), subqueries, window functions, complex queries</b> → SQL fallback element (<code>source.kind: "sql"</code>)</li>
+</ul>
+
+<h3>How It Works</h3>
+<ol>
+    <li>The converter parses each statement and attempts to detect a primary warehouse table and any JOINs</li>
+    <li>If the query maps cleanly to warehouse tables, it creates a <b>native</b> element — shown with a <b>NATIVE</b> badge</li>
+    <li>If the query uses CTEs, subqueries, or other unsupported patterns, it falls back to a <b>Custom SQL</b> element that stores the raw query — shown with a <b>SQL</b> badge</li>
+</ol>
+
+<h3>Formula Conventions</h3>
+<ul>
+    <li><b>Native elements</b> — columns use <code>[TABLE_NAME/Column Name]</code> where <code>TABLE_NAME</code> is the last segment of the path</li>
+    <li><b>SQL fallback elements</b> — columns use bare <code>[Column Alias]</code> (no table prefix); Sigma resolves them relative to the SQL output</li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li><b>Window functions</b> (<code>ROW_NUMBER</code>, <code>RANK</code>, <code>LAG</code>, <code>LEAD</code>, <code>SUM OVER</code>) — routed to SQL fallback; wire as calculated columns manually in the Sigma UI</li>
+    <li><b>Multi-statement files</b> — each <code>CREATE VIEW</code> or top-level <code>SELECT</code> is treated as a separate statement; CTEs within a statement are kept together</li>
+    <li><b>DDL statements</b> (<code>CREATE TABLE</code>, <code>ALTER</code>, <code>INSERT</code>) — detected and skipped with a warning; only <code>SELECT</code> and <code>CREATE VIEW … AS SELECT</code> are supported</li>
+    <li><b>Dialect-specific syntax</b> — the converter does not validate SQL against a specific warehouse dialect; syntax unsupported by Sigma will need adjustment after import</li>
+</ul>`
         };
 
         function toggleHelpModal(forceOpen) {
@@ -21556,7 +21593,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
 
         function switchHelpTab(tab) {
             document.querySelectorAll('#helpTabs .help-tab').forEach((t, i) => {
-                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'qlik', 'oac', 'ai', 'api', 'mcp'];
+                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'qlik', 'oac', 'ai', 'api', 'mcp', 'sql'];
                 t.classList.toggle('active', tabs[i] === tab);
             });
             document.getElementById('helpContent').innerHTML = HELP_CONTENT[tab] || '';
@@ -22358,6 +22395,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
                 <button class="help-tab" onclick="switchHelpTab('ai')">🤖 AI Assistant</button>
                 <button class="help-tab" onclick="switchHelpTab('api')">⚙️ API Notes</button>
                 <button class="help-tab" onclick="switchHelpTab('mcp')">🔌 MCP Server</button>
+                <button class="help-tab" onclick="switchHelpTab('sql')">🗄️ Custom SQL</button>
             </div>
             <div class="help-content" id="helpContent"></div>
         </div>
