@@ -7,6 +7,15 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js" integrity="sha512-CSBhVREyzHAjAFfBlIBakjoRUKp5h7VSweP0InR/pAJyptH7peuhCsqAI/snV+TwZmXZqoUklpXp6R6wMnYf5Q==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js" integrity="sha512-78KH17QLT5e55GJqP76vutp1D2iAoy06WcYBXB6iBCsmO6wWzx0Qdg8EDpm8mKXv68BcvHOyeeP4wxAL0twJGQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <!-- PostHog analytics -->
+    <script>
+        !function(t,e){var o,n,p,r;e.__SV||(window.posthog && window.posthog.__loaded)||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="Ir Sr init jr $r Ci qr Hr Dr capture calculateEventProperties Wr register register_once register_for_session unregister unregister_for_session Qr getFeatureFlag getFeatureFlagPayload getFeatureFlagResult isFeatureEnabled reloadFeatureFlags updateFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSurveysLoaded onSessionId getSurveys getActiveMatchingSurveys renderSurvey displaySurvey cancelPendingSurvey canRenderSurvey canRenderSurveyAsync tn identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset setIdentity clearIdentity get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException captureLog startExceptionAutocapture stopExceptionAutocapture loadToolbar get_property getSessionProperty Jr Yr createPersonProfile setInternalOrTestUser Kr Pr nn opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing get_explicit_consent_status is_capturing clear_opt_in_out_capturing zr debug ki Xr getPageViewId captureTraceFeedback captureTraceMetric Mr".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+        posthog.init('phc_nhCGvbVDqo8kUcJm6VWpwBMr6Wk9ewTeUobcX5SoPTTu', {
+            api_host: 'https://us.i.posthog.com',
+            defaults: '2026-01-30',
+            person_profiles: 'identified_only',
+        });
+    </script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
         
@@ -5571,6 +5580,7 @@ PRODUCT_NAME
                     throw new Error(msg);
                 }
                 showToast(`"${modelName}" deleted`, 'success');
+                phTrack('model_deleted');
                 // Remove from local state immediately
                 state.dataModels = (state.dataModels || []).filter(m => m.dataModelId !== dataModelId);
                 if (state.selectedModel?.dataModelId === dataModelId) {
@@ -5628,6 +5638,7 @@ PRODUCT_NAME
                 state.selectedModel = { ...data, dataModelId: dataModelId };
                 state.originalJson = JSON.stringify(data, null, 2);
                 state.isNewModel = false; // This is an existing model
+                phTrack('model_loaded');
                 
                 // Update UI
                 setEditorContent(data);
@@ -5805,6 +5816,7 @@ PRODUCT_NAME
         }
 
         function formatEditor() {
+            phTrack('feature_used', { feature: 'format_json' });
             try {
                 const obj = getEditorJson();
                 if (!obj) { showToast('Nothing to format', 'warning'); return; }
@@ -6057,6 +6069,7 @@ PRODUCT_NAME
                 document.getElementById('refreshSigmaBtn').disabled = false;
                 updateStatus('connected', isNew ? 'Data model created!' : 'Changes saved');
                 showToast(isNew ? 'Data model created in Sigma!' : 'Data model saved to Sigma!', 'success');
+                phTrack('model_saved', { is_new: isNew });
                 dismissSaveError();
                 await loadDataModels();
                 if (isNew) {
@@ -8207,6 +8220,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 document.getElementById('aiSuggestion').value = jsonSuggestion;
                 document.getElementById('aiExplanation').textContent = explanation;
                 document.getElementById('aiResults').style.display = 'block';
+                phTrack('ai_suggestion_generated', { provider: document.getElementById('aiProvider').value });
                 
                 // Generate insertion preview
                 try {
@@ -9341,6 +9355,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
 
         // ── Editor Tab Switching ────────────────────────────────────────────
         function switchEditorTab(tab) {
+            if (tab === 'converters') phTrack('converters_panel_opened');
             document.getElementById('tabJson').classList.toggle('active', tab === 'json');
             document.getElementById('tabConverters').classList.toggle('active', tab === 'converters');
             document.getElementById('panelJson').style.display = (tab === 'json') ? '' : 'none';
@@ -9349,6 +9364,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         }
 
         function switchConverter(format) {
+            phTrack('converter_selected', { converter: format });
             const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Qlik', 'Oac', 'Ssas', 'Sql'];
             const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', qlik: 'Qlik', oac: 'Oac', ssas: 'Ssas', sql: 'Sql' };
             const target = map[format] || 'Dbt';
@@ -9358,6 +9374,12 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             });
             // Populate connections for the newly selected converter
             if (state.accessToken) populateConverterConnections();
+        }
+
+        // ── Analytics ──────────────────────────────────────────────────────
+        // Thin wrapper — never lets analytics errors surface to the user.
+        function phTrack(event, props) {
+            try { window.posthog?.capture(event, props); } catch (_) {}
         }
 
         // ── Shared ID / Formula Utilities ──────────────────────────────────
@@ -9728,6 +9750,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         }
 
         function runSnowConversion() {
+            phTrack('conversion_run', { converter: 'snowflake' });
             _usedIds.clear(); // reset ID registry for this conversion run
             var yamlText = document.getElementById('snowYamlInput').value.trim();
             if (!yamlText) { showToast('Paste some Snowflake semantic view YAML first', 'warning'); return; }
@@ -11073,6 +11096,7 @@ relationships:
         }
 
         function runDbtConversion() {
+            phTrack('conversion_run', { converter: 'dbt' });
             const yamlText = document.getElementById('dbtYamlInput').value.trim();
             let database = document.getElementById('dbtDatabase').value.trim();
             let schema   = document.getElementById('dbtSchema').value.trim();
@@ -11633,6 +11657,7 @@ metrics:
         }
 
         function runOmniConversion() {
+            phTrack('conversion_run', { converter: 'omni' });
             const yamlText    = document.getElementById('omniYamlInput').value.trim();
             let connectionId  = document.getElementById('omniConnectionId').value;
             const database    = document.getElementById('omniDatabase').value.trim();
@@ -12546,6 +12571,7 @@ explores:
         }
 
         function runQlikConversion() {
+            phTrack('conversion_run', { converter: 'qlik' });
             // Allow driving from the paste textarea when no file was dropped
             const pasteVal = document.getElementById('qlikJsonInput').value.trim();
             if (!_qlikModel && pasteVal) {
@@ -13123,6 +13149,7 @@ explores:
         }
 
         function runOacConversion() {
+            phTrack('conversion_run', { converter: 'oac' });
             if (!_oacParsed) {
                 showToast('Upload an OAC SMML .zip or logical table JSON files first', 'warning');
                 return;
@@ -13605,6 +13632,7 @@ explores:
         }
 
         function runSsasConversion() {
+            phTrack('conversion_run', { converter: 'ssas' });
             const btn = document.getElementById('ssasConvertBtn');
             btn.disabled = true; btn.textContent = '⏳ Converting…';
 
@@ -14560,6 +14588,7 @@ explores:
         }
 
         function runSqlConversion() {
+            phTrack('conversion_run', { converter: 'sql' });
             var connectionId = document.getElementById('sqlConnectionId').value.trim();
             var warnings = [];
 
@@ -15952,6 +15981,7 @@ ${cleanedSql}`;
 
         // ── Main Conversion ───────────────────────────────────────────────────
         async function runLookConversion() {
+            phTrack('conversion_run', { converter: 'lookml' });
             _usedIds.clear(); // reset ID registry for this conversion run
             const exploreName = document.getElementById('lookExploreSelect').value;
             if (!exploreName) { showToast('Select an explore first', 'warning'); return; }
@@ -16489,6 +16519,7 @@ ${cleanedSql}`;
         // one_to_many / many_to_many joins are skipped (batch mode is relationships-only);
         // use single-explore mode with strategy=joins for those.
         async function runLookBatchConversion() {
+            phTrack('conversion_run', { converter: 'lookml_batch' });
             const allExploreNames = Object.keys(lookProject.explores);
             if (allExploreNames.length === 0) {
                 showToast('No explores loaded — upload a .model.lkml file first', 'warning'); return;
@@ -18584,6 +18615,7 @@ ${cleanedSql}`;
 
         // ── Main conversion function ──────────────────────────────────────
         function runTableauConversion() {
+            phTrack('conversion_run', { converter: 'tableau' });
             if (!_tableauParsed || _tableauParsed.datasources.length === 0) {
                 showToast('Upload a .twb, .twbx, .tds, or .tdsx file first', 'warning'); return;
             }
@@ -19023,6 +19055,7 @@ ${cleanedSql}`;
 
         // ── Main conversion ───────────────────────────────────────────────
         function runPbiConversion() {
+            phTrack('conversion_run', { converter: 'power_bi' });
             if (!_pbiModel) { showToast('Upload a Power BI file first', 'warning'); return; }
             const btn = document.getElementById('pbiConvertBtn');
             btn.disabled = true; btn.textContent = '⏳ Converting…';
@@ -20035,6 +20068,7 @@ view: date_dim {
 
         // ── Main Alteryx Conversion ─────────────────────────────────────
         function runAlteryxConversion() {
+            phTrack('conversion_run', { converter: 'alteryx' });
             if (!_alteryxParsed || _alteryxParsed.inputs.length === 0) {
                 showToast('Upload a .yxmd file first', 'warning'); return;
             }
@@ -20482,6 +20516,7 @@ view: date_dim {
         }
 
         function runContractConversion() {
+            phTrack('conversion_run', { converter: 'atlan' });
             const yamlText = document.getElementById('contractYamlInput').value.trim();
             if (!yamlText) { showToast('Paste a Data Contract YAML first', 'warning'); return; }
 
@@ -21632,6 +21667,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
         let _findRegexOn = false;
 
         function openFindReplace() {
+            phTrack('feature_used', { feature: 'find_replace' });
             const ov = document.getElementById('findReplaceOverlay');
             ov.style.display = 'flex';
             document.getElementById('findInput').focus();
@@ -21816,6 +21852,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
             const panel = document.getElementById('treePanel');
             const btn   = document.getElementById('treeViewBtn');
             const isOpen = panel.style.display !== 'none';
+            if (!isOpen) phTrack('feature_used', { feature: 'tree_view' });
             panel.style.display = isOpen ? 'none' : '';
             btn.classList.toggle('active', !isOpen);
             if (!isOpen) buildTreeView();
@@ -22070,6 +22107,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
 
         // ── Diff Viewer ──────────────────────────────────────────
         function openDiffModal() {
+            phTrack('feature_used', { feature: 'diff_view' });
             const container = document.getElementById('diffContainer');
             const summary   = document.getElementById('diffSummary');
 
