@@ -22275,9 +22275,9 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
                 <div id="bulkUploadFileSummary" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;"></div>
 
                 <!-- Import as new toggle -->
-                <label id="buImportAsNewRow" style="display:flex; align-items:flex-start; gap:10px; padding:12px 14px; background:var(--bg-tertiary); border-radius:8px; border:1px solid var(--border); cursor:pointer; margin-bottom:16px; user-select:none;">
+                <label id="buImportAsNewRow" style="display:flex; align-items:flex-start; gap:10px; padding:12px 14px; background:var(--bg-tertiary); border-radius:8px; border:1px solid var(--border); cursor:pointer; margin-bottom:16px; user-select:none; overflow:hidden;">
                     <input type="checkbox" id="buImportAsNew" onchange="onBulkImportAsNewChange()" style="margin-top:2px; flex-shrink:0; accent-color:var(--accent);">
-                    <div>
+                    <div style="flex:1; min-width:0;">
                         <div style="font-size:13px; font-weight:600; color:var(--text-primary);">Import as new models</div>
                         <div style="font-size:12px; color:var(--text-secondary); margin-top:3px; line-height:1.45;">Ignore existing model IDs — create all files as new models in the selected destination.</div>
                     </div>
