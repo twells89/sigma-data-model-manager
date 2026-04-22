@@ -5249,23 +5249,17 @@ PRODUCT_NAME
             if (creates) addBadge(`+ ${creates} new`, 'rgba(67,181,129,.2)');
             if (errors)  addBadge(`✗ ${errors} invalid`, 'rgba(240,71,71,.2)');
 
-            // Destination note
-            const destNote = document.getElementById('bulkUploadDestNote');
+            // Reset checkbox
+            document.getElementById('buImportAsNew').checked = false;
+
+            // Show destination section only when files need to be created
             const destSection = document.getElementById('bulkUploadDestSection');
             if (creates > 0) {
-                destNote.textContent = `${creates} file${creates!==1?' files':' file'} ${creates!==1?'have':'has'} no existing model ID and will be created as new — select a destination workspace and folder.`;
                 destSection.style.display = '';
-                document.getElementById('bulkUploadProceedBtn').disabled = true; // wait for folder selection
+                document.getElementById('bulkUploadProceedBtn').disabled = true; // wait for folder
             } else {
-                destNote.textContent = `All files have existing model IDs and will update in place.`;
-                destSection.style.display = updates > 0 ? '' : 'none';
+                destSection.style.display = 'none';
                 document.getElementById('bulkUploadProceedBtn').disabled = false;
-                // Hide workspace/folder for update-only runs
-                if (updates > 0 && creates === 0) {
-                    destNote.textContent = `${updates} model${updates!==1?'s':''} will be updated in place (existing IDs found). No destination needed.`;
-                    document.getElementById('buWorkspaceId').closest('.form-group').style.display = 'none';
-                    document.getElementById('buFolderId').closest('.form-group').style.display = 'none';
-                }
             }
 
             // Load workspaces + connections
@@ -5341,12 +5335,28 @@ PRODUCT_NAME
             }
         }
 
+        function onBulkImportAsNewChange() {
+            const checked = document.getElementById('buImportAsNew').checked;
+            const destSection = document.getElementById('bulkUploadDestSection');
+            const hasCreates = _bulkFilesMeta.filter(m => !m.existingId && !m.parseError).length > 0;
+
+            if (checked) {
+                destSection.style.display = '';
+                // Require folder selection unless one is already picked
+                const folderId = document.getElementById('buFolderId').value || document.getElementById('buWorkspaceId').value;
+                document.getElementById('bulkUploadProceedBtn').disabled = !folderId;
+            } else {
+                if (!hasCreates) {
+                    destSection.style.display = 'none';
+                    document.getElementById('bulkUploadProceedBtn').disabled = false;
+                }
+                // If hasCreates, keep section visible and require folder
+            }
+        }
+
         function closeBulkUploadOptionsModal() {
             document.getElementById('bulkUploadOptionsModal').classList.remove('active');
-            // Restore hidden form groups for next open
-            document.getElementById('buWorkspaceId').closest('.form-group').style.display = '';
-            document.getElementById('buFolderId').closest('.form-group').style.display = '';
-            document.getElementById('buForceCreate').checked = false;
+            document.getElementById('buImportAsNew').checked = false;
             _pendingBulkFiles = null;
             _bulkFilesMeta = [];
             document.getElementById('bulkUploadInput').value = '';
@@ -5355,14 +5365,14 @@ PRODUCT_NAME
         async function proceedBulkUpload() {
             const folderId = document.getElementById('buFolderId').value || document.getElementById('buWorkspaceId').value;
             const connectionOverride = document.getElementById('bulkUploadConnectionId').value;
-            const forceCreate = document.getElementById('buForceCreate').checked;
+            const importAsNew = document.getElementById('buImportAsNew').checked;
             const meta = _bulkFilesMeta;
             closeBulkUploadOptionsModal();
-            await handleBulkUpload(meta, folderId, connectionOverride, forceCreate);
+            await handleBulkUpload(meta, folderId, connectionOverride, importAsNew);
         }
 
         // ── Bulk Upload ──────────────────────────────────────────────────────
-        async function handleBulkUpload(fileMeta, folderId, connectionIdOverride, forceCreate = false) {
+        async function handleBulkUpload(fileMeta, folderId, connectionIdOverride, importAsNew = false) {
             if (!fileMeta || !fileMeta.length) return;
             if (!state.accessToken) {
                 showToast('Connect to Sigma first before uploading', 'warning');
@@ -5385,7 +5395,7 @@ PRODUCT_NAME
                     const text = await meta.file.text();
                     const jsonData = JSON.parse(text);
                     const { dataModelId: existingId, ...specBase } = jsonData;
-                    const resolvedId = forceCreate ? null : existingId;
+                    const effectiveExistingId = importAsNew ? null : (existingId || null);
 
                     const spec = {
                         schemaVersion: specBase.schemaVersion || 1,
@@ -5413,9 +5423,9 @@ PRODUCT_NAME
                     }
 
                     let r, action;
-                    if (resolvedId) {
+                    if (effectiveExistingId) {
                         // Try to update existing model
-                        r = await sigmaFetch(`/v2/dataModels/${resolvedId}/spec`, {
+                        r = await sigmaFetch(`/v2/dataModels/${effectiveExistingId}/spec`, {
                             method: 'PUT',
                             body: JSON.stringify(spec)
                         });
@@ -22262,18 +22272,24 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
             <div class="modal-body">
 
                 <!-- File summary badges -->
-                <div id="bulkUploadFileSummary" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px;"></div>
+                <div id="bulkUploadFileSummary" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;"></div>
 
-                <!-- Destination (required when any new models) -->
-                <div id="bulkUploadDestSection">
-                    <div class="section-title">
-                        Destination
+                <!-- Import as new toggle -->
+                <label id="buImportAsNewRow" style="display:flex; align-items:flex-start; gap:10px; padding:12px 14px; background:var(--bg-tertiary); border-radius:8px; border:1px solid var(--border); cursor:pointer; margin-bottom:16px; user-select:none;">
+                    <input type="checkbox" id="buImportAsNew" onchange="onBulkImportAsNewChange()" style="margin-top:2px; flex-shrink:0; accent-color:var(--accent);">
+                    <div>
+                        <div style="font-size:13px; font-weight:600; color:var(--text-primary);">Import as new models</div>
+                        <div style="font-size:12px; color:var(--text-secondary); margin-top:3px; line-height:1.45;">Ignore existing model IDs — create all files as new models in the selected destination.</div>
                     </div>
-                    <div id="bulkUploadDestNote" style="font-size:12px; color:var(--text-secondary); margin-bottom:14px; line-height:1.5;"></div>
+                </label>
+
+                <!-- Destination (shown when any files are new, or "Import as new" is checked) -->
+                <div id="bulkUploadDestSection" style="display:none;">
+                    <div class="section-title" style="margin-bottom:12px;">Destination</div>
                     <div class="form-group">
                         <label class="form-label">Workspace</label>
                         <select class="form-input" id="buWorkspaceId" onchange="onBulkUploadWorkspaceChange()">
-                            <option value="">Loading workspaces…</option>
+                            <option value="">Select a workspace…</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -22298,17 +22314,6 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
                     <div class="form-hint">Override the connection ID on every element across all uploaded files.</div>
                 </div>
 
-                <hr style="border:none; border-top:1px solid var(--border); margin:16px 0;">
-
-                <div class="form-group" style="margin-bottom:0;">
-                    <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer;">
-                        <input type="checkbox" id="buForceCreate" style="margin-top:3px; flex-shrink:0;">
-                        <div>
-                            <div style="font-size:13px; font-weight:600; color:var(--text-primary);">Import as new models</div>
-                            <div class="form-hint" style="margin-top:2px;">Strip existing model IDs from files before uploading. Use when porting models between tenants — prevents the upload from trying to update a model ID that doesn't exist in this org.</div>
-                        </div>
-                    </label>
-                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeBulkUploadOptionsModal()">Cancel</button>
