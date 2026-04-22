@@ -19506,16 +19506,16 @@ ${cleanedSql}`;
             btn.innerHTML = '<div class="spinner"></div><span>Validating columns…</span>';
 
             try {
-                // Pre-save column validation
-                try {
-                    const validation = await validateModelColumns(fullSpec);
-                    if (validation?.hasIssues) {
-                        const proceed = await showColumnValidationModal(validation);
-                        if (!proceed) return;
-                    }
-                } catch (validationErr) {
-                    console.warn('Column validation skipped:', validationErr.message);
-                }
+                // Pre-save column validation disabled — HAR files ~200MB + API timeouts
+                // try {
+                //     const validation = await validateModelColumns(fullSpec);
+                //     if (validation?.hasIssues) {
+                //         const proceed = await showColumnValidationModal(validation);
+                //         if (!proceed) return;
+                //     }
+                // } catch (validationErr) {
+                //     console.warn('Column validation skipped:', validationErr.message);
+                // }
                 btn.innerHTML = '<div class="spinner"></div><span>Saving…</span>';
 
                 // ── Step 1: POST without relationships ────────────────────────
@@ -19629,10 +19629,10 @@ ${cleanedSql}`;
                         if (!savedEl) return;
 
                         savedEl.relationships = origEl.relationships.map(rel => ({
-                            id: rel.id,
-                            name: rel.name,
+                            ...rel,
                             targetElementId: elemIdRemap[rel.targetElementId] || rel.targetElementId,
                             keys: (rel.keys || []).map(k => ({
+                                ...k,
                                 sourceColumnId: remapColId(k.sourceColumnId),
                                 targetColumnId: remapColId(k.targetColumnId)
                             }))
