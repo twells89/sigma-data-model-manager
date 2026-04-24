@@ -766,6 +766,11 @@
         .save-error-banner .btn-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; padding: 4px 8px; border-radius: 4px; }
         .save-error-banner .btn-close:hover { background: rgba(220, 38, 38, 0.12); color: var(--text-primary); }
         .save-error-banner .btn-ai { white-space: nowrap; }
+        .save-error-details { margin-top: 6px; }
+        .save-error-details summary { font-size: 11px; color: var(--text-muted); cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 4px; }
+        .save-error-details summary:hover { color: var(--text-secondary); }
+        .save-error-details summary::marker { font-size: 10px; }
+        .save-error-raw { margin: 4px 0 0; padding: 8px 10px; background: rgba(0,0,0,0.15); border: 1px solid rgba(220,38,38,0.2); border-radius: 4px; font-family: monospace; font-size: 11px; color: var(--text-secondary); max-height: 160px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.5; }
         
         .editor-container {
             flex: 1;
@@ -2581,6 +2586,10 @@
                     <div class="save-error-text">
                         <div class="save-error-title">Sigma API error — save failed</div>
                         <div class="save-error-msg" id="saveErrorMsg"></div>
+                        <details class="save-error-details" id="saveErrorDetails" style="display:none;">
+                            <summary>Full response</summary>
+                            <pre class="save-error-raw" id="saveErrorRaw"></pre>
+                        </details>
                     </div>
                     <div class="save-error-actions">
                         <div id="fixAIKeyRow" class="fix-ai-key-row" style="display:none;">
@@ -6205,7 +6214,7 @@ PRODUCT_NAME
                     : error.message;
                 updateStatus('error', 'Failed to save');
                 showToast(`Save failed: ${msg}`, 'error');
-                showSaveErrorBanner(msg);
+                showSaveErrorBanner(msg, error.rawResponse);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = 'Save to Sigma';
@@ -6228,7 +6237,7 @@ PRODUCT_NAME
 
         let _lastSaveError = null;
 
-        function showSaveErrorBanner(errorMsg) {
+        function showSaveErrorBanner(errorMsg, fullRaw) {
             _lastSaveError = errorMsg;
             const banner = document.getElementById('saveErrorBanner');
             let displayMsg = errorMsg;
@@ -6237,6 +6246,19 @@ PRODUCT_NAME
             }
             document.getElementById('saveErrorMsg').textContent = displayMsg;
             document.getElementById('fixAIKeyRow').style.display = 'none';
+
+            const detailsEl = document.getElementById('saveErrorDetails');
+            const rawEl = document.getElementById('saveErrorRaw');
+            if (fullRaw && detailsEl && rawEl) {
+                let prettyRaw = fullRaw;
+                try { prettyRaw = JSON.stringify(JSON.parse(fullRaw), null, 2); } catch(e) {}
+                rawEl.textContent = prettyRaw;
+                detailsEl.style.display = '';
+                detailsEl.removeAttribute('open');
+            } else if (detailsEl) {
+                detailsEl.style.display = 'none';
+            }
+
             banner.style.display = '';
 
             const config = loadAIConfig();
@@ -12941,7 +12963,9 @@ explores:
                     const t = await postResp.text();
                     let msg = `HTTP ${postResp.status}`;
                     try { msg = JSON.parse(t).message || msg; } catch(e) {}
-                    throw new Error(`Save failed: ${msg}`);
+                    const saveErr = new Error(`Save failed: ${msg}`);
+                    saveErr.rawResponse = t;
+                    throw saveErr;
                 }
                 const postResult = await postResp.json();
                 const dataModelId = postResult.dataModelId;
@@ -13051,7 +13075,7 @@ explores:
             } catch(err) {
                 updateStatus('error', 'Save failed');
                 showToast(`Save failed: ${err.message}`, 'error');
-                showSaveErrorBanner(err.message);
+                showSaveErrorBanner(err.message, err.rawResponse);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = 'Save to Sigma';
@@ -20376,7 +20400,9 @@ ${cleanedSql}`;
                     const t = await postResp.text();
                     let msg = `HTTP ${postResp.status}`;
                     try { msg = JSON.parse(t).message || msg; } catch(e) {}
-                    throw new Error(`Save failed: ${msg}`);
+                    const saveErr = new Error(`Save failed: ${msg}`);
+                    saveErr.rawResponse = t;
+                    throw saveErr;
                 }
                 const postResult = await postResp.json();
                 const dataModelId = postResult.dataModelId;
@@ -20504,7 +20530,7 @@ ${cleanedSql}`;
             } catch(err) {
                 updateStatus('error', 'Save failed');
                 showToast(`Save failed: ${err.message}`, 'error');
-                showSaveErrorBanner(err.message);
+                showSaveErrorBanner(err.message, err.rawResponse);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = 'Save to Sigma';
@@ -20549,7 +20575,9 @@ ${cleanedSql}`;
                     const t = await postResp.text();
                     let msg = `HTTP ${postResp.status}`;
                     try { msg = JSON.parse(t).message || msg; } catch(e) {}
-                    throw new Error(`Save failed: ${msg}`);
+                    const saveErr = new Error(`Save failed: ${msg}`);
+                    saveErr.rawResponse = t;
+                    throw saveErr;
                 }
                 const postResult = await postResp.json();
                 const dataModelId = postResult.dataModelId;
@@ -20651,7 +20679,7 @@ ${cleanedSql}`;
             } catch(err) {
                 updateStatus('error', 'Save failed');
                 showToast(`Save failed: ${err.message}`, 'error');
-                showSaveErrorBanner(err.message);
+                showSaveErrorBanner(err.message, err.rawResponse);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = 'Save to Sigma';
@@ -20935,8 +20963,8 @@ view: date_dim {
             // IIF(cond, true, false) → If(cond, true, false)
             f = f.replace(/\bIIF\s*\(/gi, 'If(');
 
-            // NULL() → null
-            f = f.replace(/\bNULL\s*\(\s*\)/gi, 'null');
+            // NULL() → Null()
+            f = f.replace(/\bNULL\s*\(\s*\)/gi, 'Null()');
 
             // Column references: [Field Name] stays as-is (Sigma uses same syntax)
             // But convert SNAKE_CASE bare refs to display names
@@ -20944,6 +20972,15 @@ view: date_dim {
                 if (colName.includes(' ')) return match;
                 return '[' + sigmaDisplayName(colName) + ']';
             });
+
+            // expr IN ('a', 'b') → In(expr, "a", "b")  (SQL IN → Sigma In() function)
+            f = f.replace(/(\[[^\]]+\]|\b\w+\b)\s+IN\s*\(([^)]+)\)/gi, (_, expr, args) => {
+                const vals = args.split(',').map(v => v.trim().replace(/^'(.*)'$/, '"$1"'));
+                return `In(${expr}, ${vals.join(', ')})`;
+            });
+
+            // Single-quoted string literals → double-quoted (Sigma formula syntax)
+            f = f.replace(/'([^']*)'/g, '"$1"');
 
             // Handle any remaining SQL-style CASE/CONCAT/SPLIT_PART expressions
             // (Alteryx Formula tool supports SQL CASE/WHEN/END syntax)
@@ -20964,7 +21001,7 @@ view: date_dim {
 
             // Extract ELSE
             const elseIdx = inner.search(/\bELSE\b(?!\s*IF\b)/i);
-            let elseVal = 'null';
+            let elseVal = 'Null()';
             if (elseIdx >= 0) {
                 elseVal = inner.slice(elseIdx).replace(/^\s*ELSE\s*/i, '').trim();
                 inner = inner.slice(0, elseIdx);
@@ -22144,10 +22181,12 @@ models:
 <h3>Supported Formula Conversions</h3>
 <ul>
     <li><b>Conditional</b> — IF/ELSEIF/ELSE/ENDIF, IIF, CASE WHEN … THEN … END → nested <code>If()</code></li>
+    <li><b>Membership</b> — <code>expr IN ('a', 'b')</code> → <code>In(expr, "a", "b")</code></li>
+    <li><b>String literals</b> — single-quoted strings converted to double-quoted (Sigma formula syntax)</li>
     <li><b>String</b> — ToString, Uppercase, Lowercase, Trim, Left, Right, Substring, Length, Contains, CONCAT → <code>&amp;</code>, SPLIT_PART → <code>splitpart()</code></li>
     <li><b>Math</b> — Abs, Ceil, Floor, Round, Sqrt, Pow, Log</li>
     <li><b>Date</b> — DateTimeYear, DateTimeMonth, DateTimeDay, DateTimeDiff, DateTimeAdd, DateTimeTrim</li>
-    <li><b>Null handling</b> — IsNull, IsEmpty, NULL()</li>
+    <li><b>Null handling</b> — IsNull, IsEmpty, NULL() → <code>Null()</code></li>
 </ul>
 
 <h3>Known Limitations</h3>
