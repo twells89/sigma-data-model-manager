@@ -12706,20 +12706,15 @@ explores:
                 if (hostEl) {
                     formulaCols.forEach(({ col, formulaExpr }) => {
                         const dispName = col.name || 'Calculated';
-                        const isMeasure = (col.type || '').toUpperCase() === 'MEASURE';
                         const sigmaFormula = _tsFormulaToSigma(formulaExpr, elementByTable);
                         const colId = sigmaShortId();
                         let fmt = _inferSigmaFormat(sigmaFormula, dispName);
                         if (fmt?.formatString === ',.2%') fmt = { kind: 'number', formatString: ',.2f', suffix: '%' };
-                        if (isMeasure) {
-                            const metric = { id: colId, name: dispName, formula: sigmaFormula };
-                            if (fmt) metric.format = fmt;
-                            hostEl.metrics.push(metric);
-                        } else {
-                            const colObj = { id: colId, name: dispName, formula: sigmaFormula };
-                            if (fmt) colObj.format = fmt;
-                            hostEl.columns.push(colObj);
-                        }
+                        // ThoughtSpot formula-based fields are always row-level calculated columns,
+                        // even when typed MEASURE — Sigma requires aggregation at top level for metrics[].
+                        const colObj = { id: colId, name: dispName, formula: sigmaFormula };
+                        if (fmt) colObj.format = fmt;
+                        hostEl.columns.push(colObj);
                     });
                 }
             }
@@ -12812,9 +12807,9 @@ explores:
                 return `${sigmaFn}(${_tsWrapColumnRefs(arg.trim())})`;
             });
 
-            // safe_divide(a, b) → IfNull(b, 0) = 0 ? null : a/b  (approximate)
+            // safe_divide(a, b) → If(IsNull(b) or b = 0, Null(), a/b)
             s = s.replace(/\bsafe_divide\s*\(([^,)]+),([^)]+)\)/gi, (_, a, b) =>
-                `If(IsNull(${b.trim()}) or ${b.trim()} = 0, null, ${a.trim()} / ${b.trim()})`);
+                `If(IsNull(${b.trim()}) or ${b.trim()} = 0, Null(), ${a.trim()} / ${b.trim()})`);
 
             // isnull(x) → IsNull(x)
             s = s.replace(/\bisnull\s*\(/gi, 'IsNull(');
@@ -22372,8 +22367,8 @@ models:
     <li><code>if (cond) then X else Y</code> → <code>If(cond, X, Y)</code></li>
     <li><code>sum(Revenue)</code> → <code>Sum([Revenue])</code></li>
     <li><code>count_distinct(CustomerID)</code> → <code>CountDistinct([CustomerID])</code></li>
-    <li><code>safe_divide(a, b)</code> → <code>If(IsNull(b) or b = 0, null, a / b)</code></li>
-    <li><code>col in {A, B, C}</code> → <code>In([col], List(A, B, C))</code></li>
+    <li><code>safe_divide(a, b)</code> → <code>If(IsNull(b) or b = 0, Null(), a / b)</code></li>
+    <li><code>col in {A, B, C}</code> → <code>In([col], A, B, C)</code></li>
     <li><code>isnull(x)</code> → <code>IsNull(x)</code></li>
     <li><code>date_diff(unit, start, end)</code> → <code>DateDiff(unit, start, end)</code></li>
     <li><code>today()</code> → <code>Today()</code></li>
