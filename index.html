@@ -12641,24 +12641,31 @@ explores:
                 const elemId = sigmaShortId();
                 const columns = [];
                 const metrics = [];
+                const colOrder = [];
+                const colPhysIdMap = {}; // PHYS_COL → colId (for relationship lookup)
 
                 (colsByTable[tableName] || []).forEach(({ col, physCol }) => {
                     const dispName = col.name || sigmaDisplayName(physCol);
                     const isMeasure = (col.type || '').toUpperCase() === 'MEASURE';
+                    const isDate    = (col.type || '').toUpperCase() === 'DATE';
 
-                    // All TML columns go into columns[] as physical warehouse columns.
-                    // MEASURE types also get an aggregation metric referencing that column.
-                    const physColId = sigmaShortId();
-                    const col_obj = {
-                        id: physColId,
-                        name: dispName,
-                        physicalName: physCol,
-                        inodeId: sigmaInodeId(physCol),
-                    };
-                    if ((col.type || '').toUpperCase() === 'DATE') {
-                        col_obj.columnType = 'datetime';
+                    let colId, col_obj;
+                    if (isDate) {
+                        // DATE warehouse columns: DateTrunc wrapping makes the type explicit to Sigma
+                        colId = sigmaShortId();
+                        col_obj = {
+                            id: colId,
+                            formula: `DateTrunc("day", ${sigmaColFormula(tableName, physCol)})`,
+                            name: dispName,
+                        };
+                    } else {
+                        // Attribute / measure columns: direct warehouse formula reference
+                        colId = sigmaInodeId(physCol);
+                        col_obj = { id: colId, formula: sigmaColFormula(tableName, physCol) };
                     }
+                    colPhysIdMap[physCol.toUpperCase()] = colId;
                     columns.push(col_obj);
+                    colOrder.push(colId);
 
                     if (isMeasure) {
                         const agg = (col.aggregation || 'SUM').toUpperCase();
@@ -12668,7 +12675,10 @@ explores:
                             STD_DEVIATION: 'StdDev', VARIANCE: 'Variance',
                         };
                         const sigmaAgg = aggMap[agg] || 'Sum';
-                        const formula  = `${sigmaAgg}([${dispName}])`;
+                        // Metric formula references the column by its Sigma display name,
+                        // which is derived from the physical name via sigmaDisplayName.
+                        const colDisplayName = sigmaDisplayName(physCol);
+                        const formula = `${sigmaAgg}([${colDisplayName}])`;
                         let fmt = _inferSigmaFormat(formula, dispName);
                         if (fmt?.formatString === ',.2%') fmt = { kind: 'number', formatString: ',.2f', suffix: '%' };
                         const metric = { id: sigmaShortId(), name: dispName, formula };
@@ -12677,23 +12687,21 @@ explores:
                     }
                 });
 
-                // Attach formula-based calculated columns to the first/fact element (deferred below)
                 const element = {
                     id: elemId,
-                    type: 'table',
+                    kind: 'table',
                     name: sigmaDisplayName(tableName),
                     source: {
                         connectionId,
-                        db: db || undefined,
-                        schema: sch || undefined,
-                        tableName,
+                        kind: 'warehouse-table',
+                        path: [db, sch, tableName].filter(Boolean),
                     },
                     columns,
                     metrics,
+                    order: colOrder,
                     relationships: [],
                 };
-                // Remove undefined fields from source
-                Object.keys(element.source).forEach(k => element.source[k] === undefined && delete element.source[k]);
+                element._colPhysIdMap = colPhysIdMap; // transient, stripped before output
 
                 elements.push(element);
                 elementByTable[tableName] = element;
@@ -12740,12 +12748,9 @@ explores:
                     return;
                 }
 
-                // Find the column IDs in each element
-                const findColId = (el, physName) => {
-                    const dispTarget = sigmaDisplayName(physName);
-                    const c = el.columns.find(c => c.physicalName === physName || c.name === dispTarget || c.name === physName);
-                    return c ? c.id : null;
-                };
+                // Find the column IDs in each element via the transient physIdMap
+                const findColId = (el, physName) =>
+                    (el._colPhysIdMap || {})[physName.toUpperCase()] || null;
 
                 const srcColId = findColId(lEl, lCol);
                 const tgtColId = findColId(rEl, rCol);
@@ -12768,8 +12773,11 @@ explores:
                 warnings.push('No joins defined in TML — relationships will need to be configured manually in Sigma');
             }
 
+            // Strip transient helper maps before serialising
+            elements.forEach(el => { delete el._colPhysIdMap; });
+
             const spec = {
-                schemaVersion: 4,
+                schemaVersion: 1,
                 name: modelName,
                 pages: [{
                     id: pageId,
