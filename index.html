@@ -2664,6 +2664,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                             <option value="alteryx">⚙️ Alteryx (.yxmd)</option>
                             <option value="contract">📝 Atlan Data Contract</option>
                             <option value="omni">🌐 Omni Analytics</option>
+                            <option value="thoughtspot">🔷 ThoughtSpot</option>
                             <option value="qlik">🔮 Qlik Sense</option>
                             <option value="oac">☁️ Oracle Analytics Cloud</option>
                             <option value="sql">🗄️ Custom SQL</option>
@@ -3451,6 +3452,98 @@ How it works:
                     </div>
                 </div>
                 <!-- ── End Omni Analytics Panel ──────────────────────────────────── -->
+
+                <!-- ThoughtSpot TML Converter Panel -->
+                <div class="converter-panel" id="subPanelThoughtspot">
+
+                    <!-- Left: File Upload + Config -->
+                    <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">ThoughtSpot TML</span>
+                            <button class="btn-example" onclick="loadThoughtSpotExample()">Load example</button>
+                        </div>
+
+                        <div id="tsDropZone" class="lookml-drop-zone"
+                             onclick="document.getElementById('tsFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleThoughtSpotFileDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">🔷</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop ThoughtSpot TML files here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">.tml · .yaml</div>
+                        </div>
+                        <input type="file" id="tsFileInput" accept=".tml,.yml,.yaml" multiple style="display:none" onchange="handleThoughtSpotFileSelect(event)">
+
+                        <div id="tsFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Connection</label>
+                            <select id="tsConnectionId" class="form-input" style="font-size: 12px;"
+                                    onchange="if(document.getElementById('tsYamlInput').value.trim()) runThoughtSpotConversion();">
+                                <option value="">— Connect to Sigma to load —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="tsDatabase" placeholder="e.g. ANALYTICS" style="font-size: 12px;" oninput="this.style.cssText='font-size:12px'">
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Schema override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="tsSchema" placeholder="e.g. PUBLIC" style="font-size: 12px;" oninput="this.style.cssText='font-size:12px'">
+                        </div>
+
+                        <div class="dbt-badge-row" id="tsInputStats"></div>
+
+                        <textarea id="tsYamlInput" style="flex: 1; min-height: 80px; font-size: 11px; resize: none;" placeholder="Or paste ThoughtSpot TML/YAML directly here..."></textarea>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" onclick="runThoughtSpotConversion()">
+                                🔷 Convert to Sigma JSON
+                            </button>
+                        </div>
+
+                        <div style="font-size: 10px; color: var(--text-muted); padding: 0 4px; line-height: 1.4;">
+                            <strong>How to get files:</strong><br>
+                            • <b>TML export</b>: Data &gt; Worksheets → ⋯ → Export TML<br>
+                            • <b>Bulk export</b>: Develop &gt; SpotApps → Export TML<br>
+                            • <b>Paste</b>: Paste TML YAML directly into the textarea above
+                        </div>
+                    </div>
+
+                    <!-- Right: Sigma JSON Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copyThoughtSpotOutput()" id="tsCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadThoughtSpotOutputToEditor()" id="tsLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="tsWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="tsJsonOutput" readonly placeholder="Convert a ThoughtSpot TML to see the Sigma JSON here...
+
+How it works:
+• worksheet: and model: TML types supported
+• tables[] → Sigma warehouse-table elements
+• worksheet_columns / columns → Sigma columns and metrics
+• formulas → Sigma calculated columns with formula conversion
+• joins[] → Sigma relationships (LEFT_OUTER, INNER, etc.)
+• ThoughtSpot if/then/else, sum(), count_distinct() → Sigma formula syntax"></textarea>
+
+                        <div class="dbt-badge-row" id="tsOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="thoughtSpotLoadAndSave()" id="tsSaveBtn" disabled>
+                                💾 Load &amp; Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <!-- ── End ThoughtSpot TML Panel ─────────────────────────────────── -->
 
                 <!-- Qlik Sense Converter Panel -->
                 <div class="converter-panel" id="subPanelQlik">
@@ -6492,7 +6585,7 @@ ${JSON.stringify(failedJson, null, 2)}`;
         async function populateConverterConnections() {
             if (!state.accessToken) return;
             const connections = await fetchConnectionsList();
-            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'qlikConnectionId', 'oacConnectionId', 'ssasConnectionId', 'sqlConnectionId'];
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'tsConnectionId', 'qlikConnectionId', 'oacConnectionId', 'ssasConnectionId', 'sqlConnectionId'];
             targetIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (!sel) return;
@@ -9387,10 +9480,10 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         }
 
         function switchConverter(format) {
-            const _convNames = { dbt: 'dbt', snow: 'snowflake', look: 'lookml', tableau: 'tableau', pbi: 'power_bi', alteryx: 'alteryx', contract: 'atlan', omni: 'omni', qlik: 'qlik', oac: 'oac', ssas: 'ssas', sql: 'sql' };
+            const _convNames = { dbt: 'dbt', snow: 'snowflake', look: 'lookml', tableau: 'tableau', pbi: 'power_bi', alteryx: 'alteryx', contract: 'atlan', omni: 'omni', thoughtspot: 'thoughtspot', qlik: 'qlik', oac: 'oac', ssas: 'ssas', sql: 'sql' };
             phTrack('converter_selected', { converter: _convNames[format] || format });
-            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Qlik', 'Oac', 'Ssas', 'Sql'];
-            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', qlik: 'Qlik', oac: 'Oac', ssas: 'Ssas', sql: 'Sql' };
+            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Thoughtspot', 'Qlik', 'Oac', 'Ssas', 'Sql'];
+            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', thoughtspot: 'Thoughtspot', qlik: 'Qlik', oac: 'Oac', ssas: 'Ssas', sql: 'Sql' };
             const target = map[format] || 'Dbt';
             panels.forEach(p => {
                 const el = document.getElementById('subPanel' + p);
@@ -10211,6 +10304,12 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             // Alteryx two-step: same pattern — POST without rels first
             if (state._alteryxTwoStepSpec) {
                 await executeAlteryxTwoStepSave(name, folderId);
+                return;
+            }
+
+            // ThoughtSpot two-step: POST without rels → GET IDs → PUT with rels
+            if (state._tsTwoStepSpec) {
+                await executeThoughtSpotTwoStepSave(name, folderId);
                 return;
             }
 
@@ -12356,6 +12455,612 @@ explores:
                 return;
             }
             openSaveLocationModal();
+        }
+
+        // ── ThoughtSpot TML Converter ───────────────────────────────────────
+
+        let _tsRawFiles = []; // { name, content } array
+
+        function handleThoughtSpotFileDrop(event) {
+            event.preventDefault();
+            document.getElementById('tsDropZone').classList.remove('drag-over');
+            const files = Array.from(event.dataTransfer.files).filter(f => /\.(tml|ya?ml)$/i.test(f.name));
+            if (!files.length) { showToast('Drop .tml or .yaml files', 'warning'); return; }
+            loadThoughtSpotFiles(files);
+        }
+
+        function handleThoughtSpotFileSelect(event) {
+            const files = Array.from(event.target.files);
+            if (!files.length) return;
+            loadThoughtSpotFiles(files);
+            event.target.value = '';
+        }
+
+        function loadThoughtSpotFiles(files) {
+            _tsRawFiles = [];
+            const listEl = document.getElementById('tsFileList');
+            listEl.innerHTML = '';
+            let loaded = 0;
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = e => {
+                    _tsRawFiles.push({ name: file.name, content: e.target.result });
+                    loaded++;
+                    if (loaded === files.length) {
+                        document.getElementById('tsYamlInput').value = _tsRawFiles.map(f => f.content).join('\n---\n');
+                        runThoughtSpotConversion();
+                    }
+                };
+                reader.readAsText(file);
+                const chip = document.createElement('div');
+                chip.className = 'file-chip';
+                chip.textContent = '🔷 ' + file.name;
+                listEl.appendChild(chip);
+            });
+        }
+
+        function runThoughtSpotConversion() {
+            const yaml = document.getElementById('tsYamlInput').value.trim();
+            if (!yaml) return;
+            const connectionId = document.getElementById('tsConnectionId').value.trim() || '<CONNECTION_ID>';
+            const dbOverride   = document.getElementById('tsDatabase').value.trim();
+            const schOverride  = document.getElementById('tsSchema').value.trim();
+
+            let result;
+            try {
+                result = convertThoughtSpotToSigma(yaml, { connectionId, dbOverride, schOverride });
+            } catch(err) {
+                document.getElementById('tsJsonOutput').value = '// Error: ' + err.message;
+                return;
+            }
+
+            const { spec, warnings } = result;
+            const jsonStr = JSON.stringify(spec, null, 2);
+            document.getElementById('tsJsonOutput').value = jsonStr;
+
+            const warnEl = document.getElementById('tsWarningBox');
+            if (warnings.length) {
+                warnEl.style.display = 'block';
+                warnEl.innerHTML = '<b>⚠ Conversion notes:</b><br>' + warnings.map(w => `• ${w}`).join('<br>');
+            } else {
+                warnEl.style.display = 'none';
+            }
+
+            const elCount = spec.pages?.[0]?.elements?.length || 0;
+            document.getElementById('tsOutputStats').innerHTML =
+                `<span class="dbt-badge">${elCount} elements</span>`;
+            document.getElementById('tsInputStats').innerHTML =
+                `<span class="dbt-badge">✓ loaded</span>`;
+
+            ['tsCopyBtn','tsLoadBtn','tsSaveBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+
+            // Stash for two-step save
+            try { state._tsTwoStepSpec = JSON.parse(jsonStr); } catch(_) {}
+        }
+
+        // ── ThoughtSpot TML → Sigma data model spec ─────────────────────────
+        function convertThoughtSpotToSigma(yamlText, { connectionId, dbOverride, schOverride } = {}) {
+            const warnings = [];
+
+            // Parse YAML (use jsyaml loaded by the page)
+            let tml;
+            try {
+                tml = jsyaml.load(yamlText);
+            } catch(e) {
+                throw new Error('YAML parse error: ' + e.message);
+            }
+            if (!tml || typeof tml !== 'object') throw new Error('Empty or invalid TML');
+
+            // Support both worksheet: and model: root keys
+            const ws = tml.worksheet || tml.model || tml;
+            const modelName = ws.name || 'ThoughtSpot Model';
+
+            // ── 1. Build table path map: path_alias → actual table name + schema/db
+            // table_paths[] has { id, table, join_path: [{join}] }
+            // tables[] has { name, db, schema, type }
+            const tablesMeta = {}; // name → { db, schema, type }
+            (ws.tables || []).forEach(t => {
+                tablesMeta[t.name] = { db: t.db || dbOverride || '', schema: t.schema || schOverride || '', type: t.type || 'TABLE' };
+            });
+
+            // table_paths: id is the alias used in column_id (ALIAS::Col)
+            const tablePathMap = {}; // alias → tableName
+            (ws.table_paths || []).forEach(tp => {
+                tablePathMap[tp.id] = tp.table;
+            });
+
+            // If no table_paths, fall back: each table name is its own alias
+            if (Object.keys(tablePathMap).length === 0) {
+                Object.keys(tablesMeta).forEach(n => { tablePathMap[n] = n; });
+            }
+
+            // ── 2. Build columns grouped by source table
+            // worksheet_columns[] or columns[] each have:
+            //   column_id: "TABLE_PATH_ALIAS::Physical Column"
+            //   name: display name
+            //   type: MEASURE | ATTRIBUTE | DATE
+            //   aggregation: SUM | COUNT | AVERAGE | …
+            //   format: { format_type, decimals, … }
+            const tmlCols = ws.worksheet_columns || ws.columns || [];
+
+            // Build formula map from formulas[] section: id → expression
+            const formulaMap = {};
+            (ws.formulas || []).forEach(f => {
+                formulaMap[f.id || f.name] = f.expr || f.expression || '';
+            });
+
+            // Group physical columns by resolved table name
+            const colsByTable = {}; // tableName → [{ colDef }]
+            const formulaCols = []; // columns using formula refs
+
+            tmlCols.forEach(col => {
+                const colId = col.column_id || col.id || '';
+                const sepIdx = colId.indexOf('::');
+                if (sepIdx !== -1) {
+                    const alias = colId.slice(0, sepIdx);
+                    const physCol = colId.slice(sepIdx + 2);
+                    const tableName = tablePathMap[alias] || alias;
+                    if (!colsByTable[tableName]) colsByTable[tableName] = [];
+                    colsByTable[tableName].push({ col, physCol, tableName });
+                } else if (colId && formulaMap[colId]) {
+                    formulaCols.push({ col, formulaExpr: formulaMap[colId] });
+                } else if (col.formula_id && formulaMap[col.formula_id]) {
+                    formulaCols.push({ col, formulaExpr: formulaMap[col.formula_id] });
+                } else {
+                    // Orphan — no table path, no formula
+                    warnings.push(`Column "${col.name || colId}" has no resolvable source — skipped`);
+                }
+            });
+
+            // ── 3. Resolve which table is the "fact" (the one in joins as source, or first)
+            // joins[] format: { name, on: "[T1::Col] = [T2::Col]", type, is_one_to_one }
+            const joins = ws.joins || [];
+
+            // Build element map: tableName → element skeleton
+            const allTableNames = Array.from(new Set([
+                ...Object.keys(colsByTable),
+                ...Object.keys(tablesMeta),
+            ]));
+
+            if (allTableNames.length === 0) {
+                warnings.push('No tables found in TML — check table_paths and tables sections');
+            }
+
+            // ── 4. Build Sigma elements
+            const pageId = sigmaShortId();
+            const elements = [];
+            const elementByTable = {}; // tableName → element
+
+            allTableNames.forEach(tableName => {
+                const meta = tablesMeta[tableName] || {};
+                const db  = dbOverride || meta.db || '';
+                const sch = schOverride || meta.schema || '';
+                const elemId = sigmaShortId();
+                const columns = [];
+                const metrics = [];
+
+                (colsByTable[tableName] || []).forEach(({ col, physCol }) => {
+                    const dispName = col.name || sigmaDisplayName(physCol);
+                    const isMeasure = (col.type || '').toUpperCase() === 'MEASURE';
+                    const colId = sigmaShortId();
+
+                    if (isMeasure) {
+                        const agg = (col.aggregation || 'SUM').toUpperCase();
+                        const aggMap = {
+                            SUM: 'Sum', COUNT: 'Count', COUNT_DISTINCT: 'CountDistinct',
+                            AVERAGE: 'Avg', AVG: 'Avg', MAX: 'Max', MIN: 'Min',
+                            STD_DEVIATION: 'StdDev', VARIANCE: 'Variance',
+                        };
+                        const sigmaAgg = aggMap[agg] || 'Sum';
+                        const formula  = `${sigmaAgg}([${dispName}])`;
+                        let fmt = _inferSigmaFormat(formula, dispName);
+                        if (fmt?.formatString === ',.2%') fmt = { kind: 'number', formatString: ',.2f', suffix: '%' };
+                        const metric = { id: colId, name: dispName, formula };
+                        if (fmt) metric.format = fmt;
+                        metrics.push(metric);
+                    } else {
+                        const col_obj = {
+                            id: colId,
+                            name: dispName,
+                            physicalName: physCol,
+                            inodeId: sigmaInodeId(physCol),
+                        };
+                        if ((col.type || '').toUpperCase() === 'DATE') {
+                            col_obj.columnType = 'datetime';
+                        }
+                        columns.push(col_obj);
+                    }
+                });
+
+                // Attach formula-based calculated columns to the first/fact element (deferred below)
+                const element = {
+                    id: elemId,
+                    type: 'table',
+                    name: sigmaDisplayName(tableName),
+                    source: {
+                        connectionId,
+                        db: db || undefined,
+                        schema: sch || undefined,
+                        tableName,
+                    },
+                    columns,
+                    metrics,
+                    relationships: [],
+                };
+                // Remove undefined fields from source
+                Object.keys(element.source).forEach(k => element.source[k] === undefined && delete element.source[k]);
+
+                elements.push(element);
+                elementByTable[tableName] = element;
+            });
+
+            // ── 5. Attach formula-derived columns to the best element
+            if (formulaCols.length > 0) {
+                // Use first element as default host for formula columns
+                const hostEl = elements[0];
+                if (hostEl) {
+                    formulaCols.forEach(({ col, formulaExpr }) => {
+                        const dispName = col.name || 'Calculated';
+                        const isMeasure = (col.type || '').toUpperCase() === 'MEASURE';
+                        const sigmaFormula = _tsFormulaToSigma(formulaExpr, elementByTable);
+                        const colId = sigmaShortId();
+                        let fmt = _inferSigmaFormat(sigmaFormula, dispName);
+                        if (fmt?.formatString === ',.2%') fmt = { kind: 'number', formatString: ',.2f', suffix: '%' };
+                        if (isMeasure) {
+                            const metric = { id: colId, name: dispName, formula: sigmaFormula };
+                            if (fmt) metric.format = fmt;
+                            hostEl.metrics.push(metric);
+                        } else {
+                            const colObj = { id: colId, name: dispName, formula: sigmaFormula };
+                            if (fmt) colObj.format = fmt;
+                            hostEl.columns.push(colObj);
+                        }
+                    });
+                }
+            }
+
+            // ── 6. Build relationships from joins[]
+            // join on clause: "[TABLE_ALIAS::Col] = [TABLE_ALIAS::Col]"
+            const joinOnRe = /\[([^\]:]+)::([^\]]+)\]\s*=\s*\[([^\]:]+)::([^\]]+)\]/;
+
+            joins.forEach(join => {
+                const onStr = join.on || '';
+                const m = joinOnRe.exec(onStr);
+                if (!m) {
+                    warnings.push(`Join "${join.name || '?'}": could not parse ON clause — "${onStr}"`);
+                    return;
+                }
+                const [, lAlias, lCol, rAlias, rCol] = m;
+                const lTable = tablePathMap[lAlias] || lAlias;
+                const rTable = tablePathMap[rAlias] || rAlias;
+                const lEl = elementByTable[lTable];
+                const rEl = elementByTable[rTable];
+                if (!lEl || !rEl) {
+                    warnings.push(`Join "${join.name}": element not found for "${lTable}" or "${rTable}"`);
+                    return;
+                }
+
+                // Find the column IDs in each element
+                const findColId = (el, physName) => {
+                    const dispTarget = sigmaDisplayName(physName);
+                    const c = el.columns.find(c => c.physicalName === physName || c.name === dispTarget || c.name === physName);
+                    return c ? c.id : null;
+                };
+
+                const srcColId = findColId(lEl, lCol);
+                const tgtColId = findColId(rEl, rCol);
+
+                if (!srcColId || !tgtColId) {
+                    warnings.push(`Join "${join.name}": join key columns not found — "${lCol}" / "${rCol}"`);
+                    return;
+                }
+
+                lEl.relationships.push({
+                    id: sigmaShortId(),
+                    targetElementId: rEl.id,
+                    keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
+                    name: join.name || rTable,
+                    relationshipType: 'N:1',
+                });
+            });
+
+            if (joins.length === 0 && allTableNames.length > 1) {
+                warnings.push('No joins defined in TML — relationships will need to be configured manually in Sigma');
+            }
+
+            const spec = {
+                schemaVersion: 4,
+                name: modelName,
+                pages: [{
+                    id: pageId,
+                    name: 'Page 1',
+                    elements,
+                }],
+            };
+
+            return { spec, warnings };
+        }
+
+        // Convert a ThoughtSpot formula expression to Sigma formula syntax
+        function _tsFormulaToSigma(expr, elementByTable) {
+            if (!expr) return '';
+            let s = expr;
+
+            // if (cond) then X else Y  →  If(cond, X, Y)
+            s = _tsConvertIfThenElse(s);
+
+            // in {val1, val2, …}  →  In(col, List(v1, v2, …))
+            s = s.replace(/(\w[\w\s]*)\s+in\s*\{([^}]+)\}/gi, (_, col, vals) => {
+                const vlist = vals.split(',').map(v => v.trim()).join(', ');
+                return `In([${col.trim()}], List(${vlist}))`;
+            });
+
+            // Aggregation functions: sum(col) → Sum([col])
+            const tsAggMap = {
+                sum: 'Sum', count: 'Count', count_distinct: 'CountDistinct',
+                average: 'Avg', avg: 'Avg', max: 'Max', min: 'Min',
+                std_deviation: 'StdDev', variance: 'Variance',
+                count_not_null: 'CountDistinct', cumulative_sum: 'CumulativeSum',
+            };
+            s = s.replace(/\b(sum|count_distinct|count_not_null|count|average|avg|max|min|std_deviation|variance|cumulative_sum)\s*\(([^)]+)\)/gi, (_, fn, arg) => {
+                const sigmaFn = tsAggMap[fn.toLowerCase()] || fn;
+                return `${sigmaFn}(${_tsWrapColumnRefs(arg.trim())})`;
+            });
+
+            // safe_divide(a, b) → IfNull(b, 0) = 0 ? null : a/b  (approximate)
+            s = s.replace(/\bsafe_divide\s*\(([^,)]+),([^)]+)\)/gi, (_, a, b) =>
+                `If(IsNull(${b.trim()}) or ${b.trim()} = 0, null, ${a.trim()} / ${b.trim()})`);
+
+            // isnull(x) → IsNull(x)
+            s = s.replace(/\bisnull\s*\(/gi, 'IsNull(');
+
+            // not(x) → Not(x)
+            s = s.replace(/\bnot\s*\(/gi, 'Not(');
+
+            // today() → Today()
+            s = s.replace(/\btoday\s*\(\s*\)/gi, 'Today()');
+
+            // date_diff(unit, start, end) → DateDiff(unit, start, end)
+            s = s.replace(/\bdate_diff\s*\(/gi, 'DateDiff(');
+            s = s.replace(/\bdatediff\s*\(/gi, 'DateDiff(');
+
+            // Wrap bare column references in brackets (not already wrapped)
+            // Column refs in ThoughtSpot are bare identifiers (no brackets)
+            // We skip refs already inside If(, Sum(, etc.
+            s = _tsWrapColumnRefs(s);
+
+            return s;
+        }
+
+        function _tsConvertIfThenElse(s) {
+            // Handles: if (cond) then X else Y
+            // Nested: if (c1) then X else if (c2) then Y else Z
+            const re = /\bif\s*\(([^)]+)\)\s*then\s+(.+?)\s+else\s+/gi;
+            let maxPasses = 10;
+            while (re.test(s) && maxPasses-- > 0) {
+                re.lastIndex = 0;
+                s = s.replace(/\bif\s*\(([^)]+)\)\s*then\s+(.+?)\s+else\s+(.+?)(?=\s*(?:$|\bif\b))/gi, (_, cond, thenV, elseV) => {
+                    return `If(${cond}, ${thenV}, ${elseV})`;
+                });
+            }
+            return s;
+        }
+
+        function _tsWrapColumnRefs(expr) {
+            // Wrap bare identifiers in brackets, but not: function names, numbers, strings, already-bracketed
+            return expr.replace(/\b([A-Z_][A-Z0-9_ ]*)\b(?!\s*\(|\])/gi, (match, ident) => {
+                // Skip keywords and function names
+                const skip = /^(if|then|else|and|or|not|in|null|true|false|today|sum|count|avg|max|min|variance|isnull|datediff|date_diff|safe_divide|countdistinct|cumsum|cumulative_sum|stdev|std_deviation|is|number|date|datetime|string|boolean)$/i;
+                if (skip.test(ident)) return match;
+                // Skip if already inside brackets
+                return `[${ident}]`;
+            });
+        }
+
+        // ── ThoughtSpot UI helpers ─────────────────────────────────────────
+        function copyThoughtSpotOutput() {
+            const out = document.getElementById('tsJsonOutput').value;
+            if (!out) return;
+            navigator.clipboard.writeText(out).then(() => showToast('Copied!', 'success'));
+        }
+
+        function loadThoughtSpotOutputToEditor() {
+            const out = document.getElementById('tsJsonOutput').value;
+            if (!out) return;
+            try {
+                const parsed = JSON.parse(out);
+                setEditorContent(parsed);
+            } catch(e) {
+                showToast('Invalid JSON output', 'error');
+                return;
+            }
+            state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from ThoughtSpot TML (unsaved)';
+            ['findBtn','treeViewBtn','formatBtn','diffBtn','copyBtn','saveBtn','aiBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+            enableEditorModeToggle();
+            switchEditorTab('json');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
+        }
+
+        async function thoughtSpotLoadAndSave() {
+            loadThoughtSpotOutputToEditor();
+            if (!state.accessToken) {
+                showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning');
+                return;
+            }
+            openSaveLocationModal();
+        }
+
+        // ── ThoughtSpot two-step save ──────────────────────────────────────
+        async function executeThoughtSpotTwoStepSave(name, folderId) {
+            delete state._tsTwoStepSpec;
+            const btn = document.getElementById('tsSaveBtn');
+            btn.innerHTML = '<div class="spinner"></div><span>Saving…</span>';
+            btn.disabled = true;
+
+            try {
+                const rawJson = document.getElementById('tsJsonOutput').value;
+                const parsed = JSON.parse(rawJson);
+                parsed.name = name;
+                if (folderId) parsed.folderId = folderId;
+
+                const allElements = parsed.pages?.[0]?.elements || [];
+
+                // Step 1: POST without relationships
+                const noRelSpec = JSON.parse(JSON.stringify(parsed));
+                (noRelSpec.pages?.[0]?.elements || []).forEach(el => { el.relationships = []; });
+
+                const postResp = await apiCall('POST', '/v2/workbooks/datamodels', noRelSpec);
+                const savedModelId = postResp.workbookId || postResp.id;
+                if (!savedModelId) throw new Error('No model ID returned from POST');
+
+                // Step 2: GET server-assigned element IDs
+                const getResp = await apiCall('GET', `/v2/workbooks/datamodels/${savedModelId}`);
+                const savedElements = getResp.pages?.[0]?.elements || [];
+
+                // Map local element IDs to server-assigned IDs (match by name+table)
+                const serverIdByName = {};
+                savedElements.forEach(el => { serverIdByName[el.name] = el.id; });
+
+                const localIdToServer = {};
+                allElements.forEach(el => {
+                    const servId = serverIdByName[el.name];
+                    if (servId) localIdToServer[el.id] = servId;
+                });
+
+                // Step 3: PUT with relationships — use server IDs
+                const fullSpec = JSON.parse(JSON.stringify(parsed));
+                (fullSpec.pages?.[0]?.elements || []).forEach((el, ei) => {
+                    const servElemId = localIdToServer[el.id] || el.id;
+                    el.id = servElemId;
+                    (el.relationships || []).forEach(rel => {
+                        rel.targetElementId = localIdToServer[rel.targetElementId] || rel.targetElementId;
+                        (rel.keys || []).forEach(k => {
+                            // Column IDs need server-side mapping too — find by formula/physicalName
+                            const serverEl = savedElements.find(se => se.id === servElemId);
+                            if (serverEl) {
+                                const srcServCol = serverEl.columns?.find(c => c.physicalName === allElements[ei]?.columns?.find(lc => lc.id === k.sourceColumnId)?.physicalName);
+                                if (srcServCol) k.sourceColumnId = srcServCol.id;
+                                const tgtLocalEl = allElements.find(le => le.id === Object.keys(localIdToServer).find(lid => localIdToServer[lid] === rel.targetElementId));
+                                const tgtServerEl = savedElements.find(se => se.id === rel.targetElementId);
+                                if (tgtServerEl && tgtLocalEl) {
+                                    const tgtPhys = tgtLocalEl.columns?.find(lc => lc.id === k.targetColumnId)?.physicalName;
+                                    const tgtServCol = tgtServerEl.columns?.find(c => c.physicalName === tgtPhys);
+                                    if (tgtServCol) k.targetColumnId = tgtServCol.id;
+                                }
+                            }
+                        });
+                    });
+                });
+                fullSpec.name = name;
+                if (folderId) fullSpec.folderId = folderId;
+
+                await apiCall('PUT', `/v2/workbooks/datamodels/${savedModelId}`, fullSpec);
+
+                showToast(`Saved "${name}" to Sigma!`, 'success');
+                btn.innerHTML = '✓ Saved';
+                setTimeout(() => { btn.innerHTML = '💾 Load &amp; Save to Sigma'; btn.disabled = false; }, 3000);
+            } catch(err) {
+                showToast('Save failed: ' + err.message, 'error');
+                btn.innerHTML = '💾 Load &amp; Save to Sigma';
+                btn.disabled = false;
+            }
+        }
+
+        function loadThoughtSpotExample() {
+            const example = `worksheet:
+  name: Retail Analytics
+  tables:
+    - name: ORDER_FACT
+      db: ANALYTICS
+      schema: PUBLIC
+      type: TABLE
+    - name: CUSTOMER_DIM
+      db: ANALYTICS
+      schema: PUBLIC
+      type: TABLE
+    - name: PRODUCT_DIM
+      db: ANALYTICS
+      schema: PUBLIC
+      type: TABLE
+  joins:
+    - name: order_to_customer
+      on: "[ORDER_FACT::CUSTOMER_KEY] = [CUSTOMER_DIM::CUSTOMER_KEY]"
+      type: LEFT_OUTER
+      is_one_to_one: false
+    - name: order_to_product
+      on: "[ORDER_FACT::PRODUCT_KEY] = [PRODUCT_DIM::PRODUCT_KEY]"
+      type: LEFT_OUTER
+      is_one_to_one: false
+  table_paths:
+    - id: ORDER_FACT
+      table: ORDER_FACT
+      join_path: []
+    - id: CUSTOMER_DIM
+      table: CUSTOMER_DIM
+      join_path:
+        - join: order_to_customer
+    - id: PRODUCT_DIM
+      table: PRODUCT_DIM
+      join_path:
+        - join: order_to_product
+  formulas:
+    - id: gross_margin_pct
+      name: Gross Margin Pct
+      expr: "if (GROSS_MARGIN > 0) then GROSS_MARGIN / REVENUE else 0"
+  worksheet_columns:
+    - column_id: ORDER_FACT::ORDER_ID
+      name: Order ID
+      type: ATTRIBUTE
+    - column_id: ORDER_FACT::ORDER_DATE
+      name: Order Date
+      type: DATE
+    - column_id: ORDER_FACT::REVENUE
+      name: Revenue
+      type: MEASURE
+      aggregation: SUM
+    - column_id: ORDER_FACT::GROSS_MARGIN
+      name: Gross Margin
+      type: MEASURE
+      aggregation: SUM
+    - column_id: ORDER_FACT::CUSTOMER_KEY
+      name: Customer Key
+      type: ATTRIBUTE
+    - column_id: ORDER_FACT::PRODUCT_KEY
+      name: Product Key
+      type: ATTRIBUTE
+    - column_id: CUSTOMER_DIM::CUSTOMER_KEY
+      name: Customer Key
+      type: ATTRIBUTE
+    - column_id: CUSTOMER_DIM::CUSTOMER_NAME
+      name: Customer Name
+      type: ATTRIBUTE
+    - column_id: CUSTOMER_DIM::SEGMENT
+      name: Segment
+      type: ATTRIBUTE
+    - column_id: PRODUCT_DIM::PRODUCT_KEY
+      name: Product Key
+      type: ATTRIBUTE
+    - column_id: PRODUCT_DIM::PRODUCT_NAME
+      name: Product Name
+      type: ATTRIBUTE
+    - column_id: PRODUCT_DIM::CATEGORY
+      name: Category
+      type: ATTRIBUTE
+    - formula_id: gross_margin_pct
+      name: Gross Margin Pct
+      type: MEASURE
+`;
+            document.getElementById('tsYamlInput').value = example;
+            document.getElementById('tsFileList').innerHTML = '<div class="file-chip">🔷 example.tml</div>';
+            document.getElementById('tsInputStats').innerHTML = '<span class="dbt-badge">example loaded</span>';
+            runThoughtSpotConversion();
         }
 
         // ── Qlik Sense Converter ────────────────────────────────────────────
@@ -21557,6 +22262,48 @@ models:
     <a href="https://docs.omni.co/docs/modeling/measures" target="_blank">Omni Analytics — Measures</a>
 </div>`,
 
+            thoughtspot: `
+<h3>ThoughtSpot TML Converter</h3>
+<p>Converts ThoughtSpot Modeling Language (TML) files — worksheets and models exported from ThoughtSpot — to Sigma data model JSON. Parses physical tables, join relationships, calculated formulas, and column types.</p>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>tables[]</b> → one Sigma warehouse-table element per table, with database/schema from TML or overrides</li>
+    <li><b>worksheet_columns / columns</b> → Sigma columns (ATTRIBUTE/DATE types) and metrics (MEASURE type with aggregation)</li>
+    <li><b>formulas[]</b> → Sigma calculated columns; <code>if/then/else</code>, <code>sum()</code>, <code>count_distinct()</code>, <code>safe_divide()</code> and more are converted to Sigma formula syntax</li>
+    <li><b>joins[]</b> → Sigma relationships (<code>N:1</code>); join key columns are matched by physical name; join type (LEFT_OUTER, INNER) is noted in warnings if non-standard</li>
+    <li><b>table_paths[]</b> → Used to resolve <code>ALIAS::Column</code> column_ids to actual table names</li>
+    <li><b>Aggregation functions</b>: SUM → Sum, COUNT → Count, COUNT_DISTINCT → CountDistinct, AVERAGE → Avg, MAX → Max, MIN → Min, STD_DEVIATION → StdDev, VARIANCE → Variance</li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li>Complex nested join paths are resolved to the leaf table name only — intermediate join logic is not preserved</li>
+    <li>ThoughtSpot chained/multi-hop formulas may need manual review after conversion</li>
+    <li>Row-level security rules and access control expressions are not converted</li>
+    <li>ThoughtSpot <code>cumulative_sum</code> / <code>running</code> window functions map to Sigma <code>CumulativeSum</code> but may need partition/order adjustments</li>
+    <li>Formula columns with no matching <code>formula_id</code> or <code>column_id</code> are skipped with a warning</li>
+</ul>
+
+<h3>Expression Conversion</h3>
+<ul>
+    <li><code>if (cond) then X else Y</code> → <code>If(cond, X, Y)</code></li>
+    <li><code>sum(Revenue)</code> → <code>Sum([Revenue])</code></li>
+    <li><code>count_distinct(CustomerID)</code> → <code>CountDistinct([CustomerID])</code></li>
+    <li><code>safe_divide(a, b)</code> → <code>If(IsNull(b) or b = 0, null, a / b)</code></li>
+    <li><code>col in {A, B, C}</code> → <code>In([col], List(A, B, C))</code></li>
+    <li><code>isnull(x)</code> → <code>IsNull(x)</code></li>
+    <li><code>date_diff(unit, start, end)</code> → <code>DateDiff(unit, start, end)</code></li>
+    <li><code>today()</code> → <code>Today()</code></li>
+</ul>
+
+<div class="help-links">
+    <div class="help-links-title">📚 Resources</div>
+    <a href="https://developers.thoughtspot.com/docs/tml" target="_blank">ThoughtSpot TML Reference</a>
+    <a href="https://developers.thoughtspot.com/docs/tml-worksheets" target="_blank">ThoughtSpot Worksheet TML</a>
+    <a href="https://developers.thoughtspot.com/docs/tml-import-export" target="_blank">ThoughtSpot TML Import/Export</a>
+</div>`,
+
             qlik: `
 <h3>Qlik Sense Converter</h3>
 <p>Converts Qlik Sense data model metadata (from the REST API or Engine API) to Sigma data model JSON. Parses tables, fields, automatically inferred associations (relationships), master measures, and master dimensions.</p>
@@ -21787,7 +22534,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
 
         function switchHelpTab(tab) {
             document.querySelectorAll('#helpTabs .help-tab').forEach((t, i) => {
-                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'qlik', 'oac', 'ai', 'api', 'mcp', 'sql'];
+                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'thoughtspot', 'qlik', 'oac', 'ai', 'api', 'mcp', 'sql'];
                 t.classList.toggle('active', tabs[i] === tab);
             });
             document.getElementById('helpContent').innerHTML = HELP_CONTENT[tab] || '';
@@ -21799,7 +22546,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
             const hash = location.hash;
             if (hash && hash.startsWith('#help-')) {
                 const tab = hash.replace('#help-', '');
-                const validTabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'ai', 'api', 'mcp'];
+                const validTabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'thoughtspot', 'ai', 'api', 'mcp'];
                 if (validTabs.includes(tab)) {
                     toggleHelpModal();
                     switchHelpTab(tab);
@@ -22591,6 +23338,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
                 <button class="help-tab" onclick="switchHelpTab('alteryx')">⚙️ Alteryx</button>
                 <button class="help-tab" onclick="switchHelpTab('contract')">📝 Atlan</button>
                 <button class="help-tab" onclick="switchHelpTab('omni')">🌐 Omni</button>
+                <button class="help-tab" onclick="switchHelpTab('thoughtspot')">🔷 ThoughtSpot</button>
                 <button class="help-tab" onclick="switchHelpTab('qlik')">🔮 Qlik</button>
                 <button class="help-tab" onclick="switchHelpTab('oac')">☁️ Oracle</button>
                 <button class="help-tab" onclick="switchHelpTab('ai')">🤖 AI Assistant</button>

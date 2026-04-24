@@ -13,7 +13,7 @@ The Data Model Manager is a self-contained HTML file that runs entirely in your 
 - **Diff Viewer** — Line-by-line unified diff against the original loaded model (Ctrl+D)
 - **AI Assistant** — Generate columns, metrics, descriptions, RLS, and more using natural language (Claude, OpenAI, or Gemini)
 - **Fix with AI** — When a save fails, the error banner offers one-click AI repair of common structural issues
-- **Converters** — Import from dbt, Snowflake Cortex Analyst, LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, Omni Analytics, Qlik, Oracle Analytics Cloud, and raw SQL
+- **Converters** — Import from dbt, Snowflake Cortex Analyst, LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, Omni Analytics, ThoughtSpot TML, Qlik, Oracle Analytics Cloud, and raw SQL
 - **Bulk Upload** — Create multiple elements from warehouse tables at once
 - **MCP Server** — Use these converters inside Claude Code, Claude Desktop, Cursor, and other MCP-compatible AI tools
 
@@ -304,6 +304,45 @@ Converts Omni Analytics model files (`.view.yaml` and `.model.yaml`) to Sigma da
 - Cross-view `sql` references — `${other_view.field}` table qualifier stripped; resulting formulas may fail Sigma validation if the column is on a different element
 
 **Useful resources:** [Omni Analytics — Views](https://docs.omni.co) · [Omni Analytics — Explores & Joins](https://docs.omni.co)
+
+---
+
+### ThoughtSpot TML
+
+Converts ThoughtSpot Modeling Language (TML) files — worksheets and models exported from ThoughtSpot — to Sigma data model JSON. Parses physical tables, join relationships, calculated formulas, and column types.
+
+**What gets converted:**
+- `tables[]` → One Sigma warehouse-table element per table, with database/schema from TML or overrides
+- `worksheet_columns` / `columns` → Sigma columns (ATTRIBUTE/DATE types) and metrics (MEASURE type with aggregation)
+- `formulas[]` → Sigma calculated columns; `if/then/else`, `sum()`, `count_distinct()`, `safe_divide()`, `isnull()`, `date_diff()`, and `in {}` converted to Sigma syntax
+- `joins[]` → Sigma `N:1` relationships; join key columns matched by physical name
+- `table_paths[]` → Resolves `ALIAS::Column` column_ids to actual table names
+- Aggregations: SUM → Sum, COUNT → Count, COUNT_DISTINCT → CountDistinct, AVERAGE → Avg, MAX → Max, MIN → Min, STD_DEVIATION → StdDev, VARIANCE → Variance
+
+**Known limitations:**
+- Complex nested join paths resolved to leaf table only — intermediate logic not preserved
+- Row-level security rules and access control expressions are not converted
+- `cumulative_sum` / running window functions map to `CumulativeSum` but may need partition/order adjustments
+- Formula columns with no resolvable `formula_id` or `column_id` are skipped with a warning
+
+**Expression conversion:**
+
+| ThoughtSpot | Sigma |
+|---|---|
+| `if (cond) then X else Y` | `If(cond, X, Y)` |
+| `sum(Revenue)` | `Sum([Revenue])` |
+| `count_distinct(CustomerID)` | `CountDistinct([CustomerID])` |
+| `safe_divide(a, b)` | `If(IsNull(b) or b = 0, null, a / b)` |
+| `col in {A, B, C}` | `In([col], List(A, B, C))` |
+| `isnull(x)` | `IsNull(x)` |
+| `date_diff(unit, start, end)` | `DateDiff(unit, start, end)` |
+| `today()` | `Today()` |
+
+**How to export TML from ThoughtSpot:**
+1. Go to **Data** → **Worksheets** → click ⋯ → **Export TML**
+2. Or bulk export via **Develop** → **SpotApps** → **Export TML**
+
+**Useful resources:** [ThoughtSpot TML Reference](https://developers.thoughtspot.com/docs/tml) · [Worksheet TML](https://developers.thoughtspot.com/docs/tml-worksheets) · [TML Import/Export](https://developers.thoughtspot.com/docs/tml-import-export)
 
 ---
 
