@@ -12645,7 +12645,20 @@ explores:
                 (colsByTable[tableName] || []).forEach(({ col, physCol }) => {
                     const dispName = col.name || sigmaDisplayName(physCol);
                     const isMeasure = (col.type || '').toUpperCase() === 'MEASURE';
-                    const colId = sigmaShortId();
+
+                    // All TML columns go into columns[] as physical warehouse columns.
+                    // MEASURE types also get an aggregation metric referencing that column.
+                    const physColId = sigmaShortId();
+                    const col_obj = {
+                        id: physColId,
+                        name: dispName,
+                        physicalName: physCol,
+                        inodeId: sigmaInodeId(physCol),
+                    };
+                    if ((col.type || '').toUpperCase() === 'DATE') {
+                        col_obj.columnType = 'datetime';
+                    }
+                    columns.push(col_obj);
 
                     if (isMeasure) {
                         const agg = (col.aggregation || 'SUM').toUpperCase();
@@ -12658,20 +12671,9 @@ explores:
                         const formula  = `${sigmaAgg}([${dispName}])`;
                         let fmt = _inferSigmaFormat(formula, dispName);
                         if (fmt?.formatString === ',.2%') fmt = { kind: 'number', formatString: ',.2f', suffix: '%' };
-                        const metric = { id: colId, name: dispName, formula };
+                        const metric = { id: sigmaShortId(), name: dispName, formula };
                         if (fmt) metric.format = fmt;
                         metrics.push(metric);
-                    } else {
-                        const col_obj = {
-                            id: colId,
-                            name: dispName,
-                            physicalName: physCol,
-                            inodeId: sigmaInodeId(physCol),
-                        };
-                        if ((col.type || '').toUpperCase() === 'DATE') {
-                            col_obj.columnType = 'datetime';
-                        }
-                        columns.push(col_obj);
                     }
                 });
 
@@ -12792,10 +12794,10 @@ explores:
             // if (cond) then X else Y  →  If(cond, X, Y)
             s = _tsConvertIfThenElse(s);
 
-            // in {val1, val2, …}  →  In(col, List(v1, v2, …))
-            s = s.replace(/(\w[\w\s]*)\s+in\s*\{([^}]+)\}/gi, (_, col, vals) => {
+            // in {val1, val2, …}  →  In([Display Name], v1, v2, …)
+            s = s.replace(/(\w+)\s+in\s*\{([^}]+)\}/gi, (_, col, vals) => {
                 const vlist = vals.split(',').map(v => v.trim()).join(', ');
-                return `In([${col.trim()}], List(${vlist}))`;
+                return `In([${sigmaDisplayName(col.trim())}], ${vlist})`;
             });
 
             // Aggregation functions: sum(col) → Sum([col])
@@ -12836,13 +12838,13 @@ explores:
         }
 
         function _tsConvertIfThenElse(s) {
-            // Handles: if (cond) then X else Y
-            // Nested: if (c1) then X else if (c2) then Y else Z
-            const re = /\bif\s*\(([^)]+)\)\s*then\s+(.+?)\s+else\s+/gi;
+            // Case-sensitive: only match lowercase "if" (ThoughtSpot), not already-converted "If" (Sigma).
+            // Multiple passes handle nested if/then/else from the outside in.
+            const re = /\bif\s*\(([^)]+)\)\s*then\s+(.+?)\s+else\s+/g;
             let maxPasses = 10;
             while (re.test(s) && maxPasses-- > 0) {
                 re.lastIndex = 0;
-                s = s.replace(/\bif\s*\(([^)]+)\)\s*then\s+(.+?)\s+else\s+(.+?)(?=\s*(?:$|\bif\b))/gi, (_, cond, thenV, elseV) => {
+                s = s.replace(/\bif\s*\(([^)]+)\)\s*then\s+(.+?)\s+else\s+(.+?)(?=\s*(?:$|\bif\b))/g, (_, cond, thenV, elseV) => {
                     return `If(${cond}, ${thenV}, ${elseV})`;
                 });
             }
@@ -12850,14 +12852,22 @@ explores:
         }
 
         function _tsWrapColumnRefs(expr) {
-            // Wrap bare identifiers in brackets, but not: function names, numbers, strings, already-bracketed
-            return expr.replace(/\b([A-Z_][A-Z0-9_]*)\b(?!\s*\(|\])/gi, (match, ident) => {
-                // Skip keywords and function names
-                const skip = /^(if|then|else|and|or|not|in|null|true|false|today|sum|count|avg|max|min|variance|isnull|datediff|date_diff|safe_divide|countdistinct|cumsum|cumulative_sum|stdev|std_deviation|is|number|date|datetime|string|boolean)$/i;
+            // Protect already-bracketed refs and string literals before wrapping bare identifiers.
+            // Placeholders use pure-numeric keys (\x02N\x03) so the identifier regex
+            // (which requires [A-Z_] as first char) cannot accidentally re-wrap them.
+            const saved = [];
+            let s = expr
+                .replace(/\[[^\]]*\]/g, m => { saved.push(m); return `\x02${saved.length - 1}\x03`; })
+                .replace(/"[^"]*"/g,    m => { saved.push(m); return `\x02${saved.length - 1}\x03`; });
+
+            // Wrap remaining bare SNAKE_CASE/UPPER_CASE identifiers as [Display Name].
+            const skip = /^(if|then|else|and|or|not|in|null|true|false|today|IsNull|If|In|List|Sum|Count|Avg|Max|Min|CountDistinct|StdDev|Variance|DateDiff|Today|CumulativeSum|Not)$/;
+            s = s.replace(/\b([A-Z_][A-Z0-9_]*)\b(?!\s*\()/gi, (match, ident) => {
                 if (skip.test(ident)) return match;
-                // Skip if already inside brackets
-                return `[${ident}]`;
+                return `[${sigmaDisplayName(ident)}]`;
             });
+
+            return s.replace(/\x02(\d+)\x03/g, (_, i) => saved[+i]);
         }
 
         // ── ThoughtSpot UI helpers ─────────────────────────────────────────
@@ -12900,76 +12910,148 @@ explores:
         // ── ThoughtSpot two-step save ──────────────────────────────────────
         async function executeThoughtSpotTwoStepSave(name, folderId) {
             delete state._tsTwoStepSpec;
-            const btn = document.getElementById('tsSaveBtn');
-            btn.innerHTML = '<div class="spinner"></div><span>Saving…</span>';
+            const rawVal = document.getElementById('tsJsonOutput').value;
+            if (!rawVal) { showToast('ThoughtSpot output is empty', 'error'); return; }
+            let fullSpec;
+            try { fullSpec = JSON.parse(rawVal); } catch(e) { showToast('Invalid JSON in ThoughtSpot output', 'error'); return; }
+
+            const btn = document.getElementById('saveBtn');
             btn.disabled = true;
+            btn.innerHTML = '<div class="spinner"></div><span>Saving…</span>';
 
             try {
-                const rawJson = document.getElementById('tsJsonOutput').value;
-                const parsed = JSON.parse(rawJson);
-                parsed.name = name;
-                if (folderId) parsed.folderId = folderId;
-
-                const allElements = parsed.pages?.[0]?.elements || [];
-
                 // Step 1: POST without relationships
-                const noRelSpec = JSON.parse(JSON.stringify(parsed));
-                (noRelSpec.pages?.[0]?.elements || []).forEach(el => { el.relationships = []; });
+                updateStatus('loading', 'Creating model (step 1/2)…');
+                const pagesNoRels = JSON.parse(JSON.stringify(fullSpec.pages)).map(page => ({
+                    ...page,
+                    elements: (page.elements || []).map(el => {
+                        const { relationships, ...rest } = el;
+                        return rest;
+                    })
+                }));
 
-                const postResp = await apiCall('POST', '/v2/workbooks/datamodels', noRelSpec);
-                const savedModelId = postResp.workbookId || postResp.id;
-                if (!savedModelId) throw new Error('No model ID returned from POST');
-
-                // Step 2: GET server-assigned element IDs
-                const getResp = await apiCall('GET', `/v2/workbooks/datamodels/${savedModelId}`);
-                const savedElements = getResp.pages?.[0]?.elements || [];
-
-                // Map local element IDs to server-assigned IDs (match by name+table)
-                const serverIdByName = {};
-                savedElements.forEach(el => { serverIdByName[el.name] = el.id; });
-
-                const localIdToServer = {};
-                allElements.forEach(el => {
-                    const servId = serverIdByName[el.name];
-                    if (servId) localIdToServer[el.id] = servId;
+                const postResp = await sigmaFetch(`/v2/dataModels/spec`, {
+                    method: 'POST',
+                    body: JSON.stringify({ schemaVersion: 1, name, folderId, pages: pagesNoRels })
                 });
+                if (!postResp.ok) {
+                    const t = await postResp.text();
+                    let msg = `HTTP ${postResp.status}`;
+                    try { msg = JSON.parse(t).message || msg; } catch(e) {}
+                    throw new Error(`Save failed: ${msg}`);
+                }
+                const postResult = await postResp.json();
+                const dataModelId = postResult.dataModelId;
+                if (!dataModelId) throw new Error('No dataModelId returned from POST');
 
-                // Step 3: PUT with relationships — use server IDs
-                const fullSpec = JSON.parse(JSON.stringify(parsed));
-                (fullSpec.pages?.[0]?.elements || []).forEach((el, ei) => {
-                    const servElemId = localIdToServer[el.id] || el.id;
-                    el.id = servElemId;
-                    (el.relationships || []).forEach(rel => {
-                        rel.targetElementId = localIdToServer[rel.targetElementId] || rel.targetElementId;
-                        (rel.keys || []).forEach(k => {
-                            // Column IDs need server-side mapping too — find by formula/physicalName
-                            const serverEl = savedElements.find(se => se.id === servElemId);
-                            if (serverEl) {
-                                const srcServCol = serverEl.columns?.find(c => c.physicalName === allElements[ei]?.columns?.find(lc => lc.id === k.sourceColumnId)?.physicalName);
-                                if (srcServCol) k.sourceColumnId = srcServCol.id;
-                                const tgtLocalEl = allElements.find(le => le.id === Object.keys(localIdToServer).find(lid => localIdToServer[lid] === rel.targetElementId));
-                                const tgtServerEl = savedElements.find(se => se.id === rel.targetElementId);
-                                if (tgtServerEl && tgtLocalEl) {
-                                    const tgtPhys = tgtLocalEl.columns?.find(lc => lc.id === k.targetColumnId)?.physicalName;
-                                    const tgtServCol = tgtServerEl.columns?.find(c => c.physicalName === tgtPhys);
-                                    if (tgtServCol) k.targetColumnId = tgtServCol.id;
-                                }
-                            }
+                // Step 2: GET saved spec to get server-assigned IDs
+                updateStatus('loading', 'Adding relationships (step 2/2)…');
+                const getResp = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`);
+                if (!getResp.ok) throw new Error('Could not retrieve saved spec for relationship wiring');
+                const savedSpec = await getResp.json();
+
+                // Build positional maps for column ID remapping.
+                // ThoughtSpot relationships use physical columns (no formula), so we key by physicalName.
+                // Formula columns also tracked for completeness.
+                const savedElPhysMap   = {};  // "pi|ei|physicalName" → server colId
+                const savedElFormulaMap = {}; // "pi|ei|formula"      → server colId
+                (savedSpec.pages || []).forEach((page, pi) => {
+                    (page.elements || []).forEach((el, ei) => {
+                        (el.columns || []).forEach(col => {
+                            if (col.physicalName) savedElPhysMap[`${pi}|${ei}|${col.physicalName}`] = col.id;
+                            if (col.formula)      savedElFormulaMap[`${pi}|${ei}|${col.formula}`]   = col.id;
                         });
                     });
                 });
-                fullSpec.name = name;
-                if (folderId) fullSpec.folderId = folderId;
 
-                await apiCall('PUT', `/v2/workbooks/datamodels/${savedModelId}`, fullSpec);
+                // local colId → { pi, ei, physicalName?, formula? }
+                const localColInfo = {};
+                (fullSpec.pages || []).forEach((page, pi) => {
+                    (page.elements || []).forEach((el, ei) => {
+                        (el.columns || []).forEach(col => {
+                            if (col.id) localColInfo[col.id] = { pi, ei, physicalName: col.physicalName, formula: col.formula };
+                        });
+                    });
+                });
 
-                showToast(`Saved "${name}" to Sigma!`, 'success');
-                btn.innerHTML = '✓ Saved';
-                setTimeout(() => { btn.innerHTML = '💾 Load &amp; Save to Sigma'; btn.disabled = false; }, 3000);
+                // Element ID remap by position
+                const elemIdRemap = {};
+                (fullSpec.pages || []).forEach((origPage, pi) => {
+                    const savedPage = (savedSpec.pages || [])[pi];
+                    if (!savedPage) return;
+                    (origPage.elements || []).forEach((origEl, ei) => {
+                        const savedEl = (savedPage.elements || [])[ei];
+                        if (savedEl) elemIdRemap[origEl.id] = savedEl.id;
+                    });
+                });
+
+                const remapColId = (localColId) => {
+                    const info = localColInfo[localColId];
+                    if (!info) return localColId;
+                    const key = `${info.pi}|${info.ei}`;
+                    if (info.physicalName) return savedElPhysMap[`${key}|${info.physicalName}`]   || localColId;
+                    if (info.formula)      return savedElFormulaMap[`${key}|${info.formula}`]     || localColId;
+                    return localColId;
+                };
+
+                // Inject relationships using server-assigned IDs
+                const savedSpecWithRels = JSON.parse(JSON.stringify(savedSpec));
+                (fullSpec.pages || []).forEach((origPage, pi) => {
+                    const savedPage = (savedSpecWithRels.pages || [])[pi];
+                    if (!savedPage) return;
+                    (origPage.elements || []).forEach((origEl, ei) => {
+                        if (!origEl.relationships || origEl.relationships.length === 0) return;
+                        const savedEl = (savedPage.elements || [])[ei];
+                        if (!savedEl) return;
+                        savedEl.relationships = origEl.relationships.map(rel => ({
+                            ...rel,
+                            targetElementId: elemIdRemap[rel.targetElementId] || rel.targetElementId,
+                            keys: (rel.keys || []).map(k => ({
+                                ...k,
+                                sourceColumnId: remapColId(k.sourceColumnId),
+                                targetColumnId: remapColId(k.targetColumnId)
+                            }))
+                        }));
+                    });
+                });
+
+                const putResp = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ schemaVersion: 1, name, pages: savedSpecWithRels.pages })
+                });
+                if (!putResp.ok) {
+                    const t = await putResp.text();
+                    let msg = `HTTP ${putResp.status}`;
+                    try { msg = JSON.parse(t).message || msg; } catch(e) {}
+                    showToast(`⚠️ Model created but relationships could not be saved: ${msg}`, 'warning');
+                } else {
+                    showToast('✅ ThoughtSpot model saved to Sigma!', 'success');
+                }
+
+                // Refresh editor with final saved spec
+                const finalResp = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`);
+                if (finalResp.ok) {
+                    const saved = await finalResp.json();
+                    saved.dataModelId = dataModelId;
+                    state.selectedModel = saved;
+                    state.originalJson = JSON.stringify(saved, null, 2);
+                    state.isNewModel = false;
+                    setEditorContent(saved);
+                    document.getElementById('editorTitle').textContent = name;
+                    document.getElementById('refreshSigmaBtn').disabled = false;
+                    enableEditorModeToggle();
+                }
+
+                updateStatus('connected', 'Saved!');
+                await loadDataModels();
+
             } catch(err) {
-                showToast('Save failed: ' + err.message, 'error');
-                btn.innerHTML = '💾 Load &amp; Save to Sigma';
+                updateStatus('error', 'Save failed');
+                showToast(`Save failed: ${err.message}`, 'error');
+                showSaveErrorBanner(err.message);
+            } finally {
                 btn.disabled = false;
+                btn.innerHTML = 'Save to Sigma';
             }
         }
 
