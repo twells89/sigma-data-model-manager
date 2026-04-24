@@ -12851,7 +12851,7 @@ explores:
 
         function _tsWrapColumnRefs(expr) {
             // Wrap bare identifiers in brackets, but not: function names, numbers, strings, already-bracketed
-            return expr.replace(/\b([A-Z_][A-Z0-9_ ]*)\b(?!\s*\(|\])/gi, (match, ident) => {
+            return expr.replace(/\b([A-Z_][A-Z0-9_]*)\b(?!\s*\(|\])/gi, (match, ident) => {
                 // Skip keywords and function names
                 const skip = /^(if|then|else|and|or|not|in|null|true|false|today|sum|count|avg|max|min|variance|isnull|datediff|date_diff|safe_divide|countdistinct|cumsum|cumulative_sum|stdev|std_deviation|is|number|date|datetime|string|boolean)$/i;
                 if (skip.test(ident)) return match;
