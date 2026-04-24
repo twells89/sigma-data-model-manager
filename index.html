@@ -10208,6 +10208,12 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 return;
             }
 
+            // Alteryx two-step: same pattern — POST without rels first
+            if (state._alteryxTwoStepSpec) {
+                await executeAlteryxTwoStepSave(name, folderId);
+                return;
+            }
+
             // Standard save
             try {
                 const json = getEditorJson();
@@ -19715,6 +19721,153 @@ ${cleanedSql}`;
             }
         }
 
+        // Two-step Alteryx save: POST without relationships, then PUT with relationships
+        async function executeAlteryxTwoStepSave(name, folderId) {
+            delete state._alteryxTwoStepSpec;
+            const rawVal = document.getElementById('alteryxJsonOutput').value;
+            if (!rawVal) { showToast('Alteryx output is empty', 'error'); return; }
+            let fullSpec;
+            try { fullSpec = JSON.parse(rawVal); } catch(e) { showToast('Invalid JSON in Alteryx output', 'error'); return; }
+
+            const btn = document.getElementById('saveBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner"></div><span>Saving…</span>';
+
+            try {
+                // Step 1: POST without relationships
+                updateStatus('loading', 'Creating model (step 1/2)…');
+                const pagesNoRels = JSON.parse(JSON.stringify(fullSpec.pages)).map(page => {
+                    const mappedEls = (page.elements || []).map(el => {
+                        if (el.kind === 'control') return el;
+                        const { relationships, ...rest } = el;
+                        if (rest.metrics) {
+                            rest.metrics = rest.metrics.filter(m => {
+                                const f = (m.formula || '').trim();
+                                return !(f.startsWith('/*') && f.endsWith('*/') && !f.replace(/\/\*[\s\S]*?\*\//g, '').trim());
+                            });
+                        }
+                        return rest;
+                    });
+                    return { ...page, elements: mappedEls };
+                });
+
+                const postResp = await sigmaFetch(`/v2/dataModels/spec`, {
+                    method: 'POST',
+                    body: JSON.stringify({ schemaVersion: 1, name, folderId, pages: pagesNoRels })
+                });
+                if (!postResp.ok) {
+                    const t = await postResp.text();
+                    let msg = `HTTP ${postResp.status}`;
+                    try { msg = JSON.parse(t).message || msg; } catch(e) {}
+                    throw new Error(`Save failed: ${msg}`);
+                }
+                const postResult = await postResp.json();
+                const dataModelId = postResult.dataModelId;
+                if (!dataModelId) throw new Error('No dataModelId returned from POST');
+
+                // Step 2: GET saved spec to get server-assigned IDs
+                updateStatus('loading', 'Adding relationships (step 2/2)…');
+                const getResp = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`);
+                if (!getResp.ok) throw new Error('Could not retrieve saved spec for relationship wiring');
+                const savedSpec = await getResp.json();
+
+                // Build position-keyed formula maps for column ID remapping
+                const savedPosFormulaToCol = {};
+                (savedSpec.pages || []).forEach((page, pi) => {
+                    (page.elements || []).forEach((el, ei) => {
+                        (el.columns || []).forEach(col => {
+                            if (col.formula) savedPosFormulaToCol[`${pi}|${ei}|${col.formula}`] = { elementId: el.id, colId: col.id };
+                        });
+                    });
+                });
+
+                const localColToInfo = {};
+                (fullSpec.pages || []).forEach((page, pi) => {
+                    (page.elements || []).forEach((el, ei) => {
+                        (el.columns || []).forEach(col => {
+                            if (col.formula && col.id) localColToInfo[col.id] = { pi, ei, formula: col.formula };
+                        });
+                    });
+                });
+
+                const elemIdRemap = {};
+                (fullSpec.pages || []).forEach((origPage, pi) => {
+                    const savedPage = (savedSpec.pages || [])[pi];
+                    if (!savedPage) return;
+                    (origPage.elements || []).forEach((origEl, ei) => {
+                        const savedEl = (savedPage.elements || [])[ei];
+                        if (savedEl) elemIdRemap[origEl.id] = savedEl.id;
+                    });
+                });
+
+                const remapColId = (localColId) => {
+                    const info = localColToInfo[localColId];
+                    if (!info) return localColId;
+                    const saved = savedPosFormulaToCol[`${info.pi}|${info.ei}|${info.formula}`];
+                    return saved ? saved.colId : localColId;
+                };
+
+                // Inject relationships using server-assigned IDs
+                const savedSpecWithRels = JSON.parse(JSON.stringify(savedSpec));
+                (fullSpec.pages || []).forEach((origPage, pi) => {
+                    const savedPage = (savedSpecWithRels.pages || [])[pi];
+                    if (!savedPage) return;
+                    (origPage.elements || []).forEach((origEl, ei) => {
+                        if (!origEl.relationships || origEl.relationships.length === 0) return;
+                        const savedEl = (savedPage.elements || [])[ei];
+                        if (!savedEl) return;
+                        savedEl.relationships = origEl.relationships.map(rel => ({
+                            ...rel,
+                            targetElementId: elemIdRemap[rel.targetElementId] || rel.targetElementId,
+                            keys: (rel.keys || []).map(k => ({
+                                ...k,
+                                sourceColumnId: remapColId(k.sourceColumnId),
+                                targetColumnId: remapColId(k.targetColumnId)
+                            }))
+                        }));
+                    });
+                });
+
+                const putResp = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ schemaVersion: 1, name, pages: savedSpecWithRels.pages })
+                });
+                if (!putResp.ok) {
+                    const t = await putResp.text();
+                    let msg = `HTTP ${putResp.status}`;
+                    try { msg = JSON.parse(t).message || msg; } catch(e) {}
+                    showToast(`⚠️ Model created but relationships could not be saved: ${msg}`, 'warning');
+                } else {
+                    showToast('✅ Alteryx model saved to Sigma!', 'success');
+                }
+
+                // Refresh editor with final saved spec
+                const finalResp = await sigmaFetch(`/v2/dataModels/${dataModelId}/spec`);
+                if (finalResp.ok) {
+                    const saved = await finalResp.json();
+                    saved.dataModelId = dataModelId;
+                    state.selectedModel = saved;
+                    state.originalJson = JSON.stringify(saved, null, 2);
+                    state.isNewModel = false;
+                    setEditorContent(saved);
+                    document.getElementById('editorTitle').textContent = name;
+                    document.getElementById('refreshSigmaBtn').disabled = false;
+                    enableEditorModeToggle();
+                }
+
+                updateStatus('connected', 'Saved!');
+                await loadDataModels();
+
+            } catch(err) {
+                updateStatus('error', 'Save failed');
+                showToast(`Save failed: ${err.message}`, 'error');
+                showSaveErrorBanner(err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Save to Sigma';
+            }
+        }
+
         // ── Example loader ────────────────────────────────────────────────────
         function loadLookExample() {
             // Inject the example files as if they were uploaded
@@ -20182,7 +20335,8 @@ view: date_dim {
                                 id: sigmaShortId(),
                                 targetElementId: rightSrc.element.id,
                                 keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
-                                name: rightSrc.tableName
+                                name: rightSrc.tableName,
+                                relationshipType: 'N:1'
                             });
                             warnings.push('ℹ Join: ' + leftSrc.tableName + '.' + leftField + ' → ' + rightSrc.tableName + '.' + rightField);
                         } else {
@@ -20235,7 +20389,9 @@ view: date_dim {
                             if (formula && !formula.startsWith('/*')) {
                                 if (!factEl.metrics) factEl.metrics = [];
                                 const _altName = sigmaDisplayName(rename);
-                                const _altFmt = _inferSigmaFormat(formula, _altName);
+                                let _altFmt = _inferSigmaFormat(formula, _altName);
+                                // Alteryx pct columns are 0-100 scale; ,.2% would multiply by 100 again
+                                if (_altFmt?.formatString === ',.2%') _altFmt = { kind: 'number', formatString: ',.2f', suffix: '%' };
                                 const _altMetric = { id: sigmaShortId(), formula: formula, name: _altName };
                                 if (_altFmt) _altMetric.format = _altFmt;
                                 factEl.metrics.push(_altMetric);
@@ -20404,6 +20560,9 @@ view: date_dim {
             if (!rawVal) { showToast('Convert a workflow first', 'warning'); return; }
             loadAlteryxOutputToEditor();
             if (!state.accessToken) { showToast('Loaded into editor. Connect to Sigma, then click Save to Sigma.', 'warning'); return; }
+            let parsed = null;
+            try { parsed = JSON.parse(rawVal); } catch(e) {}
+            if (parsed) state._alteryxTwoStepSpec = parsed;
             openSaveLocationModal();
         }
 
