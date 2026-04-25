@@ -18894,6 +18894,7 @@ ${cleanedSql}`;
                     order.push(id);
                 }
                 elements.push({ id: sigmaShortId(), kind: 'table',
+                    name: sigmaDisplayName(tableName),
                     source: { connectionId, kind: 'warehouse-table', path },
                     columns, metrics: [], order });
                 return;
@@ -18921,6 +18922,7 @@ ${cleanedSql}`;
                     }
                     const elemId = sigmaShortId();
                     const el = { id: elemId, kind: 'table',
+                        name: sigmaDisplayName(tableName),
                         source: { connectionId, kind: 'warehouse-table', path },
                         columns, metrics: [], order };
                     elementMap[tableName] = { element: el, colIdMap: {} };
