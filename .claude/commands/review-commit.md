@@ -121,10 +121,37 @@ The README must be committed in the same commit as the HELP_CONTENT / converter 
 - **README OK** — in sync with current HELP_CONTENT and converter behavior
 - **README updated** — list which sections were changed and what was updated
 
-## Step 8 — Final verdict
+## Step 8 — MCP sync check
+
+The sigma-data-model-mcp (github.com/twells89/sigma-data-model-mcp) is an independent implementation of the same converters. It must stay in sync with `index.html`.
+
+**A. New converter added?**
+If the diff adds a new converter tab/panel to `index.html` (e.g. ThoughtSpot, Atlan), a matching file must be created in the MCP:
+1. `src/<tool>.ts` implementing `convert<Tool>ToSigma()`
+2. Imported and registered via `server.tool()` in `tools.ts` `registerTools()`
+
+If this work is not done in the same commit, **file a beads issue before committing**:
+```bash
+cd ~/.beads-sigma && bd create "Sigma MCP: add <Converter> converter" --label sigma-converter --description "Added to index.html in <commit> but not yet ported to MCP."
+```
+
+**B. Existing converter changed?**
+If the diff changes converter logic in `index.html` (bug fix, new pattern, formula change), check whether the corresponding `src/*.ts` file in the MCP needs the same fix. MCP converter files: `src/dbt.ts`, `src/snowflake.ts`, `src/lookml.ts`, `src/powerbi.ts`, `src/tableau.ts`, `src/omni.ts`, `src/sql.ts`.
+
+If a port is needed but out of scope, file a beads issue:
+```bash
+cd ~/.beads-sigma && bd create "Sigma MCP: sync <Converter> converter" --label sigma-converter --description "Changes in index.html (<what changed>) not yet reflected in MCP src/<file>.ts."
+```
+
+**C. Verdict on MCP**
+- **MCP OK** — no converter logic changed, or MCP already updated in this session
+- **MCP issue filed** — beads issue created for follow-up (include the issue ID)
+- **MCP needs update** — port required in this commit; do NOT mark PASS until done
+
+## Step 9 — Final verdict
 Report one of:
-- **PASS** — code, docs, and README are all correct; safe to commit
-- **FAIL** — list specific issues found (code, docs, or README); do NOT commit; suggest fixes
+- **PASS** — code, docs, README, and MCP sync are all correct; safe to commit
+- **FAIL** — list specific issues found; do NOT commit; suggest fixes
 - **WARN** — commit is likely safe but flag items to monitor
 
 Only after a PASS verdict should you proceed with `git commit`.
