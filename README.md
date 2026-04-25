@@ -4,7 +4,7 @@ A single-file browser tool for managing [Sigma Computing](https://sigmacomputing
 
 ## What is this?
 
-The Data Model Manager is a self-contained HTML file that runs entirely in your browser. It connects directly to the Sigma API, lets you edit data model JSON, and includes converters for ten BI/semantic layer tools so you can migrate existing definitions to Sigma.
+The Data Model Manager is a self-contained HTML file that runs entirely in your browser. It connects directly to the Sigma API, lets you edit data model JSON, and includes converters for twelve BI/semantic layer tools so you can migrate existing definitions to Sigma.
 
 **Key capabilities:**
 
@@ -545,6 +545,12 @@ The same converter logic is available as a hosted [Model Context Protocol](https
 - `convert_powerbi_to_sigma` — Power BI model (`.bim` / TOM JSON) → Sigma JSON
 - `convert_tableau_to_sigma` — Tableau workbook / data source (`.twb` / `.tds` XML) → Sigma JSON
 - `convert_omni_to_sigma` — Omni Analytics `.view.yaml` + `.model.yaml` → Sigma JSON
+- `convert_sql_to_sigma` — SQL SELECT statements → Sigma JSON
+- `convert_thoughtspot_to_sigma` — ThoughtSpot TML YAML → Sigma JSON
+- `convert_qlik_to_sigma` — Qlik Sense app metadata JSON → Sigma JSON
+- `convert_atlan_to_sigma` — Atlan data contract (YAML / JSON) → Sigma JSON
+- `convert_alteryx_to_sigma` — Alteryx Designer workflow (`.yxmd` XML) → Sigma JSON
+- `convert_oac_to_sigma` — Oracle Analytics Cloud logical tables JSON → Sigma JSON
 - `convert_sql_to_sigma_formula` — SQL expression → Sigma formula
 - `convert_tableau_formula_to_sigma` — Tableau formula → Sigma formula
 - `get_sigma_data_model_schema` — Sigma data model JSON schema reference
