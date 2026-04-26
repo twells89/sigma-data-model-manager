@@ -12837,9 +12837,9 @@ explores:
                 return `${sigmaFn}(${_tsWrapColumnRefs(arg.trim())})`;
             });
 
-            // safe_divide(a, b) → If(IsNull(b) or b = 0, Null(), a/b)
+            // safe_divide(a, b) → a / NullIf(b, 0)  (NullIf handles both null and zero denominator)
             s = s.replace(/\bsafe_divide\s*\(([^,)]+),([^)]+)\)/gi, (_, a, b) =>
-                `If(IsNull(${b.trim()}) or ${b.trim()} = 0, Null(), ${a.trim()} / ${b.trim()})`);
+                `${a.trim()} / NullIf(${b.trim()}, 0)`);
 
             // isnull(x) → IsNull(x)
             s = s.replace(/\bisnull\s*\(/gi, 'IsNull(');
@@ -22416,7 +22416,7 @@ models:
     <li><code>if (cond) then X else Y</code> → <code>If(cond, X, Y)</code></li>
     <li><code>sum(Revenue)</code> → <code>Sum([Revenue])</code></li>
     <li><code>count_distinct(CustomerID)</code> → <code>CountDistinct([CustomerID])</code></li>
-    <li><code>safe_divide(a, b)</code> → <code>If(IsNull(b) or b = 0, Null(), a / b)</code></li>
+    <li><code>safe_divide(a, b)</code> → <code>a / NullIf(b, 0)</code></li>
     <li><code>col in {A, B, C}</code> → <code>In([col], A, B, C)</code></li>
     <li><code>isnull(x)</code> → <code>IsNull(x)</code></li>
     <li><code>date_diff(unit, start, end)</code> → <code>DateDiff(unit, start, end)</code></li>
