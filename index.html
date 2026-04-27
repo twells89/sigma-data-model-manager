@@ -15993,7 +15993,8 @@ explores:
         let lookProject = {
             views: {},      // viewName → { sqlTableName, path[], dimensions[], measures[] }
             explores: {},   // exploreName → { label, joins: [{alias, from, viewName, relationship, joinType, keys[]}] }
-            modelName: ''
+            modelName: '',
+            includes: []
         };
 
         // ── LookML Block Parser ───────────────────────────────────────────────
@@ -16131,7 +16132,7 @@ explores:
             }
 
             // Top-level: view: name { } / explore: name { } / connection: "..." / label: "..."
-            const result = { views: [], explores: [], connection: null, label: null };
+            const result = { views: [], explores: [], connection: null, label: null, includes: [] };
             while (pos < tokens.length) {
                 const keyword = consume();
                 if (!keyword) continue;
@@ -16148,6 +16149,8 @@ explores:
                     consume(); result.connection = (consume() || '').replace(/"/g, '');
                 } else if (keyword === 'label' && peek() === ':') {
                     consume(); result.label = (consume() || '').replace(/"/g, '');
+                } else if (keyword === 'include' && peek() === ':') {
+                    consume(); result.includes.push((consume() || '').replace(/"/g, ''));
                 } else if (peek() === ':') {
                     // Unknown top-level keyword — skip value/block
                     consume();
@@ -16672,6 +16675,9 @@ ${cleanedSql}`;
                         parsed.explores.forEach(ex => {
                             lookProject.explores[ex._name] = ex;
                         });
+                        if (parsed.includes && parsed.includes.length > 0) {
+                            lookProject.includes.push(...parsed.includes);
+                        }
                     }
                     // Extract views from any file (model files can also have views)
                     parsed.views.forEach(v => {
@@ -16844,6 +16850,9 @@ ${cleanedSql}`;
             const strategy = document.getElementById('lookJoinStrategy').value;
             const warnings = [];
             { const fnWarn = friendlyNameWarning(); if (fnWarn) warnings.push(fnWarn); }
+            if (lookProject.includes.length > 0) {
+                warnings.push(`ℹ include: directives found (${lookProject.includes.join(', ')}) — cross-file references are resolved only from the files you uploaded. If any referenced views are missing, those joins will be silently skipped.`);
+            }
 
             // ── Collect all views used by this explore ──────────────────────
             // Base view is the explore itself (from: or same name)
@@ -17140,10 +17149,12 @@ ${cleanedSql}`;
                             controlId,
                             id: sigmaShortId() + 'con',
                             controlType: 'date-range',
-                            mode: 'custom',
-                            includeNulls: 'when-no-value-is-selected'
+                            mode: 'last',
+                            value: 90,
+                            unit: 'day',
+                            includeToday: true
                         });
-                        warnings.push(`ℹ filter: "${f._name}" → date-range control (controlId: "${controlId}"). Reference in formulas as [${controlId}].start and [${controlId}].end`);
+                        warnings.push(`ℹ filter: "${f._name}" → date-range control (controlId: "${controlId}", default: last 90 days). Reference in formulas as [${controlId}].start and [${controlId}].end`);
                     } else {
                         // String/number filter → list control
                         // Find the source element and column for this filter
@@ -17377,6 +17388,9 @@ ${cleanedSql}`;
             state.useFriendlyNames = isConnectionFriendly(connectionId);
             const warnings = [];
             { const fnWarn = friendlyNameWarning(); if (fnWarn) warnings.push(fnWarn); }
+            if (lookProject.includes.length > 0) {
+                warnings.push(`ℹ include: directives found (${lookProject.includes.join(', ')}) — cross-file references are resolved only from the files you uploaded. If any referenced views are missing, those joins will be silently skipped.`);
+            }
 
             // Shared view registry — same physical view → same element across all explores
             const globalPhysViewMap = {};  // viewName → { element, elementId, colIdMap }
@@ -17580,6 +17594,14 @@ ${cleanedSql}`;
             let tableName, element;
 
             if (view.derived_table !== undefined) {
+                // Warn about PDT materialization properties not supported in Sigma
+                const PDT_SKIP_PROPS = ['distribution', 'sortkeys', 'datagroup_trigger', 'persist_with', 'cluster_keys', 'partition_keys'];
+                for (const prop of PDT_SKIP_PROPS) {
+                    if (view.derived_table[prop] !== undefined) {
+                        warnings.push(`ℹ "${viewName}": PDT property "${prop}" is a warehouse-specific materialization hint and is not converted — remove or handle separately in Sigma.`);
+                    }
+                }
+
                 // Strip LookML ;; terminator and any surrounding whitespace
                 let rawSql = (view.derived_table.sql || '')
                     .replace(/;;\s*$/, '')
@@ -19441,11 +19463,15 @@ ${cleanedSql}`;
                         warnings.push('ℹ Parameter "' + p.name + '" → list control (' + p.members.length + ' values)');
                     } else if (p.type === 'date' || p.type === 'datetime') {
                         controls.push({ kind:'control', controlId, id: sigmaShortId()+'con',
-                            controlType:'date-range', mode:'custom', includeNulls:'when-no-value-is-selected' });
-                        warnings.push('ℹ Parameter "' + p.name + '" → date-range control');
+                            controlType:'date-range', mode:'last', value:90, unit:'day', includeToday:true });
+                        warnings.push('ℹ Parameter "' + p.name + '" → date-range control (default: last 90 days — adjust in Sigma UI)');
+                    } else if (p.type === 'real' || p.type === 'integer' || p.domainType === 'range') {
+                        controls.push({ kind:'control', controlId, id: sigmaShortId()+'con',
+                            controlType:'number-range' });
+                        warnings.push('ℹ Parameter "' + p.name + '" → number-range control');
                     } else {
                         controls.push({ kind:'control', controlId, id: sigmaShortId()+'con',
-                            controlType:'text', mode:'include', values:[] });
+                            controlType:'text', mode:'contains' });
                         warnings.push('ℹ Parameter "' + p.name + '" → text control');
                     }
                 }
@@ -21939,7 +21965,7 @@ models:
     <li><b>Joins/Relationships</b> → Sigma relationships on the fact element</li>
     <li><b>Calculated fields</b> → Sigma calculated columns with formula conversion</li>
     <li><b>Simple aggregates</b> → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)</li>
-    <li><b>Parameters</b> → Sigma controls (list, date-range, text)</li>
+    <li><b>Parameters</b> → Sigma controls (list, date-range, number-range, text)</li>
     <li><b>LOD FIXED expressions</b> → Child elements with groupings</li>
     <li><b>Sets</b> → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → <code>In([Field], ...)</code> column. Add a filter control on these columns in your Sigma workbook to replicate set-based filtering.</li>
 </ul>
@@ -22058,6 +22084,8 @@ models:
     <li><b>Snowflake cast shorthand (<code>::TYPE</code>) in derived table SQL</b> — Sigma rewrites both <code>col::DATE</code> and <code>CAST(col AS DATE)</code> as <code>TO_DATE(CAST(col AS DATE))</code> when saving, which Snowflake rejects because <code>TO_DATE</code> does not accept a DATE argument. The converter automatically rewrites <code>::DATE</code> to <code>TRY_TO_DATE(TO_VARCHAR(col))</code> and <code>::TIMESTAMP</code> to <code>TRY_TO_TIMESTAMP(TO_VARCHAR(col))</code> — functions Sigma does not touch. Other <code>::TYPE</code> casts become <code>CAST(col AS TYPE)</code>. A warning appears in the output panel listing each rewritten cast.</li>
     <li><b>Incremental PDT leading-comma CTEs</b> — Looker incremental PDT SQL bodies are designed to be appended to a trigger CTE, so they begin with <code>,cte_name AS (</code> rather than a full <code>WITH</code> statement. The converter automatically corrects this to <code>WITH cte_name AS (</code> so the SQL is valid standalone. A warning is shown in the output panel when this correction is applied.</li>
     <li><b>Trailing comma before SQL keywords in derived table SQL</b> — Some LookML derived tables leave a trailing comma at the end of a <code>SELECT</code> list (e.g. <code>expr AS col,\nFROM final</code>). This is tolerated by Looker's templating engine but is invalid standalone SQL that causes a Snowflake compilation error. The converter automatically strips these trailing commas before <code>FROM</code>, <code>WHERE</code>, <code>GROUP BY</code>, <code>ORDER BY</code>, <code>HAVING</code>, <code>LIMIT</code>, and set operators. A warning is shown when this correction is applied.</li>
+    <li><b>include: directives</b> — LookML <code>include:</code> statements are parsed and listed in the warnings panel. Cross-file view resolution is based only on the files you upload — if a view referenced by an <code>include:</code> path is not uploaded, its joins will be silently skipped. Glob patterns (e.g. <code>/views/*</code>) are not expanded.</li>
+    <li><b>PDT materialization hints</b> — Warehouse-specific PDT properties (<code>distribution</code>, <code>sortkeys</code>, <code>datagroup_trigger</code>, <code>persist_with</code>, <code>cluster_keys</code>, <code>partition_keys</code>) are not converted. A warning is shown in the output panel for each property encountered so you can handle them separately.</li>
 </ul>
 
 <div class="help-links">
