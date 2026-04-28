@@ -19535,6 +19535,8 @@ ${cleanedSql}`;
                     if (firstControls) { allControls.push(...controls); firstControls = false; }
                 }
 
+                buildDerivedElements(allElements).forEach(de => allElements.push(de));
+
                 const modelName = toConvert.length === 1
                     ? toConvert[0].ds.name
                     : toConvert.map(t => t.ds.name).join(' + ');
@@ -21968,13 +21970,14 @@ models:
     <li><b>Parameters</b> → Sigma controls (list, date-range, number-range, text)</li>
     <li><b>LOD FIXED expressions</b> → Child elements with groupings</li>
     <li><b>Sets</b> → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → <code>In([Field], ...)</code> column. Add a filter control on these columns in your Sigma workbook to replicate set-based filtering.</li>
+    <li><b>Derived element</b> → For fact tables with relationships, a derived element is created that surfaces all own columns plus related dimension columns via <code>[FACT_TABLE/RELATIONSHIP_NAME/Col]</code> cross-element formulas — no manual wiring required</li>
 </ul>
 
 <h3>Known Limitations</h3>
 <ul>
     <li><b>LOD INCLUDE/EXCLUDE</b> — Cannot be auto-converted to Sigma; generates a warning with guidance to use groupings. Only <code>FIXED</code> LOD expressions produce child elements.</li>
     <li><b>Table calculations</b> — RUNNING_SUM → <code>CumulativeSum()</code>, RANK → <code>Rank()</code>/<code>DenseRank()</code>, INDEX → <code>RowNumber()</code>, WINDOW_SUM → <code>GrandTotal()</code>. Complex patterns (LOOKUP, PREVIOUS_VALUE, nested table calcs) are flagged but not converted.</li>
-    <li><b>Cross-element columns</b> — Formulas referencing related dimension columns are removed with a warning. The Sigma API does not support creating cross-element column references — add these manually in the Sigma UI after saving.</li>
+    <li><b>Cross-element calculated columns</b> — Tableau calculated fields that reference columns from related tables are removed with a warning (Sigma calculated columns can only reference columns local to their element). Related dimension columns are accessible via the derived element using <code>[FACT/RELATIONSHIP/Col]</code> formulas.</li>
     <li><b>Role-playing dimensions</b> — Multiple relationships from a fact table to the same dimension are now supported. Each relationship gets a unique name including the join key (e.g. "DATE_DIM via Order Date Key"). Review the generated names for clarity.</li>
     <li><b>Bins</b> — Converted to bucketed <code>Floor()</code> calculated columns.</li>
     <li><b>Top N / Bottom N sets</b> — Top N and Bottom N sets cannot be auto-converted and generate a warning. Recreate these as filters in the Sigma UI after saving.</li>
