@@ -62,7 +62,7 @@ Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) 
 **Known limitations:**
 - LOD INCLUDE / EXCLUDE — Cannot be auto-converted; generates a warning with guidance to use groupings
 - Complex table calculations (LOOKUP, PREVIOUS_VALUE, nested) — Flagged but not converted
-- Cross-element columns — Formulas referencing related dimension columns are removed; add manually in Sigma UI
+- Cross-element calculated columns — Automatically moved to the derived child element; metrics with cross-element refs are removed with a warning and must be added manually in Sigma UI
 - Role-playing dimensions — Supported; each relationship includes the join key in its name (e.g. "DATE_DIM via Order Date Key")
 - Top N / Bottom N sets — Cannot be auto-converted; recreate as filters in Sigma UI
 - Custom SQL data sources — Converted to Sigma custom SQL elements; Tableau-specific SQL syntax may need manual adjustment
@@ -142,7 +142,7 @@ Converts LookML projects (multiple `.lkml` files) to Sigma data model JSON. Drop
 
 **Known limitations:**
 - Liquid templating — `{% %}` and `{{ }}` blocks are stripped with warnings
-- Cross-element columns — Formulas referencing other elements' columns are removed; add manually in Sigma UI
+- Cross-element columns — Calculated columns referencing joined view columns are automatically moved to the derived explore element; metrics with cross-element refs must be added manually in Sigma UI
 - Fiscal timeframes — Skipped with a warning (require `fiscal_month_offset` from model-level config)
 - Access filters — `access_filter` blocks converted to Sigma RLS using `CurrentUserAttributeText()`; `access_grant` blocks not converted
 - Trailing comma before SQL keywords, incremental PDT leading-comma CTEs, Snowflake `::TYPE` cast shorthand — All automatically corrected with warnings
@@ -510,7 +510,7 @@ Use **Fix with AI** in the error banner to attempt automatic repair.
 
 **Column display name casing:** Sigma title-cases every word in display names — including words like "in", "of", "to", "at". `IS_EMAIL_OPT_IN` → `"Is Email Opt In"` (not `"Is Email Opt in"`). Column formulas must use the exact display name Sigma generates.
 
-**Cross-element column references:** Sigma "links" (the `- link/` formula syntax) are being deprecated. The API does not support creating them. Converters automatically detect and remove cross-element formulas with a warning to add them manually in the Sigma UI.
+**Cross-element column references:** Sigma "links" (the `- link/` formula syntax) are being deprecated. The API does not support creating them. Converters automatically detect calculated columns with cross-element refs and move them to the derived child element, where the related columns are already surfaced. Metrics with cross-element refs are removed with a warning.
 
 ### Column ID Formats
 
