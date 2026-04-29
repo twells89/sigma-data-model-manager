@@ -22132,8 +22132,8 @@ models:
     <li><b>Entities — natural</b> → Source column (no join)</li>
     <li><b>Dimensions — categorical</b> → Sigma columns; complex <code>expr</code> SQL auto-converted (see table below)</li>
     <li><b>Dimensions — time</b> → <code>DateTrunc("granularity", [col])</code> columns</li>
-    <li><b>Measures</b> → Sigma metrics; <code>filter:</code> → conditional aggregates (<code>SumIf</code>, <code>CountIf</code>, <code>CountDistinctIf</code>, etc.)</li>
-    <li><b>Metrics — simple / ratio / derived</b> → Named Sigma metrics; metric-level filters stacked on top of measure filters</li>
+    <li><b>Measures</b> → Sigma metrics when not referenced by a <code>metrics:</code> entry; <code>filter:</code> → conditional aggregates (<code>SumIf</code>, <code>CountIf</code>, <code>CountDistinctIf</code>, etc.)</li>
+    <li><b>Metrics — simple / ratio / derived</b> → Named Sigma metrics; metric-level filters stacked on top of measure filters. When a simple metric references a measure, the measure itself is suppressed to avoid duplicates.</li>
     <li><b>node_relation</b> → Auto-populates Database / Schema fields and resolves table alias</li>
     <li><b>Multi-file upload</b> → Drop any number of YAML files at once; cross-file entity relationships resolve automatically</li>
     <li><b>Time spine</b> → Include <code>semantic_manifest.json</code> alongside your YAMLs; <code>project_configuration.time_spines</code> generates <code>ts_&lt;granularity&gt;</code> elements and wires <code>agg_time_dimension</code> N:1 relationships automatically</li>

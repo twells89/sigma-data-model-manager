@@ -161,8 +161,8 @@ Converts dbt semantic model YAML files and `semantic_manifest.json` artifacts to
 - Entities (foreign) → Sigma relationships + a derived element surfacing all own + related dimension columns
 - Dimensions (categorical) → Sigma columns with formula conversion
 - Dimensions (time) → `DateTrunc("granularity", [col])` columns
-- Measures → Sigma metrics; `filter:` → conditional aggregates (`SumIf`, `CountIf`, etc.)
-- Metrics (simple / ratio / derived) → Named Sigma metrics with metric-level filters
+- Measures → Sigma metrics when not referenced by a `metrics:` entry; `filter:` → conditional aggregates (`SumIf`, `CountIf`, etc.)
+- Metrics (simple / ratio / derived) → Named Sigma metrics with metric-level filters; referenced measures are suppressed to avoid duplicates
 - Time spine (via `semantic_manifest.json`) → `ts_<granularity>` elements with `agg_time_dimension` relationships
 - Multi-file upload → Drop any number of YAML files; cross-file entity relationships resolve automatically
 
