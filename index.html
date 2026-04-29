@@ -9776,13 +9776,14 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 metrics: [],
                 order: []
             };
+            if (table.description) element.description = table.description;
 
             const colIdMap = {};   // IDENTIFIER_UPPER → inodeId (both physical and semantic names map here)
             const addedIds = new Set();
 
             // Add a column using its PHYSICAL identifier (what Sigma looks for in the warehouse).
             // Also registers an optional semantic alias so relationship key lookups still work.
-            function addColById(physicalId, semanticAlias) {
+            function addColById(physicalId, semanticAlias, description) {
                 if (addedIds.has(physicalId)) {
                     // Already added — just register the alias if given
                     if (semanticAlias && semanticAlias !== physicalId) colIdMap[semanticAlias] = colIdMap[physicalId];
@@ -9791,7 +9792,9 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 const id = sigmaInodeId(physicalId);
                 colIdMap[physicalId] = id;
                 addedIds.add(physicalId);
-                element.columns.push({ id, formula: sigmaColFormula(tableName, physicalId) });
+                const _col = { id, formula: sigmaColFormula(tableName, physicalId) };
+                if (description) _col.description = description;
+                element.columns.push(_col);
                 element.order.push(id);
                 // Register semantic alias (e.g. CUST_CITY → same inode as CITY)
                 if (semanticAlias && semanticAlias !== physicalId) colIdMap[semanticAlias] = id;
@@ -9823,8 +9826,9 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             // 1. Dimensions
             for (const col of table.dimensions || []) {
                 const { physical, semantic, expr } = resolveCol(col);
+                const _desc = typeof col === 'object' ? col.description : undefined;
                 if (physical) {
-                    addColById(physical, semantic);
+                    addColById(physical, semantic, _desc);
                 } else if (expr) {
                     // Complex expression → try rule-based first, then iterative converter (CASE/CONCAT/SPLIT_PART)
                     const formula = lookSqlToSigmaRules(expr) || dbtConvertExpressionToSigma(expr);
@@ -9838,6 +9842,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                             const _snowDimFmt = _inferSigmaFormat(formula, sigmaDisplayName(semantic));
                             const _snowDimCol = { id, formula, name: sigmaDisplayName(semantic) };
                             if (_snowDimFmt) _snowDimCol.format = _snowDimFmt;
+                            if (_desc) _snowDimCol.description = _desc;
                             element.columns.push(_snowDimCol);
                             element.order.push(id);
                         }
@@ -9847,8 +9852,9 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             // 2. Time dimensions
             for (const col of table.time_dimensions || []) {
                 const { physical, semantic, expr } = resolveCol(col);
+                const _desc = typeof col === 'object' ? col.description : undefined;
                 if (physical) {
-                    addColById(physical, semantic);
+                    addColById(physical, semantic, _desc);
                 } else if (expr) {
                     const formula = lookSqlToSigmaRules(expr) || dbtConvertExpressionToSigma(expr);
                     if (formula) {
@@ -9861,6 +9867,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                             const _snowTimeFmt = _inferSigmaFormat(formula, sigmaDisplayName(semantic));
                             const _snowTimeCol = { id, formula, name: sigmaDisplayName(semantic) };
                             if (_snowTimeFmt) _snowTimeCol.format = _snowTimeFmt;
+                            if (_desc) _snowTimeCol.description = _desc;
                             element.columns.push(_snowTimeCol);
                             element.order.push(id);
                         }
