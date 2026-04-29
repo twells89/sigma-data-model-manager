@@ -6162,11 +6162,15 @@ PRODUCT_NAME
 
                 if (!response.ok) {
                     let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                    let _rawResponse;
                     try {
                         const errorData = await response.text();
-                                try { errorMessage = JSON.parse(errorData).message || errorMessage; } catch(e) { errorMessage = errorData.slice(0, 500); }
+                        _rawResponse = errorData;
+                        try { errorMessage = JSON.parse(errorData).message || errorMessage; } catch(e) { errorMessage = errorData.slice(0, 500); }
                     } catch(e) { console.warn('Could not read error response body', e); }
-                    throw new Error(errorMessage);
+                    const _saveErr = new Error(errorMessage);
+                    _saveErr.rawResponse = _rawResponse;
+                    throw _saveErr;
                 }
 
                 let result = {};
@@ -6243,6 +6247,8 @@ PRODUCT_NAME
             let displayMsg = errorMsg;
             if (errorMsg.toLowerCase().includes('cycle in dependency order')) {
                 displayMsg = errorMsg + ' — This usually means a column name doesn\'t match your warehouse. Double-check that all column names exist in your tables.';
+            } else if (errorMsg.toLowerCase().includes('source not found')) {
+                displayMsg = errorMsg + ' — The table path or connection ID may be incorrect, or the table hasn\'t been synced to Sigma\'s catalog yet. Verify the database, schema, and table name match exactly what Sigma sees for this connection.';
             }
             document.getElementById('saveErrorMsg').textContent = displayMsg;
             document.getElementById('fixAIKeyRow').style.display = 'none';
@@ -10795,7 +10801,7 @@ relationships:
             return `${fn}([${dn}], ${combinedFilter})`;
         }
 
-        function convertDbtSemanticModel(model, config, allMeasuresByModel) {
+        function convertDbtSemanticModel(model, config, allMeasuresByModel, referencedMeasureNames) {
             const connectionId = config.connectionId || '<CONNECTION_ID>';
 
             // Resolve table path — prefer manifest node_relation, else ref(), else model name
@@ -10958,7 +10964,12 @@ relationships:
                 const _dbtFmt1 = _inferSigmaFormat(_dbtFormula1, _dbtName1);
                 const _dbtMetric1 = { id: sigmaShortId(), formula: _dbtFormula1, name: _dbtName1 };
                 if (_dbtFmt1) _dbtMetric1.format = _dbtFmt1;
-                element.metrics.push(_dbtMetric1);
+                // Only push as a Sigma metric if no dbt metric references this measure.
+                // When a dbt metric wraps this measure, convertDbtMetrics will push the metric
+                // instead — pushing both would produce duplicates.
+                if (!referencedMeasureNames?.has(measure.name)) {
+                    element.metrics.push(_dbtMetric1);
+                }
                 // Store full formula object so metrics can stack filters on top
                 allMeasuresByModel[measure.name] = {
                     agg: measure.agg,
@@ -11296,6 +11307,17 @@ relationships:
             }
 
             const config = { database, schema, connectionId };
+            // Pre-compute which measures are referenced by dbt metrics so we can avoid
+            // double-adding them as Sigma metrics (measure + the metric that wraps it).
+            const referencedMeasureNames = new Set(
+                (dbtMetrics || []).flatMap(m => {
+                    if (m.type === 'simple') {
+                        const ref = (m.type_params || {}).measure;
+                        return [typeof ref === 'object' ? ref.name : ref];
+                    }
+                    return [];
+                }).filter(Boolean)
+            );
             const allMeasuresByModel = {};
             const elements = [], warnings = [];
             // elementData[i] carries per-element time-spine wiring info from convertDbtSemanticModel
@@ -11304,7 +11326,7 @@ relationships:
 
             for (const model of semanticModels) {
                 try {
-                    const { element, aggTimeDims, timeDimInfo, skippedDims } = convertDbtSemanticModel(model, config, allMeasuresByModel);
+                    const { element, aggTimeDims, timeDimInfo, skippedDims } = convertDbtSemanticModel(model, config, allMeasuresByModel, referencedMeasureNames);
                     elements.push(element);
                     elementData.push({ aggTimeDims, timeDimInfo });
                     for (const { name, reason } of skippedDims || []) {
