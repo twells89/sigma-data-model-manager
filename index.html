@@ -9756,6 +9756,14 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         // Build a Sigma element from a Snowflake semantic view table definition.
         // extraIdentifiers: Set of UPPERCASE column names (FK join keys) that must
         // exist as columns even if absent from dimensions/facts/time_dimensions.
+        function snowBuildDesc(description, synonyms) {
+            const base = (description || '').trim();
+            const syns = (synonyms || []).map(s => s.trim()).filter(Boolean);
+            if (!syns.length) return base || undefined;
+            const suffix = 'Also known as: ' + syns.join(', ');
+            return base ? base + '. ' + suffix : suffix;
+        }
+
         function snowConvertTable(table, connectionId, extraIdentifiers) {
             extraIdentifiers = extraIdentifiers || new Set();
             const bt = table.base_table || {};
@@ -9776,7 +9784,8 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 metrics: [],
                 order: []
             };
-            if (table.description) element.description = table.description;
+            const _tableDesc = snowBuildDesc(table.description, table.synonyms);
+            if (_tableDesc) element.description = _tableDesc;
 
             const colIdMap = {};   // IDENTIFIER_UPPER → inodeId (both physical and semantic names map here)
             const addedIds = new Set();
@@ -9826,7 +9835,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             // 1. Dimensions
             for (const col of table.dimensions || []) {
                 const { physical, semantic, expr } = resolveCol(col);
-                const _desc = typeof col === 'object' ? col.description : undefined;
+                const _desc = typeof col === 'object' ? snowBuildDesc(col.description, col.synonyms) : undefined;
                 if (physical) {
                     addColById(physical, semantic, _desc);
                 } else if (expr) {
@@ -9852,7 +9861,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             // 2. Time dimensions
             for (const col of table.time_dimensions || []) {
                 const { physical, semantic, expr } = resolveCol(col);
-                const _desc = typeof col === 'object' ? col.description : undefined;
+                const _desc = typeof col === 'object' ? snowBuildDesc(col.description, col.synonyms) : undefined;
                 if (physical) {
                     addColById(physical, semantic, _desc);
                 } else if (expr) {
@@ -9879,7 +9888,8 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             for (const col of table.facts || []) {
                 const { physical, semantic } = resolveCol(col);
                 if (!physical) continue;
-                addColById(physical, semantic);
+                const _factDesc = typeof col === 'object' ? snowBuildDesc(col.description, col.synonyms) : undefined;
+                addColById(physical, semantic, _factDesc);
                 if (autoMetrics && !snowIsIndicator(col)) {
                     if (physical.endsWith('_KEY') || physical.endsWith('_CODE')) continue;
                     const _snowFormula = 'Sum([' + sigmaDisplayName(physical) + '])';
@@ -22195,7 +22205,7 @@ models:
     <li><b>Facts</b> → Sigma columns + optional Sum() metrics (when "Auto-generate metrics" is checked)</li>
     <li><b>Primary keys</b> → Tracked for relationship target resolution</li>
     <li><b>Relationships</b> → Sigma relationships using the target table name as the relationship name (supports both inline per-table and top-level relationship blocks); source tables with outgoing relationships also get a <b>derived element</b> surfacing all own + related columns via <code>[SRC_TABLE/TARGET_TABLE/Col]</code> cross-element formulas</li>
-    <li><b>Descriptions</b> → Preserved on elements and columns</li>
+    <li><b>Descriptions</b> → Preserved on elements and columns; <code>synonyms:</code> appended as "Also known as: …" so natural language queries can match on alternative names</li>
 </ul>
 
 <h3>Expression Conversion</h3>

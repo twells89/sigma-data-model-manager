@@ -199,7 +199,7 @@ Converts Snowflake Cortex Analyst semantic view YAML files to Sigma data model J
 - Time dimensions → Sigma columns (datetime type)
 - Facts → Sigma columns + optional `Sum()` metrics when "Auto-generate metrics" is checked
 - Relationships → Sigma relationships using target table name; source tables with outgoing relationships get a derived element surfacing all own + related columns
-- Descriptions → Preserved on elements and columns
+- Descriptions → Preserved on elements and columns; `synonyms:` appended as "Also known as: …" for natural language discoverability
 
 **Expression conversion:**
 
