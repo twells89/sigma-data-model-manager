@@ -12047,10 +12047,11 @@ metrics:
                 if (isCustomSql) return `[${sigmaDisplayName(col)}]`;
                 return `[${tableName}/${sigmaDisplayName(col)}]`;
             });
-            // ${view.field} → [Display Field] (cross-view, simplified)
-            expr = expr.replace(/\$\{(\w+)\.(\w+)\}/g, (_, _v, field) =>
-                `[${sigmaDisplayName(field)}]`
-            );
+            // ${view.field} → cross-view marker (resolved to Lookup after relationship wiring)
+            expr = expr.replace(/\$\{(\w+)\.(\w+)\}/g, (_, viewAlias, field) => {
+                if (viewAlias.toUpperCase() === 'TABLE') return isCustomSql ? `[${sigmaDisplayName(field)}]` : `[${tableName}/${sigmaDisplayName(field)}]`;
+                return `__XVIEW__${viewAlias}__${field}__`;
+            });
             // ${field} → [Display Field]
             expr = expr.replace(/\$\{(\w+)\}/g, (_, field) =>
                 `[${sigmaDisplayName(field)}]`
@@ -12438,6 +12439,13 @@ metrics:
                     fromEntry.element.relationships.push(rel);
                 }
             }
+
+            // Resolve cross-view ref markers → Lookup() formulas
+            const _omniViewLookup = {};
+            for (const [k, v] of Object.entries(viewRegistry)) {
+                _omniViewLookup[k] = { element: v.element, elementId: v.elementId };
+            }
+            resolveXviewMarkers(elements, _omniViewLookup, warnings);
 
             // Add derived element for each view that has outgoing relationships, surfacing
             // base + joined-view fields via [SRC/REL/Col] cross-element formulas.
@@ -17093,6 +17101,13 @@ ${cleanedSql}`;
                 });
             });
 
+            // ── Resolve cross-view ref markers → Lookup() formulas ───────────
+            const physElements = Object.values(physViewMap).reduce((acc, r) => {
+                if (!acc.some(e => e.id === r.elementId)) acc.push(r.element);
+                return acc;
+            }, []);
+            resolveXviewMarkers(physElements, elementMap, warnings);
+
             // ── Collect unique elements (one per physical view) ───────────────
             const seenIds = new Set();
             let allElements = Object.values(physViewMap).filter(r => {
@@ -17965,8 +17980,11 @@ ${cleanedSql}`;
             // without being re-converted, so pre-expanded bracket refs are safe.
             function expandYesnoRefs(sql) {
                 if (!yesnoExprMap.size && !fieldDisplayMap.size) return sql;
-                return sql.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, n) => {
-                    const lname = n.toLowerCase();
+                return sql.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?\}/g, (match, n, field) => {
+                    if (field && n.toLowerCase() !== viewName.toLowerCase()) {
+                        return `__XVIEW__${n}__${field}__`;
+                    }
+                    const lname = (field ?? n).toLowerCase();
                     const yesnoExpr = yesnoExprMap.get(lname);
                     if (yesnoExpr !== undefined) return `(${yesnoExpr})`;
                     const displayName = fieldDisplayMap.get(lname);
@@ -18005,6 +18023,22 @@ ${cleanedSql}`;
                     }
                     if (paramRefs.length > 0) {
                         warnings.push(`⚠ "${d._name}": LookML parameters (${[...new Set(paramRefs)].join(', ')}) could not be resolved — best-effort conversion applied.`);
+                    }
+                }
+
+                // ── Pure cross-view ref: ${other_view.field} → Lookup placeholder ──
+                {
+                    const xvMatch = (d.sql || '').match(/^\s*\$\{([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\}\s*$/);
+                    if (xvMatch && xvMatch[1].toLowerCase() !== viewName.toLowerCase()) {
+                        const colId = sigmaShortId();
+                        colIdMap[colName] = colId;
+                        element.columns.push({
+                            id: colId,
+                            formula: `__XVIEW__${xvMatch[1]}__${xvMatch[2]}__`,
+                            name: d.label || sigmaDisplayName(d._name)
+                        });
+                        element.order.push(colId);
+                        continue;
                     }
                 }
 
@@ -18524,6 +18558,43 @@ ${cleanedSql}`;
             if (element.metrics.length === 0) delete element.metrics;
             if (element.folders && element.folders.length === 0) delete element.folders;
             return { element, elementId, colIdMap };
+        }
+
+        // ── Resolve __XVIEW__view__field__ markers → Lookup() formulas ─────────
+        function resolveXviewMarkers(elements, viewLookup, warnings) {
+            for (const el of elements) {
+                if (!el.columns?.some(c => c.formula?.includes('__XVIEW__'))) continue;
+                const relIndex = new Map();
+                for (const rel of (el.relationships ?? [])) {
+                    const tgtEl = elements.find(e => e.id === rel.targetElementId);
+                    if (!tgtEl) continue;
+                    const tblName = (tgtEl.source?.path?.slice(-1)[0] ?? '').toUpperCase();
+                    const localKeyCol = el.columns?.find(c => c.id === rel.keys?.[0]?.sourceColumnId);
+                    const fkCol = tgtEl.columns?.find(c => c.id === rel.keys?.[0]?.targetColumnId);
+                    const localKeyDN = localKeyCol?.formula?.match(/\/([^\]]+)\]$/)?.[1] ?? '';
+                    const fkDN = fkCol?.formula?.match(/\/([^\]]+)\]$/)?.[1] ?? '';
+                    if (tblName) relIndex.set(rel.targetElementId, { tableName: tblName, localKeyDN, fkDN });
+                }
+                for (const c of (el.columns ?? [])) {
+                    if (!c.formula?.includes('__XVIEW__')) continue;
+                    c.formula = c.formula.replace(/__XVIEW__(\w+)__(\w+)__/g, (_m, viewAlias, fieldName) => {
+                        const tgtEntry = viewLookup[viewAlias] ?? viewLookup[viewAlias.toLowerCase()];
+                        const fieldDN = sigmaDisplayName(fieldName);
+                        if (!tgtEntry) {
+                            warnings.push(`⚠ Cross-view ref "${viewAlias}.${fieldName}" — view not found. Add Lookup formula manually.`);
+                            return `[${fieldDN}]`;
+                        }
+                        const relInfo = relIndex.get(tgtEntry.elementId);
+                        const tblName = relInfo?.tableName ?? (tgtEntry.element.source?.path?.slice(-1)[0] ?? viewAlias).toUpperCase();
+                        if (!relInfo?.localKeyDN || !relInfo?.fkDN) {
+                            warnings.push(`⚠ Cross-view ref "${viewAlias}.${fieldName}" — no relationship to "${tblName}". Add Lookup manually.`);
+                            return `[${tblName}/${fieldDN}]`;
+                        }
+                        warnings.push(`✅ "${viewAlias}.${fieldName}" → Lookup([${tblName}/${fieldDN}], [${relInfo.localKeyDN}], [${tblName}/${relInfo.fkDN}])`);
+                        return `Lookup([${tblName}/${fieldDN}], [${relInfo.localKeyDN}], [${tblName}/${relInfo.fkDN}])`;
+                    });
+                }
+            }
         }
 
         // ── Find column ID by physical name in an element result ─────────────
@@ -19963,11 +20034,24 @@ ${cleanedSql}`;
             f = f.replace(/\bMIN\s*\(/gi, 'Min(');
             f = f.replace(/\bMAX\s*\(/gi, 'Max(');
             f = f.replace(/\bCOUNT\s*\(/gi, 'Count(');
-            // RELATED([Col]) → just [Col], but warn that cross-table reference may need review
+            // LOOKUPVALUE(Table[ReturnCol], Table[MatchCol], LocalValue) → Lookup(...)
+            f = f.replace(
+              /\bLOOKUPVALUE\s*\(\s*'?([A-Za-z_]\w*)'?\s*\[([^\]]+)\]\s*,\s*'?[A-Za-z_]\w*'?\s*\[([^\]]+)\]\s*,\s*([^,)]+?)\s*(?:,\s*[^)]+)?\s*\)/gi,
+              (_m, retTbl, retCol, matchCol, localVal) => {
+                const tblUp = retTbl.trim().toUpperCase();
+                const retDN = sigmaDisplayName(retCol.trim());
+                const fkDN = sigmaDisplayName(matchCol.trim());
+                const cleanLocal = localVal.trim()
+                  .replace(/^'[^']+'\s*\[([^\]]+)\]$/, '[$1]')
+                  .replace(/^[A-Za-z_]\w*\s*\[([^\]]+)\]$/, '[$1]');
+                return `Lookup([${tblUp}/${retDN}], ${cleanLocal}, [${tblUp}/${fkDN}])`;
+              }
+            );
+            // RELATED(Table[Col]) — fallback if pre-processing didn't resolve it
             const hadRelated = /\bRELATED\s*\(/i.test(f);
             f = f.replace(/\bRELATED\s*\(\s*(\[[^\]]+\])\s*\)/gi, '$1');
             if (hadRelated && warnings) {
-                warnings.push(`⚠ Calculated column "${measureName}": uses RELATED() — cross-table reference may not resolve. Review and update to use Sigma linked column syntax: [TABLE/FK - link/Column].`);
+                warnings.push(`⚠ Calculated column "${measureName}": RELATED() could not be resolved to a Sigma Lookup — relationship not found.`);
             }
             f = f.replace(/\bRELATEDTABLE\s*\([^)]*\)/gi, '/* RELATEDTABLE - use relationship */');
             // Logical
@@ -20065,6 +20149,13 @@ ${cleanedSql}`;
                     }
                 }
 
+                // ── Build relationship map for RELATED() pre-processing ───────────
+                const relMap = new Map();
+                for (const rel of (model.relationships || [])) {
+                    if (!relMap.has(rel.fromTable)) relMap.set(rel.fromTable, []);
+                    relMap.get(rel.fromTable).push({ toTable: rel.toTable, fromColumn: rel.fromColumn, toColumn: rel.toColumn });
+                }
+
                 // ── Convert tables to Sigma elements ─────────────────────────────
                 for (const t of (model.tables || [])) {
                     if (measureOnlyTables.has(t.name)) continue; // skip, measures moved later
@@ -20130,7 +20221,23 @@ ${cleanedSql}`;
                     for (const c of (t.columns || [])) {
                         if (!c.expression && !c.type) continue;
                         if (c.type === 'calculated') {
-                            let sigmaFormula = pbiDaxToSigma(c.expression, warnings, c.name);
+                            let _calcExpr = c.expression || '';
+                            const _tableRels = relMap.get(tableName) || [];
+                            if (_tableRels.length > 0 && /\bRELATED\s*\(/i.test(_calcExpr)) {
+                                _calcExpr = _calcExpr.replace(
+                                    /\bRELATED\s*\(\s*'?([A-Za-z_]\w*)'?\s*\[([^\]]+)\]\s*\)/gi,
+                                    (_m, relTbl, relCol) => {
+                                        const rel = _tableRels.find(r => r.toTable.toLowerCase() === relTbl.trim().toLowerCase());
+                                        if (!rel) return _m;
+                                        const tgtTblUp = rel.toTable.toUpperCase();
+                                        const colDN = sigmaDisplayName(relCol.trim());
+                                        const localKeyDN = sigmaDisplayName(rel.fromColumn);
+                                        const fkDN = sigmaDisplayName(rel.toColumn);
+                                        return `Lookup([${tgtTblUp}/${colDN}], [${localKeyDN}], [${tgtTblUp}/${fkDN}])`;
+                                    }
+                                );
+                            }
+                            let sigmaFormula = pbiDaxToSigma(_calcExpr, warnings, c.name);
                             if (sigmaFormula) {
                                 // Rewrite PBI column names → Sigma display names
                                 sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m, colName) => {
@@ -21201,7 +21308,8 @@ view: date_dim {
                 const schOverride = document.getElementById('alteryxSchema').value.trim().toUpperCase();
                 const warnings = [], elements = [];
                 { const fnWarn = friendlyNameWarning(); if (fnWarn) warnings.push(fnWarn); }
-                const elementMap = {}; // toolId → { element, colIdMap, tableName }
+                const elementMap = {}; // toolId → { element, colIdMap, tableName, toolId }
+                const emptyMeta = new Set(); // inputs whose MetaInfo had no fields
 
                 // 1. Build elements from Input Data tools
                 for (const inp of _alteryxParsed.inputs) {
@@ -21224,6 +21332,7 @@ view: date_dim {
                         colIdMap[name.toUpperCase()] = id;
                         colIdMap[sigmaDisplayName(name).toUpperCase()] = id;
                     }
+                    if (fields.length === 0) emptyMeta.add(inp.toolId);
 
                     const element = {
                         id: elementId, kind: 'table',
@@ -21231,8 +21340,44 @@ view: date_dim {
                         columns, order
                     };
                     elements.push(element);
-                    elementMap[inp.toolId] = { element, colIdMap, tableName };
+                    elementMap[inp.toolId] = { element, colIdMap, tableName, toolId: inp.toolId };
                     warnings.push('ℹ Input "' + tableName + '": ' + fields.length + ' columns');
+                }
+
+                // 1.5. When MetaInfo is absent, infer warehouse columns from downstream tool refs
+                if (emptyMeta.size > 0) {
+                    warnings.push('⚠ Workflow MetaInfo is empty — columns are inferred from Formula/Summarize tools. For accurate columns, run the workflow in Alteryx Designer first, then re-upload.');
+                    const formulaOutputs = new Set();
+                    for (const form of _alteryxParsed.formulas) {
+                        const ffs = form.config ? Array.from(form.config.querySelectorAll('FormulaField')) : [];
+                        for (const ff of ffs) { const f = ff.getAttribute('field') || ''; if (f) formulaOutputs.add(f.toUpperCase()); }
+                    }
+                    const inferredNames = new Set();
+                    for (const summ of _alteryxParsed.summarizes) {
+                        const sfs = summ.config ? Array.from(summ.config.querySelectorAll('SummarizeField')) : [];
+                        for (const sf of sfs) { const f = sf.getAttribute('field') || ''; if (f && !formulaOutputs.has(f.toUpperCase())) inferredNames.add(f.toUpperCase()); }
+                    }
+                    for (const form of _alteryxParsed.formulas) {
+                        const ffs = form.config ? Array.from(form.config.querySelectorAll('FormulaField')) : [];
+                        for (const ff of ffs) {
+                            const expr = ff.getAttribute('expression') || '';
+                            const refs = expr.match(/\[([A-Z][A-Z0-9_]{2,})\]/g) || [];
+                            for (const r of refs) { const n = r.replace(/^\[|\]$/g, ''); if (!formulaOutputs.has(n)) inferredNames.add(n); }
+                        }
+                    }
+                    const firstEmptyInp = _alteryxParsed.inputs.find(inp => emptyMeta.has(inp.toolId));
+                    if (firstEmptyInp && inferredNames.size > 0) {
+                        const entry = elementMap[firstEmptyInp.toolId];
+                        for (const name of inferredNames) {
+                            const dn = sigmaDisplayName(name);
+                            const id = sigmaShortId();
+                            entry.element.columns.push({ id, formula: '[' + entry.tableName + '/' + dn + ']' });
+                            entry.element.order.push(id);
+                            entry.colIdMap[name] = id;
+                            entry.colIdMap[dn.toUpperCase()] = id;
+                        }
+                        warnings.push('ℹ Inferred ' + inferredNames.size + ' column(s) for ' + entry.tableName);
+                    }
                 }
 
                 // 2. Resolve joins → relationships
@@ -21271,10 +21416,28 @@ view: date_dim {
                     const rightSrc = rightConn ? traceToInput(rightConn.fromId) : null;
 
                     if (leftSrc && rightSrc && leftField && rightField) {
-                        const srcColId = leftSrc.colIdMap[leftField.toUpperCase()]
+                        let srcColId = leftSrc.colIdMap[leftField.toUpperCase()]
                             || leftSrc.colIdMap[sigmaDisplayName(leftField).toUpperCase()];
-                        const tgtColId = rightSrc.colIdMap[rightField.toUpperCase()]
+                        let tgtColId = rightSrc.colIdMap[rightField.toUpperCase()]
                             || rightSrc.colIdMap[sigmaDisplayName(rightField).toUpperCase()];
+
+                        // Infer join key columns when MetaInfo was absent
+                        if (!srcColId && emptyMeta.has(leftSrc.toolId)) {
+                            const id = sigmaShortId(), dn = sigmaDisplayName(leftField);
+                            leftSrc.element.columns.push({ id, formula: '[' + leftSrc.tableName + '/' + dn + ']' });
+                            leftSrc.element.order.push(id);
+                            leftSrc.colIdMap[leftField.toUpperCase()] = id;
+                            leftSrc.colIdMap[dn.toUpperCase()] = id;
+                            srcColId = id;
+                        }
+                        if (!tgtColId && emptyMeta.has(rightSrc.toolId)) {
+                            const id = sigmaShortId(), dn = sigmaDisplayName(rightField);
+                            rightSrc.element.columns.push({ id, formula: '[' + rightSrc.tableName + '/' + dn + ']' });
+                            rightSrc.element.order.push(id);
+                            rightSrc.colIdMap[rightField.toUpperCase()] = id;
+                            rightSrc.colIdMap[dn.toUpperCase()] = id;
+                            tgtColId = id;
+                        }
 
                         if (srcColId && tgtColId) {
                             if (!leftSrc.element.relationships) leftSrc.element.relationships = [];
@@ -22080,6 +22243,8 @@ models:
     <li><b>Measures-only tables</b> → Measures moved to the fact element</li>
     <li><b>Simple CALCULATE</b> → <code>SumIf</code> / <code>CountIf</code> with correct argument order</li>
     <li><b>DIVIDE</b> → Null-safe division with <code>If(den = 0, alt, num / den)</code></li>
+    <li><b>RELATED(Table[Col])</b> → <code>Lookup([TABLE/Col], [LocalKey], [TABLE/ForeignKey])</code> — resolved automatically using the model's relationship definitions</li>
+    <li><b>LOOKUPVALUE(Table[ReturnCol], Table[MatchCol], LocalValue)</b> → <code>Lookup([TABLE/ReturnCol], LocalValue, [TABLE/MatchCol])</code></li>
 </ul>
 
 <h3>DAX Patterns That Generate Warnings</h3>
@@ -22094,7 +22259,7 @@ models:
 <ul>
     <li><b>M expression parsing</b> — Source path extraction works for common patterns (Snowflake, SQL Server, BigQuery, Databricks). Complex Power Query with multiple steps, parameters, or custom functions may not extract database/schema/table paths correctly. Use the Database/Schema override fields when auto-detection fails.</li>
     <li><b>Complex DAX</b> — CALCULATE with ALL/ALLEXCEPT, iterators (SUMX, AVERAGEX, MAXX), time intelligence (TOTALYTD, SAMEPERIODLASTYEAR, DATEADD), and VAR/RETURN blocks generate warnings with Sigma-specific guidance but are not auto-converted.</li>
-    <li><b>Cross-element columns</b> — DAX calculated columns referencing columns from related tables are automatically moved to the derived child element. Metrics with cross-element refs are removed with a warning and must be added manually in the Sigma UI after saving.</li>
+    <li><b>Cross-element columns</b> — <code>RELATED()</code> and <code>LOOKUPVALUE()</code> are converted to <code>Lookup()</code> formulas inline. DAX calculated columns with other cross-table patterns are automatically moved to the derived child element. Metrics with unresolved cross-element refs must be added manually in the Sigma UI after saving.</li>
     <li><b>Composite models</b> — Models combining DirectQuery and Import mode tables are treated uniformly. The storage mode distinction is not carried over.</li>
     <li><b>Calculation groups</b> — DAX calculation groups are not converted. These need to be recreated as Sigma calculated columns or parameters.</li>
     <li><b>Row-level security (RLS)</b> — Simple PBI RLS roles with equality filters (e.g. <code>[Region] = "East"</code>) are converted to Sigma RLS calculated columns using <code>CurrentUserAttributeText()</code>. You must create the corresponding user attribute in Sigma and add a <code>True</code> filter on the generated column. Complex DAX filter expressions in RLS roles generate a warning with guidance.</li>
@@ -22142,12 +22307,13 @@ models:
     <li><code>NULLIF(x, 0)</code> → <code>If(x = 0, null, x)</code></li>
     <li><code>COALESCE(a, b)</code> → <code>Coalesce([A], [B])</code></li>
     <li><code>\${TABLE}.col_name</code> → <code>[Col Name]</code> (table prefix stripped)</li>
+    <li><code>\${other_view.field}</code> → <code>Lookup([TABLE/Field], [LocalKey], [TABLE/FK])</code> when relationship keys resolve; otherwise <code>[TABLE/Field]</code> with a warning</li>
 </ul>
 
 <h3>Known Limitations</h3>
 <ul>
     <li><b>Liquid templating</b> — <code>{% %}</code> and <code>{{ }}</code> blocks are <b>stripped entirely</b> with warnings. Any dimension or measure that depends on Liquid conditionals (e.g. <code>{% if _user_attributes['region'] %}</code>) will produce incorrect formulas. Review all Liquid warnings carefully after conversion.</li>
-    <li><b>Cross-element columns</b> — Formulas referencing columns from other elements (via <code>\${view_name.field}</code> across explores) are automatically moved to the derived child element. Metrics with cross-element refs are removed with a warning and must be added manually in the Sigma UI.</li>
+    <li><b>Cross-view refs (<code>\${view_name.field}</code>)</b> — Dimensions whose <code>sql:</code> references fields from another view (e.g. <code>\${orders.customer_id}</code>) are automatically converted to <code>Lookup()</code> formulas using the explore's relationship keys. If a relationship exists and FK/PK columns are resolved, the full Lookup is emitted and a <code>✅</code> confirmation appears in the warnings panel. If the relationship can't be resolved, a partial <code>[TABLE/Col]</code> reference is emitted with a <code>⚠</code> warning to update it manually.</li>
     <li><b>PDT materializations</b> — Persistent Derived Tables are recognized and converted to Custom SQL elements. The materialization strategy (trigger, datagroup, sql_trigger_value) does not carry over. When a derived table's SQL references another PDT via <code>${'{'}view.SQL_TABLE_NAME{'}'}</code>, the referenced PDT is auto-converted to its own Custom SQL element and referenced via <code>sigma_element('Name')</code>; upload all referenced view files at once to enable full auto-resolution.</li>
     <li><b>Access filters / row-level access</b> — LookML <code>access_filter</code> blocks are converted to Sigma RLS calculated columns using <code>CurrentUserAttributeText()</code>. You must ensure the matching user attribute exists in Sigma and add a <code>True</code> filter on the generated column. <code>access_grant</code> blocks (permission-based access) are not converted.</li>
     <li><b>Explore-level always_filter</b> — String/list value filters are converted directly to Sigma element filters. Date relative expressions ("1 day", "last month") and range expressions (">100") cannot be auto-converted — add those manually using Sigma's date range or number range filter after import. <code>conditionally_filter</code> is not converted.</li>
@@ -22456,7 +22622,7 @@ models:
 <ul>
     <li><code>\${TABLE}.col_name</code> → <code>[Source Table/Display Col Name]</code></li>
     <li><code>\${field_name}</code> → <code>[Display Field Name]</code></li>
-    <li><code>\${view.field}</code> → <code>[Display Field Name]</code> (cross-view ref, simplified)</li>
+    <li><code>\${view.field}</code> → <code>Lookup([TABLE/Field], [LocalKey], [TABLE/FK])</code> when an explore relationship with resolvable keys exists; otherwise <code>[TABLE/Field]</code> with a warning</li>
     <li><code>CASE WHEN … THEN … END</code> → <code>If(…, …, …)</code> (nested)</li>
     <li><code>expr IN (a, b, c)</code> → <code>(expr = a Or expr = b Or expr = c)</code></li>
     <li><code>'string'</code> → <code>"string"</code></li>
@@ -22478,7 +22644,7 @@ models:
     <li><b>Topics</b> — Omni Topics (curated field subsets) have no direct Sigma equivalent and are ignored.</li>
     <li><b>Access grants / access filters</b> — Omni row-level security definitions are not converted. Add RLS in Sigma using the AI Assistant after import.</li>
     <li><b>extends / refinements</b> — View inheritance (<code>extends:</code>) is not resolved across files. Upload all parent and child view files together and the child's fields will be converted, but inherited fields from the parent may be missing. Merge manually.</li>
-    <li><b>Cross-view sql references</b> — <code>\${other_view.field}</code> references in dimension SQL are simplified to <code>[Display Field Name]</code> (table qualifier stripped). These formulas will fail Sigma validation if the column is on a different element. Add them manually in the Sigma UI after saving.</li>
+    <li><b>Cross-view sql references</b> — <code>\${other_view.field}</code> references are converted to <code>Lookup()</code> formulas when an explore relationship with resolvable FK/PK keys exists. If no relationship or key mapping is found, a <code>[TABLE/Field]</code> reference is emitted with a <code>⚠</code> warning — update it manually in Sigma after saving.</li>
 </ul>
 
 <div class="help-links">
