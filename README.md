@@ -49,7 +49,8 @@ The Data Model Manager is a self-contained HTML file that runs entirely in your 
 Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) to Sigma data model JSON.
 
 **What gets converted:**
-- Data sources → Sigma elements with warehouse table paths
+- Data sources → Sigma elements with warehouse table paths (standard joins, virtual connections, custom SQL)
+- Virtual connections (type=collection) → Tableau 2020.2+ relationship model with role-playing dimensions
 - Joins / Relationships → Sigma relationships on the fact element
 - Calculated fields → Sigma calculated columns with formula conversion
 - Simple aggregates → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)

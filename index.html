@@ -19062,8 +19062,14 @@ ${cleanedSql}`;
 
         function tableauExtractPath(rel, dbOverride, schOverride) {
             const tableAttr = rel.getAttribute('table') || rel.getAttribute('name') || '';
-            const clean = tableAttr.replace(/\[([^\]]+)\]/g, '$1');
-            const parts = clean.split('.').map(p => p.replace(/"/g,'').toUpperCase().trim()).filter(Boolean);
+            const clean = tableAttr
+                .replace(/\[([^\]]+)\]/g, '$1')   // strip [...] brackets
+                .replace(/\s*\([^)]*\)/g, '');     // strip (CSA.TABLE_NAME) disambiguation before dot-split
+            const parts = clean.split('.')
+                .map(p => p.replace(/"/g, '').toUpperCase().trim())
+                .filter(p => p && !/^[0-9A-F]{8}-[0-9A-F]{4}-/i.test(p)); // drop virtual-connection UUID segments
+            // Strip Tableau hex-hash suffix from table name: "ORDER_FACT_A1B2C3D4" → "ORDER_FACT"
+            if (parts.length > 0) parts[parts.length - 1] = parts[parts.length - 1].replace(/_[0-9A-Fa-f]{16,}$/, '');
             const tableName = parts[parts.length - 1];
             const schema = schOverride || (parts.length >= 2 ? parts[parts.length - 2] : '');
             const db = dbOverride || (parts.length >= 3 ? parts[0] : '');
@@ -19099,6 +19105,174 @@ ${cleanedSql}`;
                     name: sigmaDisplayName(tableName),
                     source: { connectionId, kind: 'warehouse-table', path },
                     columns, metrics: [], order });
+                return;
+            }
+
+            if (relType === 'collection') {
+                // Tableau 2020.2+ relationship model (virtual connections).
+                // All columns live in <metadata-record class='column'> elements, not in the inline <columns> block.
+                // Joins are defined in <datasource><object-graph><relationships>.
+                const childRels = Array.from(rootRel.children).filter(c => c.tagName.toLowerCase() === 'relation');
+                if (childRels.length === 0) {
+                    warnings.push('⚠ Collection datasource has no child relations — skipped');
+                    return;
+                }
+
+                // Build UUID→caption map keyed by FULL object-id (with hex hash) so role-playing
+                // dimensions (two instances of the same table) remain distinguishable.
+                const metaByObjId = {};
+                for (const mr of connection.querySelectorAll('metadata-records > metadata-record')) {
+                    if ((mr.getAttribute('class') || '') !== 'column') continue;
+                    const uuid     = (mr.querySelector('remote-name')?.textContent || '').trim();
+                    const cap      = (mr.querySelector('caption')?.textContent     || '').trim();
+                    const objIdRaw = (mr.querySelector('object-id')?.textContent   || '').replace(/^\[|\]$/g, '');
+                    if (!uuid || !cap || !objIdRaw) continue;
+                    if (!metaByObjId[objIdRaw]) metaByObjId[objIdRaw] = [];
+                    metaByObjId[objIdRaw].push({ uuid, caption: cap });
+                }
+
+                const elementMap = {}; // fullName → { element, colIdMap, cleanName }
+
+                for (const rel of childRels) {
+                    const fullName  = rel.getAttribute('name') || rel.getAttribute('table') || '';
+                    const path      = tableauExtractPath(rel, dbOverride, schOverride);
+                    const cleanName = path[path.length - 1] || fullName;
+                    const columns = [], order = [], colIdMap = {};
+
+                    // Role-playing dimensions append a trailing digit to the relation name
+                    // (e.g. "DATE_DIM (CSA.DATE_DIM)1") but objIds share the same base prefix.
+                    // Fall back to sorted candidates and take the Nth one when no direct match.
+                    let matchingObjId = Object.keys(metaByObjId).find(k => k === fullName || k.startsWith(fullName + '_'));
+                    if (!matchingObjId) {
+                        const roleM = fullName.match(/^([\s\S]+?)(\d+)$/);
+                        if (roleM) {
+                            const base  = roleM[1];
+                            const idx   = parseInt(roleM[2], 10);
+                            const cands = Object.keys(metaByObjId).filter(k => k === base || k.startsWith(base + '_')).sort();
+                            matchingObjId = cands[idx];
+                        }
+                    }
+                    const metaCols   = matchingObjId ? metaByObjId[matchingObjId] : [];
+
+                    for (const { uuid, caption } of metaCols) {
+                        const cleanCaption = caption.replace(/\s*\(.*\)$/, '').trim(); // strip disambiguation
+                        const idKey = uuid.toUpperCase();
+                        const id    = sigmaInodeId(idKey);
+                        columns.push({ id, formula: '[' + cleanName + '/' + cleanCaption + ']', name: cleanCaption });
+                        order.push(id);
+                        colIdMap[idKey] = id;
+                        colIdMap[uuid.toUpperCase().replace(/-/g, '_')] = id;
+                        colIdMap[cleanCaption.toUpperCase()] = id;
+                        colIdMap[cleanCaption.toUpperCase().replace(/\s+/g, '_')] = id;
+                    }
+
+                    // Fallback: inline <column> elements when no metadata-records matched this table
+                    if (metaCols.length === 0) {
+                        for (const col of rel.querySelectorAll(':scope > columns > column')) {
+                            const rawName = (col.getAttribute('name') || '').replace(/^\[|\]$/g, '');
+                            if (!rawName) continue;
+                            const isUuid     = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(rawName);
+                            const formulaCol = isUuid ? (col.getAttribute('caption') || rawName) : sigmaDisplayName(rawName);
+                            const idKey      = rawName.toUpperCase().replace(/\s+/g, '_');
+                            const id         = sigmaInodeId(idKey);
+                            columns.push({ id, formula: '[' + cleanName + '/' + formulaCol + ']' });
+                            order.push(id);
+                            colIdMap[rawName.toUpperCase()] = id;
+                            colIdMap[idKey] = id;
+                        }
+                    }
+
+                    const el = { id: sigmaShortId(), kind: 'table',
+                        source: { connectionId, kind: 'warehouse-table', path },
+                        columns, metrics: [], order };
+                    elementMap[fullName] = { element: el, colIdMap, cleanName, objId: matchingObjId || null };
+                    elements.push(el);
+                }
+
+                // Wire relationships from <object-graph><relationships>
+                const dsEl  = connection.parentElement || rootRel.parentElement?.parentElement;
+                const relsEl = dsEl ? dsEl.querySelector('object-graph > relationships, relationships') : null;
+
+                if (relsEl) {
+                    // Resolve object-id to an elementMap entry.
+                    // Prefer exact stored objId match (handles role-playing dims with shared prefix),
+                    // then fall back to cleaned-segment heuristic.
+                    const getCleanSeg = name =>
+                        name.replace(/^\[|\]$/g, '').split('.').pop()?.replace(/_[0-9A-Fa-f]{16,}$/, '').toUpperCase() || '';
+                    const findEntry = objId => {
+                        const exactKey = Object.keys(elementMap).find(k => elementMap[k].objId === objId);
+                        if (exactKey) return elementMap[exactKey];
+                        const cleanId = getCleanSeg(objId);
+                        const key = Object.keys(elementMap).find(k => getCleanSeg(k) === cleanId);
+                        return key ? elementMap[key] : undefined;
+                    };
+
+                    // Extract UUID from function-call wrappers: DATE([uuid]) → uuid
+                    const extractOpUuid = raw => {
+                        const m = raw.match(/^\w+\(\[?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\]?\)$/i);
+                        return m ? m[1].toUpperCase() : '';
+                    };
+                    const parseOpRef = opAttr => {
+                        const uuidInFn = extractOpUuid(opAttr);
+                        if (uuidInFn) return uuidInFn;
+                        return opAttr.replace(/^\[|\]$/g, '').replace(/\s*\(.*\)$/, '').trim().toUpperCase();
+                    };
+
+                    for (const rel of relsEl.querySelectorAll(':scope > relationship')) {
+                        const firstEp  = rel.querySelector('first-end-point');
+                        const secondEp = rel.querySelector('second-end-point');
+                        if (!firstEp || !secondEp) continue;
+
+                        const firstEntry  = findEntry(firstEp.getAttribute('object-id')  || '');
+                        const secondEntry = findEntry(secondEp.getAttribute('object-id') || '');
+                        if (!firstEntry || !secondEntry || firstEntry === secondEntry) continue;
+
+                        const exprs = rel.querySelectorAll('expression > expression');
+                        if (exprs.length < 2) continue;
+
+                        const srcKey = parseOpRef(exprs[0].getAttribute('op') || '');
+                        const tgtKey = parseOpRef(exprs[1].getAttribute('op') || '');
+                        if (!srcKey || !tgtKey) continue;
+
+                        const ensureCol = (entry, key) => {
+                            let id = entry.colIdMap[key] || entry.colIdMap[key.replace(/-/g, '_')];
+                            if (!id) {
+                                id = sigmaInodeId(key.replace(/\s+/g, '_'));
+                                const isUuid    = /^[0-9A-F]{8}-[0-9A-F]{4}-/i.test(key);
+                                const dispName  = isUuid ? key : sigmaDisplayName(key);
+                                entry.element.columns.push({ id, formula: '[' + entry.cleanName + '/' + dispName + ']' });
+                                entry.element.order.push(id);
+                                entry.colIdMap[key] = id;
+                            }
+                            return id;
+                        };
+
+                        const srcColId = ensureCol(firstEntry,  srcKey);
+                        const tgtColId = ensureCol(secondEntry, tgtKey);
+
+                        if (!firstEntry.element.relationships) firstEntry.element.relationships = [];
+                        firstEntry.element.relationships.push({
+                            id: sigmaShortId(),
+                            targetElementId: secondEntry.element.id,
+                            keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
+                            name: secondEntry.cleanName
+                        });
+                        warnings.push('ℹ Relationship ' + firstEntry.cleanName + ' → ' + secondEntry.cleanName + ' on ' + srcKey + ' = ' + tgtKey);
+                    }
+                } else {
+                    warnings.push('ℹ Collection datasource: no <relationships> element — elements created without joins');
+                }
+
+                // Sort: dims first, fact last
+                elements.sort((a, b) => {
+                    const aR = !!(a.relationships?.length);
+                    const bR = !!(b.relationships?.length);
+                    return aR === bR ? 0 : aR ? 1 : -1;
+                });
+
+                if (!dbOverride || !schOverride) {
+                    warnings.push('⚠ Virtual connection: set Database and Schema fields above to ensure correct warehouse paths.');
+                }
                 return;
             }
 
@@ -19561,7 +19735,16 @@ ${cleanedSql}`;
                             const found = allColIdMap[fieldKey.toUpperCase()];
                             if (found) {
                                 const existingCol = found.el.columns.find(c => c.id === found.colId);
-                                if (existingCol && !existingCol.name) existingCol.name = caption;
+                                // Strip Tableau disambiguation suffix: "Product Key (DIM (SCHEMA.DIM))" → "Product Key"
+                                const cleanCaption = caption.replace(/\s*\(.*\)$/, '').trim();
+                                if (existingCol && !existingCol.name) existingCol.name = cleanCaption || caption;
+                                // Virtual-connection columns: swap UUID formula ref for human-readable caption
+                                if (existingCol && /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(fieldKey)) {
+                                    const useCaption = cleanCaption || caption;
+                                    existingCol.formula = existingCol.formula.replace(/\/[^\]]+\]$/, '/' + useCaption + ']');
+                                    if (existingCol.name && /\(.*\)$/.test(existingCol.name)) existingCol.name = useCaption;
+                                    allColIdMap[useCaption.toUpperCase()] = found;
+                                }
                             }
                         }
                     }
@@ -19722,6 +19905,7 @@ ${cleanedSql}`;
                     : toConvert.map(t => t.ds.name).join(' + ');
 
                 const outputJson = {
+                    schemaVersion: 1,
                     name: modelName,
                     pages: [{ id: sigmaShortId(), name: 'Page 1', elements: [...allControls, ...allElements] }]
                 };
@@ -22196,7 +22380,8 @@ models:
 
 <h3>What Gets Converted</h3>
 <ul>
-    <li><b>Data sources</b> → Sigma elements with warehouse table paths</li>
+    <li><b>Data sources</b> → Sigma elements with warehouse table paths (standard joins, virtual connections, and custom SQL)</li>
+    <li><b>Virtual connections (type=collection)</b> → Tableau 2020.2+ relationship model with role-playing dimensions (same table joined twice with different join keys, e.g. two date dimensions)</li>
     <li><b>Joins/Relationships</b> → Sigma relationships on the fact element</li>
     <li><b>Calculated fields</b> → Sigma calculated columns with formula conversion</li>
     <li><b>Simple aggregates</b> → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)</li>
