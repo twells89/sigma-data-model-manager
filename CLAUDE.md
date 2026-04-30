@@ -81,3 +81,4 @@ The `/review-commit` command enforces this (Step 6).
 ## Test files
 - `/Users/tjwells/Desktop/Converter Files/Looker/promo_dim_view.lkml`
 - `/Users/tjwells/Desktop/Converter Files/Looker/monthly_summary_derived_view.lkml`
+- `/Users/tjwells/Downloads/retail_analytics_csa_tj.yxmd` — Alteryx test file using actual CSA.TJ warehouse columns (CUSTOMER_DIM, STORE_DIM, ORDER_FACT). Must use this file, not `retail_analytics_pipeline.yxmd` — the old file used fake column names that don't exist in the warehouse, causing Sigma API schema validation errors.
