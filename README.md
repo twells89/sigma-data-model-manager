@@ -4,7 +4,7 @@ A single-file browser tool for managing [Sigma Computing](https://sigmacomputing
 
 ## What is this?
 
-The Data Model Manager is a self-contained HTML file that runs entirely in your browser. It connects directly to the Sigma API, lets you edit data model JSON, and includes converters for twelve BI/semantic layer tools so you can migrate existing definitions to Sigma.
+The Data Model Manager is a self-contained HTML file that runs entirely in your browser. It connects directly to the Sigma API, lets you edit data model JSON, and includes converters for thirteen BI/semantic layer tools so you can migrate existing definitions to Sigma.
 
 **Key capabilities:**
 
@@ -13,7 +13,7 @@ The Data Model Manager is a self-contained HTML file that runs entirely in your 
 - **Diff Viewer** — Line-by-line unified diff against the original loaded model (Ctrl+D)
 - **AI Assistant** — Generate columns, metrics, descriptions, RLS, and more using natural language (Claude, OpenAI, or Gemini)
 - **Fix with AI** — When a save fails, the error banner offers one-click AI repair of common structural issues
-- **Converters** — Import from dbt, Snowflake Cortex Analyst, LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, Omni Analytics, ThoughtSpot TML, Qlik, Oracle Analytics Cloud, and raw SQL
+- **Converters** — Import from dbt, Snowflake Cortex Analyst, LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, Omni Analytics, ThoughtSpot TML, Qlik, Oracle Analytics Cloud, Cube.dev, and raw SQL
 - **Bulk Upload** — Create multiple elements from warehouse tables at once
 - **MCP Server** — Use these converters inside Claude Code, Claude Desktop, Cursor, and other MCP-compatible AI tools
 
@@ -442,6 +442,44 @@ Converts Oracle Analytics Cloud semantic models exported from the Semantic Model
 
 ---
 
+### Cube.dev
+
+Converts [Cube.dev](https://cube.dev) schemas to Sigma data model JSON. Accepts both YAML (`.yml` / `.yaml`) and JavaScript (`.js`) schema files in the same drop — drop your `cubes/` and `views/` directories together.
+
+**What gets converted:**
+- Cubes with `sql_table` → warehouse-table elements (paths completed via Database / Schema overrides if needed)
+- Cubes with raw `sql` → Custom SQL elements (`${CUBE}` and `${OtherCube}` template refs are normalized to plain SQL aliases)
+- Dimensions (`type: string | number | time | boolean`) → Sigma columns
+- Calculated dimensions (`sql` with expressions / `${CUBE}.col` / `${OtherCube.dim}` refs) → Sigma calculated columns
+- Measures (`type: count | sum | avg | min | max | count_distinct | number | percent`) → Sigma metrics with `Sum() / Avg() / CountIf() / etc.` wrappers
+- Filtered measures (`filters: [{ sql: ... }]`) → `SumIf` / `CountIf` / `AvgIf` / `CountDistinctIf`
+- Calculated measures (`type: number` referencing `${other_measure}`) → metric expressions
+- Joins (`relationship: one_to_one | one_to_many | many_to_one`) → Sigma relationships with FK/PK keys parsed from `sql: ${CUBE}.fk = ${OtherCube.pk}`
+- Views (`cubes: [{ join_path, includes, prefix }]`) → derived elements with linked-column refs
+
+**JavaScript schema parsing:** the JS parser handles `cube(`name`, { ... })` and `view(`name`, { ... })` calls with template-literal SQL. Backtick template substitutions (`${CUBE}.col`, `${OtherCube.dim}`, `${measure_name}`) are preserved verbatim so the same SQL translator handles both formats.
+
+**Expression conversion:**
+- `${CUBE}.col` → `[TABLE/Display]` (or `[Display]` in Custom SQL elements)
+- `${OtherCube.dim}` → `[Display Dim]`
+- `${measure_name}` → `[Display Measure]`
+- `'string'` → `"string"`; `a || b` (concat) → `a & b`
+- `x::DATE / x::VARCHAR / x::INTEGER` → `Date(x) / Text(x) / Int(x)`
+- `expr IN (a, b, c)` → `In(expr, a, b, c)`
+- `CASE WHEN ... END` → nested `If()`
+- `NULLIF / COALESCE / DATE_TRUNC / DATEDIFF / DATEADD / TO_CHAR / etc.` → Sigma function names
+
+**Known limitations:**
+- Pre-aggregations are skipped with an informational warning — Sigma uses warehouse-side caching
+- Segments are skipped — convert reusable segment filters to Sigma parameters or filters manually
+- Jinja / Python templating in YAML is not pre-processed; render the schema with Cube before exporting
+- Cross-cube refs in calculated dimensions use a relative `[Display Field]` form; if the field doesn't exist on the same element, add a Sigma linked-column ref manually
+- View `join_path` chains beyond two hops are best-effort; deep linked-column refs may need manual adjustment
+
+**Useful resources:** [Cube — Data Modeling Overview](https://cube.dev/docs/product/data-modeling/overview) · [Cube — Joins](https://cube.dev/docs/reference/data-model/joins) · [Cube — Views](https://cube.dev/docs/reference/data-model/view)
+
+---
+
 ### Custom SQL
 
 Converts raw SQL files or pasted SQL statements to Sigma data model JSON. Drop `.sql` files or paste queries directly — multiple statements are supported and can be selectively included.
@@ -552,6 +590,7 @@ The same converter logic is available as a hosted [Model Context Protocol](https
 - `convert_atlan_to_sigma` — Atlan data contract (YAML / JSON) → Sigma JSON
 - `convert_alteryx_to_sigma` — Alteryx Designer workflow (`.yxmd` XML) → Sigma JSON
 - `convert_oac_to_sigma` — Oracle Analytics Cloud logical tables JSON → Sigma JSON
+- `convert_cube_to_sigma` — Cube.dev schemas (YAML or JS) → Sigma JSON
 - `convert_sql_to_sigma_formula` — SQL expression → Sigma formula
 - `convert_tableau_formula_to_sigma` — Tableau formula → Sigma formula
 - `get_sigma_data_model_schema` — Sigma data model JSON schema reference
