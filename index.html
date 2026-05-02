@@ -13813,15 +13813,33 @@ explores:
             const fieldMappings = action.namespaceFieldMappings || [];
             const unionEl = {
                 id: elementId, kind: 'table', name: sigmaDisplayName(n.name || 'Union'),
-                source: { connectionId, kind: 'union', sources: upstreamStates.map(s => ({ kind: 'table', elementId: s.element.id })), matches: [] },
+                source: { connectionId, kind: 'union',
+                    sources: upstreamStates.map(s => ({ kind: 'table', elementId: s.element.id })),
+                    matches: (() => {
+                        const m = []; const canon = upstreamStates[0];
+                        for (const c of canon.element.columns) {
+                            const dn = c.name || _prepExtractDisplay(c.formula);
+                            if (!dn) continue;
+                            const refs = upstreamStates.map(s => {
+                                const mc = s.element.columns.find(sc => (sc.name || _prepExtractDisplay(sc.formula)) === dn);
+                                const refDn = mc ? (mc.name || _prepExtractDisplay(mc.formula)) : dn;
+                                return `[${refDn}]`;
+                            });
+                            m.push({ outputColumnName: dn, sourceColumns: refs });
+                        }
+                        return m;
+                    })(),
+                },
                 columns: [], metrics: [], order: [],
             };
             const canon = upstreamStates[0];
             const colByName = new Map();
+            // Sigma union columns use the documented `[Union of N Sources/Col]` namespace.
+            const unionPrefix = `Union of ${upstreamStates.length} Sources`;
             for (const c of canon.element.columns) {
                 const dn = c.name || _prepExtractDisplay(c.formula) || 'col';
                 const id = sigmaShortId();
-                unionEl.columns.push({ id, formula: `[${dn}]`, name: c.name });
+                unionEl.columns.push({ id, formula: `[${unionPrefix}/${dn}]`, name: dn });
                 unionEl.order.push(id);
                 colByName.set(dn, id);
             }
