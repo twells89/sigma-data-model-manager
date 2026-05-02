@@ -13813,7 +13813,7 @@ explores:
             const fieldMappings = action.namespaceFieldMappings || [];
             const unionEl = {
                 id: elementId, kind: 'table', name: sigmaDisplayName(n.name || 'Union'),
-                source: { connectionId, kind: 'union', inputs: upstreamStates.map(s => ({ elementId: s.element.id })) },
+                source: { connectionId, kind: 'union', sources: upstreamStates.map(s => ({ kind: 'table', elementId: s.element.id })), matches: [] },
                 columns: [], metrics: [], order: [],
             };
             const canon = upstreamStates[0];
@@ -25392,7 +25392,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
         </ul>
     </li>
     <li><b>SuperJoin</b> (<code>.v2018_2_3.SuperJoin</code> with inner <code>.v1.SimpleJoin</code>) → Sigma relationship between left and right elements with FK/PK keys parsed from <code>conditions[].leftExpression / rightExpression</code>; also emits a derived "join view" element with left-side passthroughs + cross-element refs to the right via the relationship name (<code>[FACT_TABLE/REL_NAME/Field]</code>) so downstream transforms can reference both sides. Relationship name = target warehouse table name (e.g. <code>CUSTOMER_DIM</code>); for Custom SQL targets, derived from the input's friendly name.</li>
-    <li><b>SuperUnion</b> (<code>.v2018_2_3.SuperUnion</code>) → element with <code>source.kind: 'union'</code> and inputs[] referencing each upstream element. Schema follows the first input.</li>
+    <li><b>SuperUnion</b> (<code>.v2018_2_3.SuperUnion</code>) → element with <code>source.kind: 'union'</code> and sources[] referencing each upstream element. Schema follows the first input.</li>
     <li><b>SuperAggregate</b> (<code>.v2018_2_3.SuperAggregate</code> with inner <code>.v1.Aggregate</code>) → child element with <code>groupings: [{ groupBy, calculations }]</code>. Group-by columns are passthroughs; aggregations (SUM/AVG/MIN/MAX/COUNT/COUNTD/MEDIAN/STDEV) become calc columns referenced from <code>groupings.calculations</code>.</li>
     <li><b>Output nodes</b> (<code>WriteToHyper</code>, <code>PublishExtract</code>, <code>WriteToCsv</code>, <code>SaveToFile</code>, <code>SaveToDatabase</code>) → ignored. Sigma data models don't write back.</li>
     <li><b>Inline input <code>actions[]</code></b> — pre-load transforms baked into an input (common with Salesforce extracts) → applied before walking nextNodes.</li>
