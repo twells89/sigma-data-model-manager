@@ -4,7 +4,7 @@ A single-file browser tool for managing [Sigma Computing](https://sigmacomputing
 
 ## What is this?
 
-The Data Model Manager is a self-contained HTML file that runs entirely in your browser. It connects directly to the Sigma API, lets you edit data model JSON, and includes converters for thirteen BI/semantic layer tools so you can migrate existing definitions to Sigma.
+The Data Model Manager is a self-contained HTML file that runs entirely in your browser. It connects directly to the Sigma API, lets you edit data model JSON, and includes converters for fourteen BI/semantic layer tools so you can migrate existing definitions to Sigma.
 
 **Key capabilities:**
 
@@ -13,7 +13,7 @@ The Data Model Manager is a self-contained HTML file that runs entirely in your 
 - **Diff Viewer** — Line-by-line unified diff against the original loaded model (Ctrl+D)
 - **AI Assistant** — Generate columns, metrics, descriptions, RLS, and more using natural language (Claude, OpenAI, or Gemini)
 - **Fix with AI** — When a save fails, the error banner offers one-click AI repair of common structural issues
-- **Converters** — Import from dbt, Snowflake Cortex Analyst, LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, Omni Analytics, ThoughtSpot TML, Qlik, Oracle Analytics Cloud, Cube.dev, and raw SQL
+- **Converters** — Import from dbt, Snowflake Cortex Analyst, LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, Omni Analytics, ThoughtSpot TML, Qlik, Oracle Analytics Cloud, Cube.dev, Tableau Prep, and raw SQL
 - **Bulk Upload** — Create multiple elements from warehouse tables at once
 - **MCP Server** — Use these converters inside Claude Code, Claude Desktop, Cursor, and other MCP-compatible AI tools
 
@@ -480,6 +480,41 @@ Converts [Cube.dev](https://cube.dev) schemas to Sigma data model JSON. Accepts 
 
 ---
 
+### Tableau Prep
+
+Converts [Tableau Prep](https://www.tableau.com/products/prep) flow files (`.tfl` / `.tflx`) to Sigma data model JSON. JSZip extracts the inner `flow` JSON automatically when you drop the archive into the converter.
+
+**What gets converted:**
+- Inputs (`.v1.LoadSql`, `LoadCsv`, `LoadExcel`, `LoadJson`, `LoadHyper`, `LoadGoogle`) → warehouse-table elements; CSV/Excel/JSON/Hyper inputs map to a warehouse table by basename (override via the **Table mapping** field)
+- `LoadSqlProxy` (Tableau Server published datasource) → Custom SQL placeholder, OR auto-resolved when a companion `.tds` / `.tdsx` is dropped alongside the `.tfl` (matched by datasource caption — `type='table'` relations become warehouse-table elements, `type='text'` relations become Custom SQL with the real SELECT body)
+- Containers (`.v1.Container`) → recursively flattened into the parent graph
+- Linear transform chains on a single element:
+    - `.v1.AddColumn` → calculated column (formula via `tableauFormulaToSigma`)
+    - `.v1.RemoveColumns` / `KeepOnlyColumns` → drop/keep columns
+    - `.v1.RenameColumn` → column display name
+    - `.v1.ChangeColumnType` → cast wrapper (`Date`, `Int`, `Number`, etc.)
+    - `.v2018_3_3.Remap` → nested `If(In([Col], "old"), "new", ...)` chain
+    - `.v1.FilterOperation` → calculated boolean column named `Filter: <name>` — wire as a page filter
+- `.v2018_2_3.SuperJoin` (with inner `.v1.SimpleJoin`) → Sigma relationship with FK/PK keys parsed from `conditions[].leftExpression / rightExpression`, plus a derived "join view" element with left-side passthroughs + cross-element refs to the right via the relationship name (`[FACT_TABLE/REL_NAME/Field]`). Relationship name = target warehouse table name (e.g. `CUSTOMER_DIM`); for Custom SQL targets, derived from the input's friendly name
+- `.v2018_2_3.SuperUnion` → element with `source.kind: 'union'` and `inputs[]` referencing each upstream element
+- `.v2018_2_3.SuperAggregate` (with inner `.v1.Aggregate`) → child element with `groupings: [{ groupBy, calculations }]`; group-by columns are passthroughs, aggregations (SUM/AVG/MIN/MAX/COUNT/COUNTD/MEDIAN/STDEV) become calc columns referenced from `groupings.calculations`
+- Output nodes (WriteToHyper, PublishExtract, WriteToCsv, etc.) → ignored
+- Inline input `actions[]` (pre-load transforms baked into a Salesforce extract, etc.) → applied before walking `nextNodes`
+
+**Expression conversion** reuses the Tableau formula translator: `IF/ELSEIF/THEN/END` → nested `If()`, `IIF` → `If`, `ZN` → `Coalesce(_, 0)`, `IFNULL`/`IFERROR` → `Coalesce`, `ISNULL` → `IsNull`, `COUNT([x])` → `CountIf(IsNotNull([x]))`, `COUNTD` → `CountDistinct`, `DATEPART('year', [d])` → `Year([d])`, `DATETRUNC` / `DATEADD` / `DATEDIFF` → Sigma equivalents, single-quote strings → double-quote.
+
+**Known limitations:**
+- Pivot (`.v1.Pivot`) — skipped with a warning; Sigma `transpose` exists but mapping is non-trivial
+- Script / RunScript / RunCommand / Prediction — skipped; no Sigma equivalent
+- `DATEPARSE("fmt", str)` — Tableau's format-string date parser has no Sigma equivalent; falls back to a comment placeholder, manual rewrite needed
+- Tableau Server datasources (`LoadSqlProxy`) — auto-resolved when a companion `.tds`/`.tdsx` is dropped with the `.tfl`; otherwise emitted as a Custom SQL placeholder for manual replacement
+- Multi-output branches — converter handles linear chains best; review and consolidate if a transform feeds multiple downstream nodes
+- Multi-hop join paths (A → B → C through chained relationships) — only first-hop relationships render; deeper traversals need manual setup in Sigma UI
+
+**Useful resources:** [Tableau Prep — Get Started](https://help.tableau.com/current/prep/en-us/prep_get_started.htm) · [Sigma — Data Modeling](https://help.sigmacomputing.com/docs/data-modeling-overview)
+
+---
+
 ### Custom SQL
 
 Converts raw SQL files or pasted SQL statements to Sigma data model JSON. Drop `.sql` files or paste queries directly — multiple statements are supported and can be selectively included.
@@ -591,6 +626,7 @@ The same converter logic is available as a hosted [Model Context Protocol](https
 - `convert_alteryx_to_sigma` — Alteryx Designer workflow (`.yxmd` XML) → Sigma JSON
 - `convert_oac_to_sigma` — Oracle Analytics Cloud logical tables JSON → Sigma JSON
 - `convert_cube_to_sigma` — Cube.dev schemas (YAML or JS) → Sigma JSON
+- `convert_tableau_prep_to_sigma` — Tableau Prep flow JSON (.tfl/.tflx) → Sigma JSON
 - `convert_sql_to_sigma_formula` — SQL expression → Sigma formula
 - `convert_tableau_formula_to_sigma` — Tableau formula → Sigma formula
 - `get_sigma_data_model_schema` — Sigma data model JSON schema reference
