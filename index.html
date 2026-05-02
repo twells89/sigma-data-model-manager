@@ -9793,12 +9793,12 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
 
                 var srcPath = srcEl.source.path;
                 var srcTableName = srcPath[srcPath.length - 1];
-                var baseName = srcEl.name || sigmaDisplayName(srcTableName);
-                // Derived element name must differ from base so [<base>/Field] refs are unambiguous.
-                var derivedName = baseName + ' View';
-                // All formulas in the derived element point AT the base element by display name.
-                // Using the warehouse-table name as prefix collides with a sibling that has the
-                // same path-tail when both have explicit element names.
+                // baseName must match how Sigma resolves the base element's identifier:
+                //   - explicit `name` field wins
+                //   - else Sigma falls back to the warehouse-table path-tail uppercase
+                var baseName = srcEl.name || srcTableName;
+                // Derived element name must differ from base so [<base>/Field] is unambiguous.
+                var derivedName = (srcEl.name || sigmaDisplayName(srcTableName)) + ' View';
                 var viewCols = [], viewOrder = [];
 
                 // Own columns — only copy pure warehouse passthrough formulas, and rewrite
@@ -15210,12 +15210,15 @@ views:
                     return;
                 }
 
+                // Rel name = uppercased target warehouse path-tail; this is the middle
+                // segment of cross-element refs in derived elements.
+                const tsTgtPath = rEl.source && rEl.source.path;
+                const tsRelName = (tsTgtPath ? tsTgtPath[tsTgtPath.length - 1] : rTable).toUpperCase();
                 lEl.relationships.push({
                     id: sigmaShortId(),
                     targetElementId: rEl.id,
                     keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
-                    name: join.name || rTable,
-                    relationshipType: 'N:1',
+                    name: tsRelName,
                 });
             });
 
@@ -15225,6 +15228,11 @@ views:
 
             // Strip transient helper maps before serialising
             elements.forEach(el => { delete el._colPhysIdMap; });
+
+            // Build derived view elements that surface related dim columns via
+            // [base/REL_NAME/Field] cross-element refs (matches MCP thoughtspot
+            // output and what the other converters do).
+            buildDerivedElementsAndMoveCalcs(elements, warnings);
 
             const spec = {
                 schemaVersion: 1,
@@ -24438,6 +24446,7 @@ view: date_dim {
                 const modelName = contract.id || contract.info?.title || contract.name || 'Data Contract Import';
                 const outputJson = {
                     name: sigmaDisplayName(modelName.replace(/[-_]/g, ' ')),
+                    schemaVersion: 1,
                     pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
                 };
 
