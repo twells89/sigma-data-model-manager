@@ -34,6 +34,15 @@ The physical col name drives `sigmaDisplayName` for simple dims because the
 Sigma model spec adds simple dims WITHOUT an explicit `name` field, so Sigma
 auto-assigns names via its own friendly naming.
 
+## Spec correctness rules (apply to every converter)
+These bug classes have shipped to production and broken Sigma POSTs. `/review-commit` Step 9 audits all five.
+
+1. **`schemaVersion: 1` at the model root** — required for `/v2/dataModels/spec` to accept POSTs.
+2. **dbt-style relationship `name`** = uppercase target warehouse-table name (e.g., `CUSTOMER_DIM`), NOT a sigmaDisplayName phrase like `"Order Fact to Customer Dim"`. Relationship name is also the middle segment of cross-element formulas `[SRC/REL/Col]`.
+3. **Custom SQL elements** (`source.kind === 'sql'`): omit the element-level `name` field entirely, and use bare `[Display Name]` column formulas (NOT `[Custom SQL/Display]` unless the SQL emits matching double-quoted aliases).
+4. **Cross-element refs** use `[ELEMENT_NAME/REL_NAME/Field]`. The dash-link form `[ELEMENT/FK - link/Field]` does NOT work via the API.
+5. **Union elements** use `sources: [{ kind:'table', elementId }, ...]` + `matches: [{ outputColumnName, sourceColumns:['[Display]'] }, ...]` + column formulas `[Union of N Sources/Col]`. The older `inputs: [...]` shape silently fails.
+
 ## Known regression patterns to check before committing
 1. `[Store In(Type]` style mangling — means `lookConvertExpression` step 2 IN regex
    isn't matching bracket-form LHS

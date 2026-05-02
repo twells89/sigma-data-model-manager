@@ -148,9 +148,58 @@ cd ~/.beads-sigma && bd create "Sigma MCP: sync <Converter> converter" --label s
 - **MCP issue filed** — beads issue created for follow-up (include the issue ID)
 - **MCP needs update** — port required in this commit; do NOT mark PASS until done
 
-## Step 9 — Final verdict
+## Step 9 — Data model spec correctness audit
+
+When the diff touches a converter file (`index.html` view-build loops, or any `sigma-data-model-mcp/src/*.ts` mirror), audit the converter output against this checklist of bug classes that have shipped to production and broken Sigma POSTs. Each item below maps to a real bug we've had to retroactively fix — re-introducing any of them silently breaks `/v2/files` POSTs or the in-app element.
+
+**A. `schemaVersion: 1` at the model root**
+Required for Sigma to accept POSTs of the data model JSON. Every converter must emit it on the top-level object alongside `name` / `pages`. Recent fix added it to 13 converters — do not regress.
+```
+grep -nE "schemaVersion" <changed-file>
+```
+If missing in a new or modified converter, FAIL.
+
+**B. dbt relationship `name` field — uppercase target table name**
+The `relationships[].name` for dbt-derived joins must equal the target warehouse-table name UPPERCASE (e.g., `CUSTOMER_DIM`), NOT a sigmaDisplayName phrase like `"Order Fact to Customer Dim"`. Other converters use either the target table name or a flat string; never `"X to Y"` phrasing.
+```
+grep -nE "relationships?\b|name:\s*['\"].* to " <changed-file>
+```
+Inspect any `relationships[].name` assignment in the dbt converter (or any converter that builds dbt-style joins).
+
+**C. Custom SQL elements (`source.kind === 'sql'`)**
+- Element-level `name` field MUST be omitted entirely (not present, not `null`, not `undefined`). Sigma auto-titles SQL elements; an explicit `name` breaks them.
+- Column formulas must use the bare `[Display Name]` form for snake_case SQL identifiers (Sigma fuzzy-matches), NOT the qualified `[Custom SQL/Display Name]` form. The qualified form only works if the SQL emits double-quoted aliases that exactly match the display name — which our converters do not guarantee.
+```
+grep -nE "kind:\s*['\"]sql['\"]|\[Custom SQL/" <changed-file>
+```
+If a SQL-element branch sets `name:` on the element, or if column formulas embed `[Custom SQL/...]`, FAIL.
+
+**D. Cross-element column references — relationship-name form**
+References from one element to a column on a related element must use `[ELEMENT_NAME/REL_NAME/Field]`. The dash-link form `[ELEMENT_NAME/FK_COL - link/Field]` does NOT work via the API — it parses in the browser but POSTs are silently rejected or render as broken refs.
+```
+grep -nE " - link/" <changed-file>
+```
+Any match is a FAIL.
+
+**E. Union elements — `sources` + `matches` shape**
+Union elements must emit:
+- `sources: [{ kind: 'table', elementId: '<id>' }, ...]`
+- `matches: [{ outputColumnName: '...', sourceColumns: ['[Display]', ...] }, ...]`
+- Column formulas of the form `[Union of N Sources/ColName]`
+
+The older `inputs: [...]` shape is wrong and will not save.
+```
+grep -nE "kind:\s*['\"]union['\"]|\binputs:\s*\[|\bsources:\s*\[|\bmatches:\s*\[" <changed-file>
+```
+If a union element uses `inputs:` instead of `sources:` + `matches:`, FAIL.
+
+**Verdict on spec audit**
+- **Spec OK** — all five items pass for the converter(s) touched
+- **Spec FAIL** — list which item(s) regressed and where; fix before committing
+
+## Step 10 — Final verdict
 Report one of:
-- **PASS** — code, docs, README, and MCP sync are all correct; safe to commit
+- **PASS** — code, docs, README, MCP sync, and spec audit are all correct; safe to commit
 - **FAIL** — list specific issues found; do NOT commit; suggest fixes
 - **WARN** — commit is likely safe but flag items to monitor
 

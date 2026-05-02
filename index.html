@@ -14571,18 +14571,20 @@ views:
             if (path.length === 1) {
                 return `[${headEntry.element.name || sigmaDisplayName(headEntry.cubeDef.name)}/${dispField}]`;
             }
+            // Walk joins → emit [HeadElementName/REL_NAME/.../Field] form.
+            // REL_NAME = target table name uppercase, matching relationship.name.
+            // The dash-link form [SRC/FK - link/Field] does NOT resolve via the API.
             let currentEntry = headEntry; const linkSegments = [];
+            const headName = headEntry.element.name || sigmaDisplayName(headEntry.cubeDef.name);
             for (let i = 1; i < path.length; i++) {
                 const nextName = path[i];
                 const join = currentEntry.cubeDef.joins?.find(j => j.name.toLowerCase() === nextName.toLowerCase());
                 if (!join) return null;
-                const refs = _cubeParseJoinSqlRefs(join.sql, currentEntry.cubeDef.name, join.name);
-                if (!refs) return null;
-                const fkCol = sigmaDisplayName(refs.fromCol);
-                if (i === 1) linkSegments.push(`${currentEntry.sourceTable}/${refs.fromCol.toUpperCase()} - link`);
-                else linkSegments.push(`${fkCol} - link`);
                 const next = cubeRegistry.get(nextName.toLowerCase());
                 if (!next) return null;
+                const relName = next.sourceTable.toUpperCase();
+                if (i === 1) linkSegments.push(`${headName}/${relName}`);
+                else linkSegments.push(relName);
                 currentEntry = next;
             }
             return `[${linkSegments.join('/')}/${dispField}]`;
@@ -14859,7 +14861,7 @@ views:
                     const rel = {
                         id: sigmaShortId(),
                         targetElementId: toEntry.elementId,
-                        name: `${sigmaDisplayName(cube.name)} to ${sigmaDisplayName(join.name)}`,
+                        name: toEntry.sourceTable.toUpperCase(),
                         relationshipType: relType,
                     };
                     if (srcColId && tgtColId) rel.keys = [{ sourceColumnId: srcColId, targetColumnId: tgtColId }];
@@ -17878,22 +17880,30 @@ views:
                 var parsed = parseSqlFull(stmt.sql);
 
                 if (!parsed) {
-                    // Complex query (subquery, implicit cross-join, unresolvable CTE) → SQL element
+                    // Complex query (subquery, implicit cross-join, unresolvable CTE) → SQL element.
+                    // Wrap user SQL with display-name aliases so [Custom SQL/<Display>]
+                    // formulas resolve at query time. Bare [<Display>] does not resolve
+                    // because the SQL output uses snake_case identifiers.
                     var fallbackCols = extractSqlColumns(stmt.sql);
-                    var fallbackColObjs = fallbackCols.map(function(c) {
-                        return { id: sigmaInodeId(c.toUpperCase()), formula: '[' + sigmaDisplayName(c) + ']' };
+                    var aliases = fallbackCols.map(function(c) {
+                        return { phys: c, display: sigmaDisplayName(c) };
                     });
-                    var fallbackSrc = { kind: 'sql', statement: stmt.sql };
+                    var wrappedSql = aliases.length
+                        ? 'SELECT ' + aliases.map(function(a) { return '"' + a.phys.toUpperCase() + '" AS "' + a.display + '"'; }).join(', ') + '\nFROM (\n' + stmt.sql + '\n) AS _src'
+                        : stmt.sql;
+                    var fallbackColObjs = aliases.map(function(a) {
+                        return { id: sigmaInodeId(a.phys.toUpperCase()), formula: '[Custom SQL/' + a.display + ']', name: a.display };
+                    });
+                    var fallbackSrc = { kind: 'sql', statement: wrappedSql };
                     if (connectionId) fallbackSrc.connectionId = connectionId;
                     allElements.push({
                         id: sigmaShortId(), kind: 'table',
-                        name: sigmaDisplayName(stmt.name),
                         source: fallbackSrc,
                         columns: fallbackColObjs,
                         order: fallbackColObjs.map(function(c) { return c.id; })
                     });
                     sqlFallback++;
-                    warnings.push('"' + stmt.name + '": subquery or implicit cross-join — kept as custom SQL element.');
+                    warnings.push('"' + stmt.name + '": subquery or implicit cross-join — kept as custom SQL element. SQL was wrapped to add display-name aliases.');
                     return;
                 }
 
