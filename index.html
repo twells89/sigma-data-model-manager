@@ -9792,37 +9792,41 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 if (!srcEl.source || srcEl.source.kind !== 'warehouse-table') return;
 
                 var srcPath = srcEl.source.path;
-                var srcTableName = srcPath[srcPath.length - 1]; // raw uppercase, e.g. "ORDER_FACT"
-
+                var srcTableName = srcPath[srcPath.length - 1];
+                var baseName = srcEl.name || sigmaDisplayName(srcTableName);
+                // Derived element name must differ from base so [<base>/Field] refs are unambiguous.
+                var derivedName = baseName + ' View';
+                // All formulas in the derived element point AT the base element by display name.
+                // Using the warehouse-table name as prefix collides with a sibling that has the
+                // same path-tail when both have explicit element names.
                 var viewCols = [], viewOrder = [];
 
-                // Own columns — only copy pure warehouse passthrough formulas [TABLE/Col].
-                // Calculated columns (name field + non-passthrough formula) stay on the
-                // warehouse-table element; cross-element ones are moved by
-                // buildDerivedElementsAndMoveCalcs.
+                // Own columns — only copy pure warehouse passthrough formulas, and rewrite
+                // their leading segment from <TABLE> to <baseName>.
                 (srcEl.columns || []).forEach(function(col) {
                     if (!col.formula || col.formula.startsWith('/*')) return;
-                    if (col.name && !/^\[[^\]\/]+\/[^\]]+\]$/.test(col.formula)) return;
+                    var fm = col.formula.match(/^\[([^\]\/]+)\/([^\]]+)\]$/);
+                    if (!fm) return; // skip calc cols
+                    var dispName = fm[2];
                     var cId = sigmaShortId();
-                    viewCols.push({ id: cId, formula: col.formula });
+                    viewCols.push({ id: cId, formula: '[' + baseName + '/' + dispName + ']' });
                     viewOrder.push(cId);
                 });
 
-                // Dim columns via [SRC/REL_NAME/Col] cross-element references
+                // Dim columns via [<baseName>/REL_NAME/Col] cross-element references
                 srcEl.relationships.forEach(function(rel) {
                     if (!rel.name) return; // name required for formula middle-segment
                     var tgtEl = elements.find(function(e) { return e.id === rel.targetElementId; });
                     if (!tgtEl || !tgtEl.source || tgtEl.source.kind !== 'warehouse-table') return;
                     (tgtEl.columns || []).forEach(function(col) {
                         if (!col.formula || col.formula.startsWith('/*')) return;
-                        // Extract display name portion: "[TABLE/Display Name]" → "Display Name"
                         var fm = col.formula.match(/^\[([^\]]+)\]$/);
                         if (!fm) return;
                         var inner = fm[1];
                         var s = inner.lastIndexOf('/');
                         var dispName = s >= 0 ? inner.slice(s + 1) : inner;
                         var cId = sigmaShortId();
-                        viewCols.push({ id: cId, formula: '[' + srcTableName + '/' + rel.name + '/' + dispName + ']' });
+                        viewCols.push({ id: cId, formula: '[' + baseName + '/' + rel.name + '/' + dispName + ']' });
                         viewOrder.push(cId);
                     });
                 });
@@ -9831,7 +9835,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                     derived.push({
                         id: sigmaShortId(),
                         kind: 'table',
-                        name: srcEl.name || sigmaDisplayName(srcTableName),
+                        name: derivedName,
                         source: { kind: 'table', elementId: srcEl.id },
                         columns: viewCols,
                         order: viewOrder
@@ -16001,7 +16005,7 @@ views:
                                 id: sigmaShortId(),
                                 targetElementId: toInfo.elementId,
                                 keys: [{ sourceColumnId: fromColInfo.colId, targetColumnId: toColInfo.colId }],
-                                name: qlikAutoPath ? qlikAutoPath[qlikAutoPath.length - 1] : fieldName.toUpperCase()
+                                name: qlikAutoPath ? qlikAutoPath[qlikAutoPath.length - 1].toUpperCase() : fieldName.toUpperCase()
                             });
                         }
                     }
@@ -16034,7 +16038,7 @@ views:
                         id: sigmaShortId(),
                         targetElementId: toInfo.elementId,
                         keys: [{ sourceColumnId: fromColInfo.colId, targetColumnId: toColInfo.colId }],
-                        name: qlikExpPath ? qlikExpPath[qlikExpPath.length - 1] : rel.toTable.toUpperCase()
+                        name: qlikExpPath ? qlikExpPath[qlikExpPath.length - 1].toUpperCase() : rel.toTable.toUpperCase()
                     });
                 }
 
@@ -16590,8 +16594,11 @@ views:
                             }
                         }
 
-                        // Relationship name = raw target table name (for [SRC/TARGET/Col] formulas)
-                        const oacRelName = tgtName.toUpperCase();
+                        // Relationship name = uppercased target warehouse-table name (last
+                        // segment of source path). Using raw tgtName lets spaces/lowercase
+                        // leak in (e.g. "customer dim") which won't match what Sigma resolves.
+                        const oacTgtPath = tgtInfo.element.source?.path;
+                        const oacRelName = (oacTgtPath ? oacTgtPath[oacTgtPath.length - 1] : tgtName).toUpperCase();
                         if (!srcInfo.element.relationships) srcInfo.element.relationships = [];
                         if (srcEntry && tgtEntry) {
                             srcInfo.element.relationships.push({
@@ -22228,7 +22235,7 @@ ${cleanedSql}`;
                     if (firstControls) { allControls.push(...controls); firstControls = false; }
                 }
 
-                buildDerivedElementsAndMoveCalcs(allElements, warnings);
+                buildDerivedElementsAndMoveCalcs(allElements, allWarnings);
 
                 const modelName = toConvert.length === 1
                     ? toConvert[0].ds.name

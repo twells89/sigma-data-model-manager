@@ -197,9 +197,40 @@ If a union element uses `inputs:` instead of `sources:` + `matches:`, FAIL.
 - **Spec OK** — all five items pass for the converter(s) touched
 - **Spec FAIL** — list which item(s) regressed and where; fix before committing
 
-## Step 10 — Final verdict
+## Step 10 — End-to-end UI test (live POST + data verification)
+
+When the diff touches a converter's view-build loop (the part that produces the `sigmaModel` JSON), run a real-UI test that drives the local browser tool, saves through the actual Save flow, and verifies the saved spec resolves data correctly via the Sigma MCP V2 server. JSDOM-based or function-extracting harnesses are NOT a substitute — they bypass DOM-driven setup and have produced false negatives historically. The bar for "PASS" on this step is: a query against the saved data model returns real warehouse data, not error-typed columns or null rows.
+
+**Setup:**
+- Puppeteer is installed at `/Users/tjwells/sigma-data-model-manager/tableau-local/node_modules/puppeteer`. Import via `import puppeteer from '/Users/tjwells/sigma-data-model-manager/tableau-local/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js'`.
+- Local file URL: `file:///Users/tjwells/sigma-data-model-manager/index.html`
+- Env vars `SIGMA_BASE_URL`, `SIGMA_CLIENT_ID`, `SIGMA_CLIENT_SECRET` are exported. Token script at `~/sigma-skills/tableau-to-sigma/scripts/get-token.sh` (use `bash -c 'eval "$(...)"; node ...'` pattern — NEVER `TOKEN=$(eval "$(...)")`).
+- Test connection: `cb2f5180-641f-47bd-8efa-da9d590d855a` (CSA.TJ Snowflake). Test folder: `9ca9bf60-6a33-43dd-967d-1ba6352c54bb` (My Documents/Test).
+
+**UI flow (for each converter touched by the diff):**
+1. `headless: 'new'` Puppeteer page loads the local index.html
+2. Set `#apiRegion` value to `https://aws-api.sigmacomputing.com`, fill `#clientId` + `#clientSecret`, click `#connectBtn`. Wait for `populateConverterConnections` to settle.
+3. Switch tab via `#converterFormat` `<select>` `change` event (fires `switchConverter('<format>')`). Format keys: `dbt`, `snow`, `look`, `tableau`, `pbi`, `alteryx`, `contract` (atlan), `omni`, `thoughtspot`, `qlik`, `oac`, `cube`, `prep` (tableau prep), `sql`.
+4. Drop or upload the fixture (look up the per-converter `<input type="file">` id like `#cubeFileInput`, or for paste-based converters set `<textarea>` value via `value=` + dispatch `input` event — text-pastes need `parseSqlPaste()` / equivalent invoked explicitly under headless).
+5. Click the converter's run button (`#cubeRunBtn`, etc.) or invoke the run handler directly (`runCubeConversion()`, etc. — these are the same handlers wired to the buttons).
+6. Click `#cubeSaveBtn` / `#sqlSaveBtn` / etc. to trigger `<format>LoadAndSave()`. Under headless the Save Location modal can be brittle — acceptable fallback: close the modal, set `folderId` directly on the editor's JSON, and call `saveDataModel()` (same code path `confirmSaveLocation()` uses; same endpoint, same payload).
+7. Capture the resulting `dataModelId` from the success toast text or page state.
+
+**Data verification (per saved data model):**
+1. `mcp__sigma-mcp-v2__describe(type="datamodel", dataModelId)` — confirm element list returned
+2. `mcp__sigma-mcp-v2__describe(type="datamodel-element", dataModelId, elementId)` — pick the largest fact-style element. **Every column must have a concrete type** (`text` / `integer` / `number` / `datetime` / `boolean`). Any column showing as `error` is a FAIL.
+3. `mcp__sigma-mcp-v2__query(type="datamodel", dataModelId, sql="SELECT * FROM \"datamodel\".\"<elementId>\" LIMIT 5")` — must return rows with real warehouse values (e.g., `ORD-00009 | James Martinez | Atlanta Flagship`). All-null rows or "Unknown column" errors are a FAIL.
+
+**Cleanup (mandatory):** after verification, delete each saved test data model via `DELETE ${SIGMA_BASE_URL}/v2/files/{dataModelId}` so the test folder doesn't accumulate clutter. The test folder lists at `${SIGMA_BASE_URL}/v2/files?parentId=9ca9bf60-...&limit=200`.
+
+**Verdict on UI test**
+- **UI OK** — every touched converter saves cleanly through the real flow AND the saved spec returns real data via MCP V2 query
+- **UI FAIL** — at least one converter saves but the data is broken (error-typed columns, all-null rows, "Unknown column"). Do NOT commit; root-cause and re-run.
+- **UI N/A** — diff is documentation-only or doesn't touch any converter view-build loop
+
+## Step 11 — Final verdict
 Report one of:
-- **PASS** — code, docs, README, MCP sync, and spec audit are all correct; safe to commit
+- **PASS** — code, docs, README, MCP sync, spec audit, and UI test are all correct; safe to commit
 - **FAIL** — list specific issues found; do NOT commit; suggest fixes
 - **WARN** — commit is likely safe but flag items to monitor
 
