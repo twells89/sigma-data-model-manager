@@ -11410,10 +11410,12 @@ relationships:
             // colIdMap: IDENTIFIER_UPPERCASE → inodeId  (for relationship key resolution)
             const colIdMap = {};
 
-            function addCol(identifier) {
+            function addCol(identifier, description) {
                 const id = sigmaInodeId(identifier.toUpperCase());
                 colIdMap[identifier.toUpperCase()] = id;
-                element.columns.push({ id, formula: sigmaColFormula(tableName, identifier) });
+                const _col = { id, formula: sigmaColFormula(tableName, identifier) };
+                if (description) _col.description = description;
+                element.columns.push(_col);
                 element.order.push(id);
                 return id;
             }
@@ -11425,7 +11427,7 @@ relationships:
             for (const entity of model.entities || []) {
                 if (entity.type === 'primary' || entity.type === 'unique') {
                     const physicalName = (entity.expr || entity.name).toUpperCase();
-                    const id = addCol(physicalName);
+                    const id = addCol(physicalName, entity.description);
                     // If expr differs from name, also register logical name so
                     // foreign entity lookup by entity.name finds the right column id
                     if (entity.expr && entity.expr.toUpperCase() !== entity.name.toUpperCase()) {
@@ -11435,7 +11437,7 @@ relationships:
                     // Natural entities are non-unique identifiers (e.g. customer name).
                     // They get a source column but no join relationship.
                     const physicalName = (entity.expr || entity.name).toUpperCase();
-                    addCol(physicalName);
+                    addCol(physicalName, entity.description);
                 }
             }
 
@@ -11459,11 +11461,13 @@ relationships:
                     const physicalCol = rawExpr.split('.').pop().replace(/"/g,'').toUpperCase() || semantic;
                     const id = sigmaShortId();
                     colIdMap[semantic] = id;
-                    element.columns.push({
+                    const _timeCol = {
                         id,
                         formula: `DateTrunc("${granularity}", ${sigmaColFormula(tableName, physicalCol)})`,
                         name: sigmaDisplayName(dim.name)
-                    });
+                    };
+                    if (dim.description) _timeCol.description = dim.description;
+                    element.columns.push(_timeCol);
                     element.order.push(id);
                     // Record for time spine relationship wiring
                     timeDimInfo[semantic] = { granularity, colId: id };
@@ -11505,6 +11509,7 @@ relationships:
                         const _dbtExprFmt = _inferSigmaFormat(formula, sigmaDisplayName(dim.name));
                         const _dbtExprCol = { id, formula, name: sigmaDisplayName(dim.name) };
                         if (_dbtExprFmt) _dbtExprCol.format = _dbtExprFmt;
+                        if (dim.description) _dbtExprCol.description = dim.description;
                         element.columns.push(_dbtExprCol);
                         element.order.push(id);
                         continue;
@@ -11513,7 +11518,7 @@ relationships:
 
                 // Simple column reference
                 const identifier = rawExpr.split('.').pop().replace(/"/g,'').toUpperCase() || semantic;
-                addCol(identifier);
+                addCol(identifier, dim.description);
             }
 
             // Measures → source column (if not already present) + metric
@@ -11532,6 +11537,7 @@ relationships:
                 const _dbtFmt1 = _inferSigmaFormat(_dbtFormula1, _dbtName1);
                 const _dbtMetric1 = { id: sigmaShortId(), formula: _dbtFormula1, name: _dbtName1 };
                 if (_dbtFmt1) _dbtMetric1.format = _dbtFmt1;
+                if (measure.description) _dbtMetric1.description = measure.description;
                 // Only push as a Sigma metric if no dbt metric references this measure.
                 // When a dbt metric wraps this measure, convertDbtMetrics will push the metric
                 // instead — pushing both would produce duplicates.
