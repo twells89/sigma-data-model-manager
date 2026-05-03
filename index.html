@@ -2590,6 +2590,10 @@
                             <summary>Full response</summary>
                             <pre class="save-error-raw" id="saveErrorRaw"></pre>
                         </details>
+                        <details class="save-error-details" id="fixAITraceDetails" style="display:none;margin-top:8px;">
+                            <summary>🤖 AI tool-use trace <span id="fixAITierBadge" style="color:#666;font-weight:normal;font-size:11px;"></span></summary>
+                            <pre class="save-error-raw" id="fixAITrace" style="max-height:280px;overflow-y:auto;font-size:11px;"></pre>
+                        </details>
                     </div>
                     <div class="save-error-actions">
                         <div id="fixAIKeyRow" class="fix-ai-key-row" style="display:none;">
@@ -6461,6 +6465,14 @@ PRODUCT_NAME
 
             banner.style.display = '';
 
+            // Reset the AI trace from any previous fix attempt.
+            const traceWrap = document.getElementById('fixAITraceDetails');
+            const traceEl = document.getElementById('fixAITrace');
+            const tierBadge = document.getElementById('fixAITierBadge');
+            if (traceWrap) traceWrap.style.display = 'none';
+            if (traceEl) traceEl.textContent = '';
+            if (tierBadge) tierBadge.textContent = '';
+
             const config = loadAIConfig();
             const provider = config.provider || 'anthropic';
             const fixProviderEl = document.getElementById('fixAIProvider');
@@ -6469,6 +6481,8 @@ PRODUCT_NAME
 
         function dismissSaveError() {
             document.getElementById('saveErrorBanner').style.display = 'none';
+            const traceWrap = document.getElementById('fixAITraceDetails');
+            if (traceWrap) traceWrap.style.display = 'none';
             _lastSaveError = null;
         }
 
@@ -6481,6 +6495,272 @@ PRODUCT_NAME
             const savedKey = document.getElementById('aiApiKey')?.value || config.keys?.[provider] || Object.values(config.keys || {}).find(k => k);
             if (savedKey) return { key: savedKey, provider };
             return null;
+        }
+
+        // ── Fix-with-AI: Anthropic tool-use loop ─────────────────────────────────
+        // Smart-fix mode: Anthropic-only. The model can call live Sigma APIs to
+        // inspect canonical working models, post probes, and verify a fix
+        // resolves at query time before returning. See /tmp/fix_ai_proto/ for
+        // the prototype + test results that validated this design on Tier 1.
+        const _FIX_AI_TOOLS = [
+          { name: 'list_data_models', description: 'List data models in the workspace, optionally filtered by folder. Use to find a similar working model whose spec you can pull as canonical reference.', input_schema: { type: 'object', properties: { folderId: { type: 'string' }, limit: { type: 'number' } } } },
+          { name: 'search_files', description: 'Search Sigma files (data models, workbooks, tables) by name. Use to find a candidate by query.', input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+          { name: 'get_data_model_spec', description: 'Fetch the JSON spec of a saved data model. Default returns trimmed structural view (element shapes + first 5 columns per element). Pass full=true for the complete spec.', input_schema: { type: 'object', properties: { dataModelId: { type: 'string' }, full: { type: 'boolean' } }, required: ['dataModelId'] } },
+          { name: 'describe_element', description: 'Returns persisted shape of an element + resolved column display names. A column with name "Calc" or "Calc (N)" indicates the formula did NOT resolve at runtime even though POST returned 200. Pass elementName (more stable than elementId after probe POST since Sigma reassigns IDs).', input_schema: { type: 'object', properties: { dataModelId: { type: 'string' }, elementId: { type: 'string' }, elementName: { type: 'string' } }, required: ['dataModelId'] } },
+          { name: 'post_probe_spec', description: 'POST a candidate spec for verification. folderId/name auto-overridden to the test folder + AI_PROBE_<ts>. Returns dataModelId or full error. ALWAYS pair with delete_data_model.', input_schema: { type: 'object', properties: { spec: { type: 'object' } }, required: ['spec'] } },
+          { name: 'delete_data_model', description: 'Delete a data model created during fix verification.', input_schema: { type: 'object', properties: { dataModelId: { type: 'string' } }, required: ['dataModelId'] } },
+        ];
+
+        async function _runFixAITool(name, args, probeFolderId) {
+          const base = state.baseUrl;
+          const hdrs = { Authorization: `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' };
+          if (name === 'list_data_models') {
+            const u = new URL(base + '/v2/files');
+            if (args.folderId) u.searchParams.set('parentId', args.folderId);
+            u.searchParams.set('limit', String(args.limit || 20));
+            const res = await fetch(u, { headers: hdrs });
+            const j = await res.json();
+            const dms = (j.entries || []).filter(e => e.type === 'data-model').map(e => ({ name: e.name, id: e.id }));
+            return { count: dms.length, models: dms.slice(0, args.limit || 20) };
+          }
+          if (name === 'search_files') {
+            const u = new URL(base + '/v2/files');
+            u.searchParams.set('q', args.query);
+            u.searchParams.set('limit', '20');
+            const res = await fetch(u, { headers: hdrs });
+            const j = await res.json();
+            return { results: (j.entries || []).map(e => ({ name: e.name, type: e.type, id: e.id })).slice(0, 20) };
+          }
+          if (name === 'get_data_model_spec') {
+            const res = await fetch(`${base}/v2/dataModels/${args.dataModelId}/spec`, { headers: hdrs });
+            const spec = await res.json();
+            if (args.full) return spec;
+            return {
+              name: spec.name, schemaVersion: spec.schemaVersion,
+              pages: (spec.pages || []).map(p => ({ id: p.id, elements: (p.elements || []).map(e => ({
+                id: e.id, name: e.name, source: e.source, relationships: e.relationships,
+                column_count: (e.columns || []).length,
+                sample_columns: (e.columns || []).slice(0, 5).map(c => ({ id: c.id, formula: c.formula, name: c.name })),
+              })) })),
+              _note: 'Trimmed: first 5 columns per element. Pass full:true for complete spec.',
+            };
+          }
+          if (name === 'describe_element') {
+            const [specRes, elsRes] = await Promise.all([
+              fetch(`${base}/v2/dataModels/${args.dataModelId}/spec`, { headers: hdrs }),
+              fetch(`${base}/v2/dataModels/${args.dataModelId}/elements`, { headers: hdrs }),
+            ]);
+            const spec = await specRes.json();
+            const elsList = await elsRes.json();
+            const allEls = (spec.pages || []).flatMap(p => p.elements || []);
+            let el = args.elementId ? allEls.find(e => e.id === args.elementId) : null;
+            if (!el && args.elementName) el = allEls.find(e => (e.name || '').toLowerCase() === args.elementName.toLowerCase());
+            if (!el) return { error: 'Element not found by id or name', available_elements: allEls.map(e => ({ id: e.id, name: e.name, kind: e.source?.kind })) };
+            const resolved = (elsList.entries || []).find(e => e.elementId === el.id);
+            const resolvedNames = resolved ? (resolved.columns || []) : [];
+            const suspect = resolvedNames.filter(n => /^Calc(?:\s*\(\d+\))?$/.test(n));
+            return {
+              name: el.name, kind: el.source?.kind,
+              intended_columns: (el.columns || []).map(c => ({ id: c.id, formula: c.formula, name: c.name })),
+              resolved_column_count: resolvedNames.length,
+              resolved_column_names: resolvedNames,
+              suspect_columns: suspect,
+              verification_signals: {
+                count_match: (el.columns || []).length === resolvedNames.length,
+                suspect_count: suspect.length,
+                note: suspect.length > 0
+                  ? 'PROBABLE FAILURE: columns named "Calc" or "Calc (N)" indicate a formula did NOT resolve.'
+                  : 'No obvious unresolved-formula signals.',
+              },
+            };
+          }
+          if (name === 'post_probe_spec') {
+            const probe = { ...args.spec, folderId: probeFolderId, name: 'AI_PROBE_' + Date.now() };
+            const res = await fetch(`${base}/v2/dataModels/spec`, { method: 'POST', headers: hdrs, body: JSON.stringify(probe) });
+            const text = await res.text();
+            if (!res.ok) return { ok: false, status: res.status, error: text };
+            return { ok: true, body: JSON.parse(text) };
+          }
+          if (name === 'delete_data_model') {
+            const res = await fetch(`${base}/v2/files/${args.dataModelId}`, { method: 'DELETE', headers: hdrs });
+            return { ok: res.ok, status: res.status };
+          }
+          return { error: 'Unknown tool: ' + name };
+        }
+
+        async function _inspectAnthropicRateLimits(apiKey) {
+          const res = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true',
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+          });
+          const limit = parseInt(res.headers.get('anthropic-ratelimit-input-tokens-limit') || '0', 10);
+          const remaining = parseInt(res.headers.get('anthropic-ratelimit-input-tokens-remaining') || '0', 10);
+          const reset = res.headers.get('anthropic-ratelimit-input-tokens-reset') || '';
+          let tier;
+          if (limit <= 50000) tier = 1;
+          else if (limit <= 100000) tier = 2;
+          else if (limit <= 250000) tier = 3;
+          else tier = 4;
+          const profile = limit <= 50000
+            ? { maxSpecLookups: 1, maxSteps: 14, defaultSummary: true, pauseThreshold: 5000 }
+            : limit <= 100000
+            ? { maxSpecLookups: 2, maxSteps: 18, defaultSummary: true, pauseThreshold: 10000 }
+            :                       { maxSpecLookups: 3, maxSteps: 25, defaultSummary: false, pauseThreshold: 20000 };
+          return { tier, limit, remaining, reset, profile };
+        }
+
+        async function _runFixWithAnthropicTools(apiKey, failedJson, errorMsg) {
+          const traceEl    = document.getElementById('fixAITrace');
+          const traceWrap  = document.getElementById('fixAITraceDetails');
+          const tierBadge  = document.getElementById('fixAITierBadge');
+          traceEl.textContent = '';
+          traceWrap.style.display = '';
+          traceWrap.open = true;
+          const log = (s) => { traceEl.textContent += s + '\n'; traceEl.scrollTop = traceEl.scrollHeight; };
+
+          // Auto-pick a probe folder: prefer the failing spec's folderId; else use the
+          // model's parent folder; else the first selectable folder. Ensures probes are
+          // visible to the user and cleaned up via delete_data_model.
+          const probeFolderId = failedJson.folderId
+            || state.selectedModel?.parentId
+            || state.lastSelectedFolderId
+            || null;
+          if (!probeFolderId) {
+            log('⚠ No folder available for probe POSTs — verification step disabled.');
+          }
+
+          const limits = await _inspectAnthropicRateLimits(apiKey);
+          tierBadge.textContent = `· Tier ${limits.tier} · ${limits.limit.toLocaleString()} input tokens/min · ${limits.remaining.toLocaleString()} remaining`;
+          log(`Tier ${limits.tier} (${limits.limit.toLocaleString()} input tokens/min). Profile: maxSteps=${limits.profile.maxSteps} maxSpecLookups=${limits.profile.maxSpecLookups}`);
+          let rl = { remaining: limits.remaining, reset: limits.reset };
+
+          const systemPrompt = `You repair Sigma data model specs that failed to save or whose columns errored at query time. The user has shared the FULL Sigma error and FULL failed spec — read them carefully before any tool call.
+
+API tier detected: Tier ${limits.tier} (${limits.limit.toLocaleString()} input tokens/min, excluding cache reads). Stay inside this budget.
+
+DIAGNOSE FIRST. Classify the bug from the error:
+  - "Cannot resolve columns ... formula reference 'X/Y'" → display-name mismatch (warehouse schema).
+  - "Source not found: warehouse table 'A.B.C'" → table path is wrong.
+  - "Cycle in dependency order" → circular calc-col references.
+  - Cross-element / derived-view formulas not resolving → look at one canonical model.
+
+PROTOCOL:
+  1. Use list_data_models / search_files to find ONE candidate hand-built model that uses the same construct.
+  2. Call get_data_model_spec (default summary mode). Diff against the failing spec. Match the canonical shape exactly.
+
+VERIFICATION (REQUIRED before returning any fix that touches a derived element OR a cross-element ref): post_probe_spec → describe_element by elementName. A name like "Calc" or "Calc (N)" in resolved_column_names is a STRUCTURAL FAILURE — the formula did NOT resolve at runtime even though POST returned 200. Treat that as a HARD STOP and iterate on your fix. Do not return JSON until describe_element shows zero suspect_columns. ALWAYS delete_data_model on the probe before returning.
+
+A fix is "trivial" (verification optional) ONLY when: (a) you only touched warehouse-table column formulas and (b) you never modified a derived element or a 3-segment cross-element formula.
+
+HARD LIMITS for this tier:
+  - Max ${limits.profile.maxSteps} steps total
+  - Max ${limits.profile.maxSpecLookups} get_data_model_spec call(s)
+  - Default to summary mode for spec fetches
+
+Return ONLY the corrected JSON in your final message text. No markdown fences, no explanation. Start with { and end with }.
+
+Probe POSTs are auto-named AI_PROBE_<timestamp> and forced into the user's test folder. Ignore folderId/name in your probe specs.`;
+
+          const cachedTools = _FIX_AI_TOOLS.map((t, i) => i === _FIX_AI_TOOLS.length - 1
+            ? { ...t, cache_control: { type: 'ephemeral' } } : t);
+
+          const messages = [{ role: 'user', content: `SAVE ERROR:\n${errorMsg}\n\nFAILED SPEC:\n${JSON.stringify(failedJson, null, 2)}` }];
+
+          let stepN = 0;
+          while (stepN < limits.profile.maxSteps) {
+            stepN++;
+            log(`── step ${stepN} ──`);
+
+            // Pre-emptive pause if remaining budget is below threshold.
+            if (rl.remaining > 0 && rl.remaining < limits.profile.pauseThreshold) {
+              const resetMs = new Date(rl.reset).getTime() - Date.now();
+              if (resetMs > 0 && resetMs < 90000) {
+                log(`budget low (${rl.remaining} tokens left); pausing ${Math.ceil(resetMs/1000)}s for refill`);
+                await new Promise(r => setTimeout(r, resetMs + 500));
+                rl.remaining = limits.limit;
+              }
+            }
+
+            // Trim older tool_results to keep history small (Claude has already reasoned over them).
+            const trimmedMessages = messages.map((m, idx) => {
+              if (idx < messages.length - 4 && Array.isArray(m.content)) {
+                const newContent = m.content.map(b => (b.type === 'tool_result' && typeof b.content === 'string' && b.content.length > 1500)
+                  ? { ...b, content: '[trimmed older tool_result]' } : b);
+                return { ...m, content: newContent };
+              }
+              return m;
+            });
+
+            const req = {
+              model: 'claude-sonnet-4-5',
+              max_tokens: 4096,
+              system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+              tools: cachedTools,
+              messages: trimmedMessages,
+            };
+
+            let res, attempt = 0;
+            while (true) {
+              res = await fetch('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: {
+                  'x-api-key': apiKey,
+                  'anthropic-version': '2023-06-01',
+                  'anthropic-dangerous-direct-browser-access': 'true',
+                  'content-type': 'application/json',
+                },
+                body: JSON.stringify(req),
+              });
+              const r2 = parseInt(res.headers.get('anthropic-ratelimit-input-tokens-remaining') || '0', 10);
+              const reset2 = res.headers.get('anthropic-ratelimit-input-tokens-reset') || '';
+              if (r2 || reset2) { rl.remaining = r2; rl.reset = reset2; }
+              if (res.status !== 429 || attempt >= 4) break;
+              attempt++;
+              const ra = parseInt(res.headers.get('retry-after') || '10', 10);
+              log(`rate-limited; backing off ${ra}s (attempt ${attempt}/4)`);
+              await new Promise(r => setTimeout(r, ra * 1000));
+            }
+            if (!res.ok) {
+              const t = await res.text();
+              log(`Anthropic API ${res.status}: ${t.slice(0, 600)}`);
+              throw new Error('Anthropic API failure: ' + res.status);
+            }
+            const reply = await res.json();
+            messages.push({ role: 'assistant', content: reply.content });
+
+            const toolUses = (reply.content || []).filter(b => b.type === 'tool_use');
+            const texts = (reply.content || []).filter(b => b.type === 'text');
+            for (const t of texts) log(`  ${t.text.slice(0, 600)}`);
+
+            if (reply.stop_reason !== 'tool_use' || toolUses.length === 0) {
+              const allText = texts.map(t => t.text).join('\n');
+              const m = allText.match(/\{[\s\S]*\}/);
+              if (!m) throw new Error('AI did not return a JSON object');
+              return JSON.parse(m[0]);
+            }
+
+            const results = [];
+            for (const tu of toolUses) {
+              log(`  → ${tu.name}(${JSON.stringify(tu.input).slice(0, 200)})`);
+              try {
+                const out = await _runFixAITool(tu.name, tu.input, probeFolderId);
+                const summary = JSON.stringify(out).slice(0, 250);
+                log(`    ${summary}${JSON.stringify(out).length > 250 ? '…' : ''}`);
+                results.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(out) });
+              } catch (e) {
+                log(`    tool error: ${e.message}`);
+                results.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify({ error: e.message }), is_error: true });
+              }
+            }
+            messages.push({ role: 'user', content: results });
+          }
+          throw new Error(`Step limit (${limits.profile.maxSteps}) reached without a final fix`);
         }
 
         async function fixWithAI() {
@@ -6517,33 +6797,33 @@ PRODUCT_NAME
             btn.disabled = true;
             btn.innerHTML = '<div class="spinner"></div> Fixing...';
 
+            // Text-only system prompt for OpenAI/Gemini fallback paths. The
+            // Anthropic provider takes the smart tool-use route below and
+            // never sees this prompt.
             const systemPrompt = `You are a Sigma Computing data model JSON repair assistant.
 
 The user tried to save a data model via the Sigma REST API and got an error. Analyze the error + JSON, fix what you can, and return ONLY the corrected JSON.
 
-KNOWN SIGMA API ISSUES YOU CAN FIX:
-1. Empty metrics: [] or relationships: [] arrays → REMOVE the key entirely
-2. Cross-element "- link/" formulas → REMOVE the column/metric (links are deprecated)
-3. Sigma Title-Cases ALL words: SNAKE_CASE → "Title Case" (IS_EMAIL_OPT_IN → "Is Email Opt In")
-4. Display name casing mismatches in formulas — fix case to match the warehouse column formula
-5. Calculated columns must reference local columns by display name only: [Column Name], not [TABLE/Column Name]
-6. Metrics use display name only: Sum([Column Name])
-7. Circular references between calculated columns → break the cycle
-8. folderId "00000000-0000-0000-0000-000000000000" → remove it
-9. Relationships missing "relationshipType" → add "relationshipType": "N:1" to every relationship object
-10. SQL elements (source.kind === "sql") with [Custom SQL/Column Name] formulas on columns → strip the "Custom SQL/" prefix to leave just [Column Name]. Sigma resolves columns on SQL elements by relative name — the "Custom SQL/" table qualifier is not valid and will cause a "dependency not found" error.
-11. Duplicate passthrough + calculated columns: if an element has both a formula-less passthrough column AND a calculated column for the same logical field (e.g. both [TABLE/Order size band] and a formula column named "Order Size Band"), remove the passthrough — it references a column that doesn't exist in the warehouse (it's a calculated field, not a warehouse column).
+SIGMA SPEC CORRECTNESS RULES (verified end-to-end against the live API):
+1. schemaVersion: 1 must be at the model root.
+2. Empty metrics: [] or relationships: [] arrays → REMOVE the key entirely.
+3. Sigma Title-Cases ALL words: SNAKE_CASE → "Title Case" (IS_EMAIL_OPT_IN → "Is Email Opt In").
+4. Cross-element column references use [SRC_TABLE/REL_NAME/Field] form. REL_NAME is the relationship.name field — for converters, this is the target warehouse-table name UPPERCASE (e.g., CUSTOMER_DIM). The dash-link form [SRC/FK_COL - link/Field] does NOT work via the API.
+5. Custom SQL elements (source.kind === "sql"): omit the element-level "name" field entirely. Column formulas use bare [Display Name] form for passthrough self-references — the qualified [Custom SQL/Display] form only works when the SQL emits matching double-quoted aliases (AS "Display").
+6. Calculated columns reference local columns by display name: [Column Name], not [TABLE/Column Name].
+7. Metrics use display name only: Sum([Column Name]).
+8. Derived elements (kind:"table" with source.elementId): the leading prefix in formulas is the BASE element's display name (or its warehouse path-tail if the base has no explicit name). Two elements with the same name causes ambiguous resolution.
+9. Circular references between calculated columns → break the cycle.
+10. folderId "00000000-0000-0000-0000-000000000000" → remove it.
 
 WHAT YOU CANNOT FIX (flag these):
-- Column formulas referencing warehouse columns that may not exist (e.g. [TABLE/Customer Name] when the real column might be FIRST_NAME + LAST_NAME). You do NOT know the actual warehouse schema. If a column name looks like it could be wrong (doesn't follow standard naming, uses a generic name like "Customer Name" instead of something specific), REMOVE it and add a comment in the name field noting it was removed.
+- Column formulas referencing warehouse columns that may not exist (e.g. [TABLE/Customer Name] when the real column might be FIRST_NAME + LAST_NAME). You do NOT know the actual warehouse schema. If a column name looks like it could be wrong (uses a generic name like "Customer Name" instead of something specific), REMOVE it.
 
 FOR "cycle in dependency order" ERRORS:
-This error almost always means a column formula references a display name that doesn't exist in the warehouse. Since you don't know the actual column names, your best strategy is:
-1. Keep warehouse columns that follow standard patterns (SNAKE_CASE → Title Case, like [ORDER_FACT/Gross Revenue] for GROSS_REVENUE)
-2. REMOVE any warehouse column whose name looks non-standard or made-up (e.g. "Customer Name", "Signup Date", "Order Key", "Store Key" when these don't follow the table's naming convention)
-3. REMOVE any calculated columns or metrics that reference removed columns
-4. REMOVE empty arrays left behind
-5. The user will re-add correct columns in the Sigma UI
+1. Keep warehouse columns that follow standard patterns (SNAKE_CASE → Title Case, like [ORDER_FACT/Gross Revenue] for GROSS_REVENUE).
+2. REMOVE any warehouse column whose name looks non-standard or made-up.
+3. REMOVE any calculated columns or metrics that reference removed columns.
+4. REMOVE empty arrays left behind.
 
 Return ONLY the JSON. No explanation, no markdown fences, just the raw JSON starting with { and ending with }.`;
 
@@ -6553,21 +6833,24 @@ DATA MODEL JSON THAT FAILED:
 ${JSON.stringify(failedJson, null, 2)}`;
 
             try {
-                let responseText;
-                if (provider === 'openai') {
-                    responseText = await callOpenAI(apiKey, systemPrompt, userMessage);
-                } else if (provider === 'anthropic') {
-                    responseText = await callAnthropic(apiKey, systemPrompt, userMessage);
-                } else if (provider === 'gemini') {
-                    responseText = await callGemini(apiKey, systemPrompt, userMessage);
+                let fixedModel;
+                if (provider === 'anthropic') {
+                    // Smart tool-use mode: Claude can inspect canonical models, post probes,
+                    // verify column resolution, and iterate before returning.
+                    fixedModel = await _runFixWithAnthropicTools(apiKey, failedJson, _lastSaveError);
                 } else {
-                    throw new Error('Unknown AI provider: ' + provider);
+                    let responseText;
+                    if (provider === 'openai') {
+                        responseText = await callOpenAI(apiKey, systemPrompt, userMessage);
+                    } else if (provider === 'gemini') {
+                        responseText = await callGemini(apiKey, systemPrompt, userMessage);
+                    } else {
+                        throw new Error('Unknown AI provider: ' + provider);
+                    }
+                    let cleanJson = responseText.trim();
+                    cleanJson = cleanJson.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+                    fixedModel = JSON.parse(cleanJson);
                 }
-
-                let cleanJson = responseText.trim();
-                cleanJson = cleanJson.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
-
-                const fixedModel = JSON.parse(cleanJson);
                 if (!fixedModel.pages || !Array.isArray(fixedModel.pages)) {
                     throw new Error('AI response is not a valid data model (missing pages array)');
                 }
