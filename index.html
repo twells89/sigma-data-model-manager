@@ -10032,11 +10032,26 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         // If friendly is undefined, falls back to state.useFriendlyNames (set per conversion run)
         state.useFriendlyNames = true; // default
 
+        // Small words that stay lowercase in Sigma's Title Case display names
+        // (matches Sigma's auto-titling for warehouse columns: DAY_OF_WEEK → "Day of Week").
+        // MUST stay in sync with the MCP repo's SIGMA_LOWERCASE_WORDS set in src/sigma-ids.ts.
+        const SIGMA_LOWERCASE_WORDS = new Set([
+            'a','an','the','and','but','or','for','nor','so','yet',
+            'at','by','in','of','on','to','up','as','into','via','per'
+        ]);
         function sigmaDisplayName(s, friendly) {
             const useFriendly = (friendly !== undefined) ? friendly : state.useFriendlyNames;
             if (useFriendly === false) return s || '';
-            const words = (s || '').toLowerCase().split('_');
-            return words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+            // Insert underscores at camelCase boundaries so OrderDate → Order_Date
+            const normalized = (s || '')
+                .replace(/([a-z])([A-Z])/g, '$1_$2')
+                .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2');
+            const words = normalized.toLowerCase().split('_').filter(Boolean);
+            return words.map((w, i) =>
+                (i === 0 || !SIGMA_LOWERCASE_WORDS.has(w))
+                    ? w.charAt(0).toUpperCase() + w.slice(1)
+                    : w
+            ).join(' ');
         }
 
         // Column formula: [TABLE_NAME/Display Name] or [TABLE_NAME/PHYSICAL_NAME]
