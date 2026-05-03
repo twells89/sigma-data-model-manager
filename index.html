@@ -24675,7 +24675,7 @@ view: date_dim {
                     if (metrics.length > 0) element.metrics = metrics;
 
                     elements.push(element);
-                    elementMap[modelName] = { elementId, colIdMap, pkCols };
+                    elementMap[modelName] = { elementId, colIdMap, pkCols, element };
                     colIdMaps[modelName] = colIdMap;
                 }
 
@@ -24708,11 +24708,16 @@ view: date_dim {
                         }
 
                         if (!srcElement.relationships) srcElement.relationships = [];
+                        // Rel name = uppercased target warehouse path-tail (matches MCP atlan
+                        // and the spec rule used by OAC/Qlik/Cube). Using `targetModel`
+                        // verbatim let lowercase model names leak into formulas.
+                        const _atlanTgtPath = (tgtEntry.element && tgtEntry.element.source && tgtEntry.element.source.path) || null;
+                        const _atlanRelName = (_atlanTgtPath ? _atlanTgtPath[_atlanTgtPath.length - 1] : targetModel).toUpperCase();
                         srcElement.relationships.push({
                             id: sigmaShortId(),
                             targetElementId: tgtEntry.elementId,
                             keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
-                            name: targetModel
+                            name: _atlanRelName
                         });
                         warnings.push(`✅ Relationship: ${modelName}.${fieldName} → ${targetModel}.${targetCol}`);
                     }

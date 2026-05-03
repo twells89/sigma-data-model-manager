@@ -193,8 +193,15 @@ grep -nE "kind:\s*['\"]union['\"]|\binputs:\s*\[|\bsources:\s*\[|\bmatches:\s*\[
 ```
 If a union element uses `inputs:` instead of `sources:` + `matches:`, FAIL.
 
+**F. Relationship name = uppercased target warehouse path-tail (NOT raw display phrase or model name)**
+For converters that emit relationships, every `relationship.name` field must equal the target element's `source.path[last].toUpperCase()` — e.g. `CUSTOMER_DIM`, not `customer_dim`, `Customer Dim`, `orders_to_customer`, or `targetModel`. This name is the middle segment of cross-element formulas `[SRC/REL_NAME/Field]` and the spec rule was retroactively applied to dbt, qlik, oac, atlan, cube, thoughtspot. Pattern to match in the diff:
+```
+grep -nE "name:\s*(targetModel|join\.name|tgtName|rTable)\b" <changed-file>
+```
+If you find any of these without `.toUpperCase()` and a `path[last]` lookup, FAIL.
+
 **Verdict on spec audit**
-- **Spec OK** — all five items pass for the converter(s) touched
+- **Spec OK** — all six items pass for the converter(s) touched
 - **Spec FAIL** — list which item(s) regressed and where; fix before committing
 
 ## Step 10 — End-to-end UI test (live POST + data verification)
@@ -220,6 +227,17 @@ When the diff touches a converter's view-build loop (the part that produces the 
 1. `mcp__sigma-mcp-v2__describe(type="datamodel", dataModelId)` — confirm element list returned
 2. `mcp__sigma-mcp-v2__describe(type="datamodel-element", dataModelId, elementId)` — pick the largest fact-style element. **Every column must have a concrete type** (`text` / `integer` / `number` / `datetime` / `boolean`). Any column showing as `error` is a FAIL.
 3. `mcp__sigma-mcp-v2__query(type="datamodel", dataModelId, sql="SELECT * FROM \"datamodel\".\"<elementId>\" LIMIT 5")` — must return rows with real warehouse values (e.g., `ORD-00009 | James Martinez | Atlanta Flagship`). All-null rows or "Unknown column" errors are a FAIL.
+
+**FIXTURE RULE — strictly verify warehouse columns BEFORE testing.** Synthetic fixtures (and even some "real" exports that point at warehouses other than CSA.TJ) frequently reference column names that don't exist in the test connection's warehouse — leading to spurious "regressions" that look like converter bugs but are actually fixture errors. Before marking a converter as failing:
+1. Run `mcp__sigma-mcp-v2__describe(type="table", inodeId)` on each warehouse table the fixture references
+2. Confirm every column the fixture pulls (`${TABLE}.X`, dbt `expr: X`, snowflake column `name: X`, etc.) appears in the returned DDL
+3. If a column is missing, the fixture is wrong — fix the fixture and re-run before filing a converter bug
+
+The 2026-05-03 E2E sweep produced THREE false-positive "regressions" (lookml, omni, powerbi) because agents synthesized fixtures referencing CUSTOMER_DIM.CUSTOMER_NAME (real cols are FIRST_NAME/LAST_NAME), ORDER_FACT.STORE_KEY (real: ORDER_STORE_KEY/SHIP_STORE_KEY), and similar. Always validate against the warehouse schema first.
+
+**Sigma MCP V2 query API quirk to know about:** `metric('id', t)` returns the literal string `"Missing Metric"` on EVERY data model (including hand-built ones) — this is a query-API limitation, NOT a converter bug. To verify metrics resolve, use `SELECT *` and look for `--metric-["id"]` columns in the output, OR use `SELECT SUM(physical_col)` directly.
+
+**Multi-element scenarios required:** Step 10 must include at least one fixture per converter that exercises multiple elements + cross-element references via relationships — single-element fixtures don't catch the most common defect class (formulas referencing the wrong element-name prefix or relationship name). A multi-view LookML chain or a 5+ element snowflake semantic view is appropriate.
 
 **Cleanup (mandatory):** after verification, delete each saved test data model via `DELETE ${SIGMA_BASE_URL}/v2/files/{dataModelId}` so the test folder doesn't accumulate clutter. The test folder lists at `${SIGMA_BASE_URL}/v2/files?parentId=9ca9bf60-...&limit=200`.
 
