@@ -21714,15 +21714,52 @@ ${cleanedSql}`;
             if (/^INDEX\s*\(\s*\)\s*$/i.test(f)) return { _isWindow: true, windowType: 'INDEX', innerAggFunc: '', innerColRaw: '', innerExprSql: '' };
             return null;
         }
-        // Window-aware worksheet index: tracks rowsDims, colsDims, dateDim
-        // separately so the converter can derive PARTITION BY / ORDER BY from
-        // shelves (rows = PARTITION, time-prefixed cols = ORDER).
+        // Window-aware worksheet index: tracks rowsDims, colsDims, dateDim,
+        // dateGrain so the converter can derive PARTITION BY / ORDER BY +
+        // DATE_TRUNC grain from shelves (rows = PARTITION, time-prefixed cols
+        // = ORDER, prefix yr|mn|qr|dy|wk → grain).
+        function _tableauPrefixToDateTrunc(prefix) {
+            if (!prefix) return null;
+            switch (String(prefix).toLowerCase()) {
+                case 'yr': return 'year';
+                case 'qr': return 'quarter';
+                case 'mn': return 'month';
+                case 'wk': return 'week';
+                case 'dy': return 'day';
+                case 'md': return 'day';
+                default: return null;
+            }
+        }
+        // Parse <calculation>'s <table-calculation> child for explicit
+        // "Compute Using" addressing. Returns null if no addressing block exists.
+        // See MCP tableau.ts (_parseWindowAddressing) for parity.
+        function _tableauParseWindowAddressing(calcEl) {
+            if (!calcEl || !calcEl.querySelector) return null;
+            const tc = calcEl.querySelector(':scope > table-calculation');
+            if (!tc) return null;
+            const direction = (tc.getAttribute('direction') || '').toLowerCase();
+            const scope = (tc.getAttribute('scope') || '').toLowerCase();
+            const addresses = tc.querySelectorAll(':scope > address');
+            const orderFields = [];
+            for (const a of addresses) {
+                const refName = a.getAttribute('ref-name') || '';
+                const cleaned = refName.replace(/^\[|\]$/g, '');
+                const colonStripped = cleaned.match(/^(?:yr|mn|qr|dy|wk|md):([^:]+)(?::[a-z]{2})?$/i);
+                const bare = colonStripped ? colonStripped[1] : cleaned;
+                if (bare) orderFields.push(bare.toUpperCase());
+            }
+            if (orderFields.length > 0) return { mode: 'specific', orderFields, rawDirection: direction || undefined };
+            if (scope === 'pane' || scope === 'cell') return { mode: 'unknown', orderFields: [], rawDirection: scope + '/' + direction };
+            if (direction === 'right' || direction === 'left') return { mode: 'table-across', orderFields: [], rawDirection: direction };
+            if (direction === 'down' || direction === 'up') return { mode: 'table-down', orderFields: [], rawDirection: direction };
+            return null;
+        }
         function _tableauBuildWindowWorksheetIndex(doc) {
             const byField = new Map();
             if (!doc || !doc.querySelectorAll) return { byField };
             const worksheets = doc.querySelectorAll('worksheets > worksheet');
             for (const ws of worksheets) {
-                const rowRefs = [], colRefs = []; let dateDim = null;
+                const rowRefs = [], colRefs = []; let dateDim = null; let dateGrain = null;
                 ws.querySelectorAll(':scope > table > rows').forEach(n => {
                     for (const r of _tableauExtractFieldRefsFromShelf(n.textContent || '')) rowRefs.push(r.toUpperCase());
                 });
@@ -21732,7 +21769,11 @@ ${cleanedSql}`;
                     while ((mm = re.exec(text)) !== null) {
                         const inner = mm[1];
                         const colon = inner.match(/^(yr|mn|qr|dy|wk|md):([^:]+):[a-z]{2}$/i);
-                        if (colon) { dateDim = colon[2].toUpperCase(); colRefs.push(dateDim); }
+                        if (colon) {
+                            dateDim = colon[2].toUpperCase();
+                            dateGrain = _tableauPrefixToDateTrunc(colon[1]);
+                            colRefs.push(dateDim);
+                        }
                         else { const c2 = inner.match(/^[a-z]{2,5}:([^:]+):[a-z]{2}$/i); colRefs.push((c2 ? c2[1] : inner).toUpperCase()); }
                     }
                 });
@@ -21748,7 +21789,7 @@ ${cleanedSql}`;
                 const usedFields = new Set([...rowRefs, ...colRefs]);
                 for (const used of usedFields) {
                     const list = byField.get(used) || [];
-                    list.push({ rowsDims: rowsDims.slice(), colsDims: colsDims.slice(), allDims, dateDim });
+                    list.push({ rowsDims: rowsDims.slice(), colsDims: colsDims.slice(), allDims, dateDim, dateGrain });
                     byField.set(used, list);
                 }
             }
@@ -22901,9 +22942,36 @@ ${cleanedSql}`;
                                 for (const c of ctxList) { if (c.rowsDims.length > 0 && c.dateDim) { chosen = c; break; } }
                                 if (!chosen) for (const c of ctxList) { if (c.rowsDims.length > 0) { chosen = c; break; } }
                                 if (!chosen && ctxList.length > 0) chosen = ctxList[0];
-                                const partitionDimNames = chosen ? chosen.rowsDims.slice() : [];
+                                let partitionDimNames = chosen ? chosen.rowsDims.slice() : [];
                                 let orderDimRaw = chosen ? (chosen.dateDim || (chosen.colsDims[0] || null)) : null;
-                                let orderDimDateTrunc = chosen && chosen.dateDim ? 'month' : null;
+                                // Use the cols-shelf prefix → DATE_TRUNC grain captured at index time
+                                // (yr→year, mn→month, qr→quarter, dy/md→day, wk→week). Null grain
+                                // means no DATE_TRUNC wrapper (raw date column).
+                                let orderDimDateTrunc = chosen && chosen.dateDim ? (chosen.dateGrain != null ? chosen.dateGrain : null) : null;
+
+                                // Apply explicit "Compute Using" addressing override from
+                                // <calculation>'s <table-calculation> child if present.
+                                const _addressing = _tableauParseWindowAddressing(calcEl);
+                                if (_addressing) {
+                                    if (_addressing.mode === 'specific' && _addressing.orderFields.length > 0) {
+                                        const orderSet = new Set(_addressing.orderFields.map(s => s.toUpperCase()));
+                                        const allShelfDims = chosen ? Array.from(new Set([...chosen.rowsDims, ...chosen.colsDims])) : [];
+                                        partitionDimNames = allShelfDims.filter(d => !orderSet.has(d.toUpperCase()));
+                                        const firstOrder = _addressing.orderFields[0];
+                                        orderDimRaw = firstOrder;
+                                        orderDimDateTrunc = (chosen && chosen.dateDim && firstOrder.toUpperCase() === chosen.dateDim.toUpperCase())
+                                            ? (chosen.dateGrain != null ? chosen.dateGrain : null)
+                                            : null;
+                                        warnings.push('✅ Window calc "' + caption + '" — addressing override: order=[' + _addressing.orderFields.join(',') + '], partition=[' + partitionDimNames.join(',') + ']');
+                                    } else if (_addressing.mode === 'table-down') {
+                                        partitionDimNames = chosen ? chosen.colsDims.slice() : [];
+                                        orderDimRaw = chosen && chosen.rowsDims.length > 0 ? chosen.rowsDims[0] : null;
+                                        orderDimDateTrunc = null;
+                                    } else if (_addressing.mode === 'unknown') {
+                                        warnings.push('⚠ Window calc "' + caption + '" — Compute Using mode "' + _addressing.rawDirection + '" is not yet supported; falling back to rows/cols heuristic');
+                                    }
+                                    // 'table-across' is the rows/cols default; no change.
+                                }
 
                                 const partitionResolved = []; let allP = true;
                                 for (const p of partitionDimNames) {
@@ -25719,7 +25787,7 @@ models:
     <li><b>Simple aggregates</b> → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)</li>
     <li><b>Parameters</b> → Sigma controls (list, date-range, number-range, text)</li>
     <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves.</li>
-    <li><b>Window / table calculations</b> (<code>RUNNING_SUM</code>, <code>RUNNING_AVG</code>, <code>RUNNING_MIN</code>, <code>RUNNING_MAX</code>, <code>WINDOW_SUM</code>, <code>WINDOW_AVG</code>, <code>WINDOW_MIN</code>, <code>WINDOW_MAX</code>, <code>WINDOW_COUNT</code>, <code>LOOKUP</code>, <code>PREVIOUS_VALUE</code>, <code>RANK</code>, <code>RANK_DENSE</code>, <code>RANK_UNIQUE</code>, <code>INDEX</code>, <code>FIRST</code>, <code>LAST</code>) → A <code>kind:sql</code> helper element with explicit Snowflake <code>OVER()</code> clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys are derived from worksheet <code>rows</code> shelves, order keys from time-truncated <code>cols</code> shelves. Multiple window calcs sharing the same partition+order signature are emitted as separate aliases on a single helper element.</li>
+    <li><b>Window / table calculations</b> (<code>RUNNING_SUM</code>, <code>RUNNING_AVG</code>, <code>RUNNING_MIN</code>, <code>RUNNING_MAX</code>, <code>WINDOW_SUM</code>, <code>WINDOW_AVG</code>, <code>WINDOW_MIN</code>, <code>WINDOW_MAX</code>, <code>WINDOW_COUNT</code>, <code>LOOKUP</code>, <code>PREVIOUS_VALUE</code>, <code>RANK</code>, <code>RANK_DENSE</code>, <code>RANK_UNIQUE</code>, <code>INDEX</code>, <code>FIRST</code>, <code>LAST</code>) → A <code>kind:sql</code> helper element with explicit Snowflake <code>OVER()</code> clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys are derived from worksheet <code>rows</code> shelves, order keys from time-truncated <code>cols</code> shelves. The DATE_TRUNC grain is derived from the cols-shelf prefix (<code>yr:</code>→year, <code>qr:</code>→quarter, <code>mn:</code>→month, <code>wk:</code>→week, <code>dy:</code>/<code>md:</code>→day; no prefix → no DATE_TRUNC wrapper). Explicit "Compute Using" addressing (<code>&lt;table-calculation&gt;</code> with <code>&lt;address&gt;</code> children, plus Table Across/Down direction) overrides the rows/cols heuristic. Multiple window calcs sharing the same partition+order signature are emitted as separate aliases on a single helper element.</li>
     <li><b>Sets</b> → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → <code>In([Field], ...)</code> column. Add a filter control on these columns in your Sigma workbook to replicate set-based filtering.</li>
     <li><b>Top N / Bottom N sets</b> (global, parameterized, partitioned) → A <code>kind:sql</code> RANK helper element + relationship from the base on the dim key (and partition cols, if any). The helper exposes <code>IS_TOP_N</code> as a boolean. For literal-N sets the boolean is computed in SQL (<code>(rnk &lt;= N) AS IS_TOP_N</code>); for parameter-driven N a Sigma calc col references both the local Rank column and a number control derived from the Tableau parameter. Bottom-N is the same with <code>ASC</code> ordering. Partitioned sets emit <code>PARTITION BY</code> in the OVER clause.</li>
     <li><b>Derived element</b> → For fact tables with relationships, a derived element is created that surfaces all own columns plus related dimension columns via <code>[FACT_TABLE/RELATIONSHIP_NAME/Col]</code> cross-element formulas — no manual wiring required</li>
@@ -25728,8 +25796,7 @@ models:
 <h3>Known Limitations</h3>
 <ul>
     <li><b>LOD INCLUDE/EXCLUDE without worksheet context</b> — When a calc field is not placed on any worksheet's rows/cols shelf, the converter cannot derive the view dimensions and the LOD is skipped with a warning. Place the calc on at least one worksheet so the converter can determine the effective grouping.</li>
-    <li><b>Window calc partition/order heuristic</b> — Partition dims come from rows shelves, order dims from time-truncated cols shelves (mn:/yr:/qr:/dy: prefixes). Other addressing modes (Compute Using > Pane, Cell, Specific Dimensions) are not yet parsed; if the heuristic mis-derives the grouping, edit the helper element's SQL after import.</li>
-    <li><b>Date-truncation grain</b> — Window-helper SQL uses <code>DATE_TRUNC('month', ...)</code> as the default order grain. If your worksheet uses year/quarter/day grain, edit the SQL after import.</li>
+    <li><b>Window calc Compute Using — Pane / Cell</b> — "Specific Dimensions" addressing and Table (Across/Down) direction are parsed from <code>&lt;table-calculation&gt;</code> in the TWB. Pane and Cell scopes (which require pane-bounds awareness) are not yet supported; the converter falls back to the rows/cols heuristic and emits a warning. Edit the helper SQL post-import if needed.</li>
     <li><b>Post-create validation</b> — After saving, call <code>GET /v2/dataModels/&#123;id&#125;/columns</code> and inspect for <code>type.type === "error"</code> entries. Both LOD and window helpers post as success even if a referenced column is missing; only this endpoint surfaces the column-level error.</li>
     <li><b>Cross-element calculated columns</b> — Tableau calculated fields that reference columns from related tables are automatically moved to the derived child element (Sigma calculated columns can only reference columns local to their element). Related dimension columns are accessible via the derived element using <code>[FACT/RELATIONSHIP/Col]</code> formulas.</li>
     <li><b>Role-playing dimensions</b> — Multiple relationships from a fact table to the same dimension are now supported. Each relationship gets a unique name including the join key (e.g. "DATE_DIM via Order Date Key"). Review the generated names for clarity.</li>
