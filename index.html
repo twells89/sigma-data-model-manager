@@ -21480,7 +21480,7 @@ ${cleanedSql}`;
                 const connClass = connection ? (connection.getAttribute('class') || '') : '';
                 const dbname = connection ? (connection.getAttribute('dbname') || connection.getAttribute('database') || '') : '';
                 const schema = connection ? (connection.getAttribute('schema') || '') : '';
-                _tableauParsed.datasources.push({ name, element: ds, connection, connClass, dbname, schema, filename });
+                _tableauParsed.datasources.push({ name, element: ds, connection, connClass, dbname, schema, filename, doc });
                 addedCount++;
             }
 
@@ -21624,9 +21624,15 @@ ${cleanedSql}`;
         //         { INCLUDE [dim] : AGG([field]) }
         //         { EXCLUDE [dim] : AGG([field]) }
         //         { FIXED : AGG([field]) }  (table-scoped, no dimensions)
+        function _tableauInnerToSql(expr) {
+            let s = expr;
+            s = s.replace(/\bZN\s*\(([^()]+)\)/gi, '$1');
+            s = s.replace(/\[([^\]]+)\]/g, (_m, name) => name.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase());
+            s = s.replace(/\/\s*([A-Z][A-Z0-9_]*)\b/g, '/NULLIF($1,0)');
+            return s;
+        }
         function tableauParseLOD(formula) {
             const f = formula.trim();
-            // Match: { TYPE [dims...] : aggregate }
             const lodMatch = f.match(/^\{\s*(FIXED|INCLUDE|EXCLUDE)\s*([\s\S]*?)\s*:\s*([\s\S]+?)\s*\}$/i);
             if (!lodMatch) return null;
 
@@ -21634,17 +21640,19 @@ ${cleanedSql}`;
             const dimsRaw = lodMatch[2].trim();
             const aggRaw  = lodMatch[3].trim();
 
-            // Parse dimension references: [Dim1], [Dim2]
             const dims = [];
             if (dimsRaw) {
                 const dimMatches = dimsRaw.match(/\[([^\]]+)\]/g);
-                if (dimMatches) {
-                    dimMatches.forEach(d => dims.push(d.replace(/^\[|\]$/g, '')));
-                }
+                if (dimMatches) dimMatches.forEach(d => dims.push(d.replace(/^\[|\]$/g, '')));
             }
 
-            // Convert the aggregate expression from Tableau to Sigma
-            // (simple cases: SUM([Sales]), COUNTD([Customer]), AVG([Price]))
+            // Determine canonical SQL aggregate function and inner expression for helper-element SQL
+            const aggMatch = aggRaw.match(/^(SUM|AVG|MIN|MAX|COUNTD|COUNT)\s*\(([\s\S]+)\)\s*$/i);
+            let aggFunc = 'SUM', innerExpr = aggRaw;
+            if (aggMatch) { aggFunc = aggMatch[1].toUpperCase(); innerExpr = aggMatch[2].trim(); }
+            const aggExpr = _tableauInnerToSql(innerExpr);
+
+            // Sigma-formula form (legacy)
             let sigmaAgg = aggRaw;
             sigmaAgg = sigmaAgg.replace(/\bCOUNTD\s*\(/gi, 'CountDistinct(');
             sigmaAgg = sigmaAgg.replace(/\bSUM\s*\(/gi, 'Sum(');
@@ -21653,12 +21661,47 @@ ${cleanedSql}`;
             sigmaAgg = sigmaAgg.replace(/\bMAX\s*\(/gi, 'Max(');
             sigmaAgg = sigmaAgg.replace(/\bMEDIAN\s*\(/gi, 'Median(');
             sigmaAgg = sigmaAgg.replace(/\bCOUNT\s*\(([^)]+)\)/gi, 'CountIf(IsNotNull($1))');
-            // Convert column refs: SNAKE_CASE → Title Case
             sigmaAgg = sigmaAgg.replace(/\[([A-Z][A-Z0-9_]{2,})\]/g, (m, c) => '[' + sigmaDisplayName(c) + ']');
-            // Single-quote → double-quote
             sigmaAgg = sigmaAgg.replace(/'([^']*)'/g, '"$1"');
 
-            return { lodType, dims, sigmaAgg };
+            return { lodType, dims, sigmaAgg, aggFunc, aggExpr };
+        }
+
+        function _tableauExtractFieldRefsFromShelf(text) {
+            const refs = [];
+            const re = /\[[^\]]+\]\.\[([^\]]+)\]/g;
+            let m; while ((m = re.exec(text)) !== null) {
+                let inner = m[1];
+                const colon = inner.match(/^[a-z]{2,5}:([^:]+):[a-z]{2}$/i);
+                if (colon) inner = colon[1];
+                refs.push(inner);
+            }
+            return refs;
+        }
+        function _tableauBuildWorksheetIndex(doc) {
+            const byField = new Map();
+            if (!doc || !doc.querySelectorAll) return { byField };
+            const worksheets = doc.querySelectorAll('worksheets > worksheet');
+            for (const ws of worksheets) {
+                const usedFields = new Set();
+                const shelves = [];
+                ws.querySelectorAll(':scope > table > rows, :scope > table > cols').forEach(n => shelves.push(n.textContent || ''));
+                for (const s of shelves) for (const ref of _tableauExtractFieldRefsFromShelf(s)) usedFields.add(ref.toUpperCase());
+                const dimFieldNames = new Set();
+                ws.querySelectorAll(':scope > table > view > datasource-dependencies > column').forEach(col => {
+                    const role = col.getAttribute('role');
+                    const name = (col.getAttribute('name') || '').replace(/^\[|\]$/g, '');
+                    if (role === 'dimension') dimFieldNames.add(name.toUpperCase());
+                });
+                const viewDims = [];
+                for (const used of usedFields) if (dimFieldNames.has(used)) viewDims.push(used);
+                for (const used of usedFields) {
+                    const list = byField.get(used) || [];
+                    list.push({ dims: viewDims.slice() });
+                    byField.set(used, list);
+                }
+            }
+            return { byField };
         }
 
         function tableauFormulaToSigma(formula, warnings) {
@@ -22264,6 +22307,92 @@ ${cleanedSql}`;
                     const factTableName = factEl.name
                         || (factEl.source && factEl.source.path ? factEl.source.path[factEl.source.path.length - 1] : 'FACT');
 
+                    // ── LOD helper-element registry (kind:sql, dedup by GROUP BY signature) ──
+                    const _lodWsIndex = _tableauBuildWorksheetIndex(ds.doc);
+                    const _lodHelpers = {};
+                    const _lodUsedAliases = new Set();
+                    const _lodMakeAlias = (cap) => {
+                        let base = (cap || 'LOD_VAL').toUpperCase().replace(/[^A-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '').replace(/_+/g, '_');
+                        if (!base) base = 'LOD_VAL';
+                        let a = base, n = 2;
+                        while (_lodUsedAliases.has(a)) a = base + '_' + (n++);
+                        _lodUsedAliases.add(a);
+                        return a;
+                    };
+                    const _resolveLodDim = (dimName) => {
+                        const found = displayNameMap[dimName.toUpperCase()] || displayNameMap[sigmaDisplayName(dimName).toUpperCase()];
+                        if (!found) return null;
+                        const parentCol = (found.el.columns || []).find(c => c.id === found.colId);
+                        const fm = parentCol && parentCol.formula ? parentCol.formula.match(/\/([^\]]+)\]$/) : null;
+                        const dispName = parentCol ? (parentCol.name || (fm ? fm[1] : dimName)) : dimName;
+                        const dimUpper = (fm ? fm[1] : dispName).replace(/\s+/g, '_').toUpperCase();
+                        return { dimUpper, displayName: dispName, baseColId: found.colId };
+                    };
+                    const _ensureLodHelper = (effectiveDims, dimResolved, relNameSuggestion) => {
+                        if (!effectiveDims.length) return null;
+                        const sigKey = effectiveDims.slice().sort().join(',');
+                        if (_lodHelpers[sigKey]) return { helper: _lodHelpers[sigKey].element, signatureKey: sigKey };
+                        const helperId = sigmaShortId();
+                        const cols = [], order = [], groupDimColIds = [];
+                        for (const d of dimResolved) {
+                            const colId = sigmaShortId();
+                            cols.push({ id: colId, formula: '[Custom SQL/' + d.dimUpper + ']', name: d.displayName });
+                            order.push(colId);
+                            groupDimColIds.push(colId);
+                        }
+                        const helperEl = {
+                            id: helperId, kind: 'table', name: relNameSuggestion,
+                            source: { connectionId: connectionId, kind: 'sql', statement: '__PLACEHOLDER__' },
+                            columns: cols, order
+                        };
+                        _lodHelpers[sigKey] = {
+                            element: helperEl, groupDimNames: effectiveDims.slice(),
+                            groupDimColIds, aggsByExpr: {}, relationshipName: relNameSuggestion
+                        };
+                        lodChildElements.push(helperEl);
+                        return { helper: helperEl, signatureKey: sigKey };
+                    };
+                    const _ensureLodRelationship = (sigKey, dimResolved, relName) => {
+                        const rec = _lodHelpers[sigKey]; if (!rec) return;
+                        if ((factEl.relationships || []).find(r => r.targetElementId === rec.element.id)) return;
+                        const keys = [];
+                        for (let i = 0; i < dimResolved.length; i++) {
+                            const baseColId = dimResolved[i].baseColId;
+                            const helperColId = rec.groupDimColIds[i];
+                            if (!baseColId || !helperColId) return;
+                            keys.push({ sourceColumnId: baseColId, targetColumnId: helperColId });
+                        }
+                        if (!factEl.relationships) factEl.relationships = [];
+                        factEl.relationships.push({ id: sigmaShortId(), targetElementId: rec.element.id, keys, name: relName });
+                    };
+                    const _addLodAgg = (sigKey, alias, aggFunc, aggExpr, cap) => {
+                        const rec = _lodHelpers[sigKey]; if (!rec) return { alias, caption: cap };
+                        const dedupKey = aggFunc + '::' + aggExpr;
+                        if (rec.aggsByExpr[dedupKey]) return { alias: rec.aggsByExpr[dedupKey].alias, caption: rec.aggsByExpr[dedupKey].caption };
+                        const calcId = sigmaShortId();
+                        rec.aggsByExpr[dedupKey] = { alias, aggFunc, aggExpr, calcId, caption: cap };
+                        rec.element.columns.push({ id: calcId, formula: '[Custom SQL/' + alias + ']', name: cap });
+                        rec.element.order.push(calcId);
+                        return { alias, caption: cap };
+                    };
+                    const _finalizeLodHelpers = () => {
+                        const baseFq = (factEl.source && factEl.source.path && factEl.source.path.length >= 2)
+                            ? factEl.source.path.join('.') : factTableName;
+                        for (const sigKey of Object.keys(_lodHelpers)) {
+                            const rec = _lodHelpers[sigKey];
+                            const dimList = rec.groupDimNames.join(', ');
+                            const aggParts = [];
+                            for (const k of Object.keys(rec.aggsByExpr)) {
+                                const a = rec.aggsByExpr[k];
+                                const sqlAggFunc = a.aggFunc === 'COUNTD' ? ('COUNT(DISTINCT ' + a.aggExpr + ')') : (a.aggFunc + '(' + a.aggExpr + ')');
+                                aggParts.push(sqlAggFunc + ' AS ' + a.alias);
+                            }
+                            const groupByIdx = rec.groupDimNames.map((_d, i) => i + 1).join(', ');
+                            rec.element.source.statement =
+                                'SELECT ' + dimList + ', ' + aggParts.join(', ') + ' FROM ' + baseFq + ' GROUP BY ' + groupByIdx;
+                        }
+                    };
+
                     for (const col of ds.element.querySelectorAll(':scope > column')) {
                         const rawName  = col.getAttribute('name') || '';
                         const caption  = col.getAttribute('caption') || rawName.replace(/^\[|\]$/g,'');
@@ -22352,116 +22481,16 @@ ${cleanedSql}`;
                             const sigmaFormula = tableauFormulaToSigma(formula, warnings);
                             if (!sigmaFormula) continue;
 
-                            // ── LOD expression → child element with grouping ──
+                            // ── LOD expression → kind:sql helper element + relationship ──
                             if (sigmaFormula && typeof sigmaFormula === 'object' && sigmaFormula._isLOD) {
                                 const lod = sigmaFormula;
-                                if (lod.lodType === 'FIXED' && lod.dims.length > 0) {
-                                    // Resolve dimension display names for column formulas
-                                    let allDimsFound = true;
-                                    const dimInfos = []; // { displayName, colId (in parent) }
-                                    for (const dimName of lod.dims) {
-                                        const found = displayNameMap[dimName.toUpperCase()]
-                                            || displayNameMap[sigmaDisplayName(dimName).toUpperCase()];
-                                        if (found) {
-                                            // Find the display name from the parent column
-                                            const parentCol = (found.el.columns || []).find(c => c.id === found.colId);
-                                            const dispName = parentCol
-                                                ? (parentCol.name || (parentCol.formula.match(/\/([^\]]+)\]$/) || [])[1] || dimName)
-                                                : dimName;
-                                            dimInfos.push({ displayName: dispName, parentColId: found.colId });
-                                        } else {
-                                            allDimsFound = false;
-                                            warnings.push('⚠ LOD "' + caption + '": dimension [' + dimName + '] not found — cannot create child element');
-                                        }
-                                    }
-
-                                    if (allDimsFound && dimInfos.length > 0) {
-                                        // Check if a child element already exists for these exact dims
-                                        const dimKey = dimInfos.map(d => d.displayName).sort().join(',');
-                                        let existingChild = lodChildElements.find(ce =>
-                                            ce._dimKey === dimKey
-                                        );
-
-                                        if (existingChild) {
-                                            // Add referenced columns if not already on the child
-                                            const existingFormulas = new Set(existingChild.columns.map(c => c.formula));
-                                            const aggColRefs = lod.sigmaAgg.match(/\[([^\]]+)\]/g) || [];
-                                            for (const ref of aggColRefs) {
-                                                const colName = ref.replace(/^\[|\]$/g, '');
-                                                const refFormula = '[' + factTableName + '/' + colName + ']';
-                                                if (!existingFormulas.has(refFormula)) {
-                                                    existingFormulas.add(refFormula);
-                                                    const refColId = sigmaShortId();
-                                                    existingChild.columns.push({ id: refColId, formula: refFormula });
-                                                    existingChild.order.push(refColId);
-                                                }
-                                            }
-                                            // Add another calculation to the existing child
-                                            const calcId = sigmaShortId();
-                                            const _tabFmt4a = _inferSigmaFormat(lod.sigmaAgg, caption);
-                                            const _tabLodCol4a = { id: calcId, formula: lod.sigmaAgg, name: caption };
-                                            if (_tabFmt4a) _tabLodCol4a.format = _tabFmt4a;
-                                            existingChild.columns.push(_tabLodCol4a);
-                                            existingChild.order.push(calcId);
-                                            existingChild.groupings[0].calculations.push(calcId);
-                                        } else {
-                                            // Create a new lean child element
-                                            const childId = sigmaShortId();
-                                            const childCols = [];
-                                            const childOrder = [];
-                                            const groupByIds = [];
-
-                                            // Add dimension columns referencing parent
-                                            for (const di of dimInfos) {
-                                                const colId = sigmaShortId();
-                                                childCols.push({ id: colId, formula: '[' + factTableName + '/' + di.displayName + ']' });
-                                                childOrder.push(colId);
-                                                groupByIds.push(colId);
-                                            }
-
-                                            // Add columns referenced in the aggregate formula
-                                            // e.g. Sum([Net Revenue]) needs [Net Revenue] on the child
-                                            const aggColRefs = lod.sigmaAgg.match(/\[([^\]]+)\]/g) || [];
-                                            const addedColNames = new Set(dimInfos.map(d => d.displayName.toUpperCase()));
-                                            for (const ref of aggColRefs) {
-                                                const colName = ref.replace(/^\[|\]$/g, '');
-                                                if (addedColNames.has(colName.toUpperCase())) continue;
-                                                addedColNames.add(colName.toUpperCase());
-                                                const refColId = sigmaShortId();
-                                                childCols.push({ id: refColId, formula: '[' + factTableName + '/' + colName + ']' });
-                                                childOrder.push(refColId);
-                                            }
-
-                                            // Add calculation column
-                                            const calcId = sigmaShortId();
-                                            const _tabFmt4b = _inferSigmaFormat(lod.sigmaAgg, caption);
-                                            const _tabLodCol4b = { id: calcId, formula: lod.sigmaAgg, name: caption };
-                                            if (_tabFmt4b) _tabLodCol4b.format = _tabFmt4b;
-                                            childCols.push(_tabLodCol4b);
-                                            childOrder.push(calcId);
-
-                                            const childEl = {
-                                                id: childId,
-                                                kind: 'table',
-                                                name: factTableName + ' by ' + dimInfos.map(d => d.displayName).join(', '),
-                                                source: { elementId: factEl.id, kind: 'table' },
-                                                columns: childCols,
-                                                groupings: [{
-                                                    id: sigmaShortId(),
-                                                    groupBy: groupByIds,
-                                                    calculations: [calcId]
-                                                }],
-                                                order: childOrder,
-                                                _dimKey: dimKey // internal, stripped before output
-                                            };
-                                            lodChildElements.push(childEl);
-                                        }
-
-                                        warnings.push('✅ LOD "' + caption + '" → child element "' + factTableName + ' by ' + dimInfos.map(d => d.displayName).join(', ') + '" with grouping + calculation: ' + lod.sigmaAgg);
-                                        continue;
-                                    }
-                                } else if (lod.lodType === 'FIXED' && lod.dims.length === 0) {
-                                    // {FIXED : AGG()} = table-scoped aggregate → becomes a metric
+                                const lodDimsResolved = []; let allFound = true;
+                                for (const dn of lod.dims) {
+                                    const r = _resolveLodDim(dn);
+                                    if (r) lodDimsResolved.push(r);
+                                    else { allFound = false; warnings.push('⚠ LOD "' + caption + '": dim [' + dn + '] not found'); }
+                                }
+                                if (lod.lodType === 'FIXED' && lod.dims.length === 0) {
                                     if (!factEl.metrics) factEl.metrics = [];
                                     const _tabFmt1 = _inferSigmaFormat(lod.sigmaAgg, caption);
                                     const _tabM1 = { id: sigmaShortId(), formula: lod.sigmaAgg, name: caption };
@@ -22470,13 +22499,47 @@ ${cleanedSql}`;
                                     warnings.push('✅ LOD "' + caption + '" (table-scoped FIXED) → metric: ' + lod.sigmaAgg);
                                     continue;
                                 }
-                                // INCLUDE/EXCLUDE — warn with guidance
-                                if (lod.lodType === 'INCLUDE') {
-                                    warnings.push('⚠ LOD "' + caption + '" (INCLUDE) → In Sigma, add [' + lod.dims.join(', ') + '] as a grouping level and place ' + lod.sigmaAgg + ' at that level. See: community.sigmacomputing.com/t/tableau-level-of-detail-or-lod-calculations-in-sigma/6427');
-                                } else if (lod.lodType === 'EXCLUDE') {
-                                    warnings.push('⚠ LOD "' + caption + '" (EXCLUDE) → In Sigma, place ' + lod.sigmaAgg + ' at a grouping level that does not include [' + lod.dims.join(', ') + ']. See: community.sigmacomputing.com/t/tableau-level-of-detail-or-lod-calculations-in-sigma/6427');
+                                if (!allFound) continue;
+
+                                const fieldKeyUpper = fieldKey.toUpperCase();
+                                const viewContexts = _lodWsIndex.byField.get(fieldKeyUpper) || [];
+                                const viewDimSets = viewContexts.length > 0 ? viewContexts.map(c => c.dims.slice()) : [[]];
+
+                                const effectiveSets = []; const seenSigs = new Set();
+                                for (const viewDims of viewDimSets) {
+                                    let effective;
+                                    if (lod.lodType === 'FIXED') effective = lodDimsResolved.map(d => d.dimUpper);
+                                    else if (lod.lodType === 'INCLUDE') {
+                                        const set = new Set(viewDims);
+                                        for (const d of lodDimsResolved) set.add(d.dimUpper);
+                                        effective = Array.from(set);
+                                    } else {
+                                        const exclude = new Set(lodDimsResolved.map(d => d.dimUpper));
+                                        effective = viewDims.filter(v => !exclude.has(v));
+                                    }
+                                    const sig = effective.slice().sort().join(',');
+                                    if (sig && !seenSigs.has(sig)) { seenSigs.add(sig); effectiveSets.push(effective); }
                                 }
-                                warnings.push('⛔ "' + caption + '" LOD not auto-converted — add grouping manually in Sigma workbook.');
+                                if (effectiveSets.length === 0) {
+                                    warnings.push('⚠ LOD "' + caption + '" (' + lod.lodType + ') — no view context; skipped');
+                                    continue;
+                                }
+                                for (const effective of effectiveSets) {
+                                    const dimResolved = []; let ok = true;
+                                    for (const dn of effective) {
+                                        const m = _resolveLodDim(dn);
+                                        if (!m) { ok = false; warnings.push('⚠ LOD "' + caption + '" view dim [' + dn + '] not on base'); break; }
+                                        dimResolved.push(m);
+                                    }
+                                    if (!ok) continue;
+                                    const alias = _lodMakeAlias(caption);
+                                    const relName = lod.lodType + ' ' + (lod.dims.join(', ') || '(table)') + (effectiveSets.length > 1 ? ' @ ' + effective.join('×') : '');
+                                    const helperRes = _ensureLodHelper(effective, dimResolved, factTableName + ' ' + lod.lodType + ' ' + effective.join(', '));
+                                    if (!helperRes) continue;
+                                    _ensureLodRelationship(helperRes.signatureKey, dimResolved, relName);
+                                    _addLodAgg(helperRes.signatureKey, alias, lod.aggFunc, lod.aggExpr, caption);
+                                    warnings.push('✅ LOD "' + caption + '" (' + lod.lodType + ') → helper "' + helperRes.helper.name + '" alias ' + alias);
+                                }
                                 continue;
                             }
 
@@ -22524,13 +22587,16 @@ ${cleanedSql}`;
                         }
                     }
 
-                    // ── Add LOD child elements to the elements array ──
+                    // Finalize LOD helper SQL statements now that all aggregates are registered
+                    _finalizeLodHelpers();
+
+                    // ── Add LOD helper child elements to the elements array ──
                     if (lodChildElements.length > 0) {
                         for (const child of lodChildElements) {
                             delete child._dimKey; // strip internal key before output
                             elements.push(child);
                         }
-                        warnings.push('ℹ ' + lodChildElements.length + ' child element' + (lodChildElements.length !== 1 ? 's' : '') + ' created from LOD expressions (grouped views of ' + factTableName + ')');
+                        warnings.push('ℹ ' + lodChildElements.length + ' LOD helper element' + (lodChildElements.length !== 1 ? 's' : '') + ' created (kind:sql)');
                     }
 
                     // ── Group set boolean columns into a "Sets" folder ──
@@ -25167,14 +25233,14 @@ models:
     <li><b>Calculated fields</b> → Sigma calculated columns with formula conversion</li>
     <li><b>Simple aggregates</b> → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)</li>
     <li><b>Parameters</b> → Sigma controls (list, date-range, number-range, text)</li>
-    <li><b>LOD FIXED expressions</b> → Child elements with groupings</li>
+    <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves.</li>
     <li><b>Sets</b> → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → <code>In([Field], ...)</code> column. Add a filter control on these columns in your Sigma workbook to replicate set-based filtering.</li>
     <li><b>Derived element</b> → For fact tables with relationships, a derived element is created that surfaces all own columns plus related dimension columns via <code>[FACT_TABLE/RELATIONSHIP_NAME/Col]</code> cross-element formulas — no manual wiring required</li>
 </ul>
 
 <h3>Known Limitations</h3>
 <ul>
-    <li><b>LOD INCLUDE/EXCLUDE</b> — Cannot be auto-converted to Sigma; generates a warning with guidance to use groupings. Only <code>FIXED</code> LOD expressions produce child elements.</li>
+    <li><b>LOD INCLUDE/EXCLUDE without worksheet context</b> — When a calc field is not placed on any worksheet's rows/cols shelf, the converter cannot derive the view dimensions and the LOD is skipped with a warning. Place the calc on at least one worksheet so the converter can determine the effective grouping.</li>
     <li><b>Table calculations</b> — RUNNING_SUM → <code>CumulativeSum()</code>, RANK → <code>Rank()</code>/<code>DenseRank()</code>, INDEX → <code>RowNumber()</code>, WINDOW_SUM → <code>GrandTotal()</code>. Complex patterns (LOOKUP, PREVIOUS_VALUE, nested table calcs) are flagged but not converted.</li>
     <li><b>Cross-element calculated columns</b> — Tableau calculated fields that reference columns from related tables are automatically moved to the derived child element (Sigma calculated columns can only reference columns local to their element). Related dimension columns are accessible via the derived element using <code>[FACT/RELATIONSHIP/Col]</code> formulas.</li>
     <li><b>Role-playing dimensions</b> — Multiple relationships from a fact table to the same dimension are now supported. Each relationship gets a unique name including the join key (e.g. "DATE_DIM via Order Date Key"). Review the generated names for clarity.</li>

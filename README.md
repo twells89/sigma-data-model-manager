@@ -55,13 +55,13 @@ Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) 
 - Calculated fields → Sigma calculated columns with formula conversion
 - Simple aggregates → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)
 - Parameters → Sigma controls (list, date-range, text)
-- LOD FIXED expressions → Child elements with groupings
+- LOD FIXED / INCLUDE / EXCLUDE expressions → A `kind:sql` helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves.
 - Sets → Boolean calculated columns; condition sets → formula column, member sets → `In([Field], ...)` column
 - Bins → Bucketed `Floor()` calculated columns
 - Table calculations → `RUNNING_SUM` → `CumulativeSum()`, `RANK` → `Rank()` / `DenseRank()`, `INDEX` → `RowNumber()`
 
 **Known limitations:**
-- LOD INCLUDE / EXCLUDE — Cannot be auto-converted; generates a warning with guidance to use groupings
+- LOD INCLUDE / EXCLUDE without worksheet context — When a calc field is not placed on any worksheet's rows/cols shelf, the converter cannot derive the view dimensions and the LOD is skipped with a warning. Place the calc on at least one worksheet so the converter can determine the effective grouping.
 - Complex table calculations (LOOKUP, PREVIOUS_VALUE, nested) — Flagged but not converted
 - Cross-element calculated columns — Automatically moved to the derived child element; metrics with cross-element refs are removed with a warning and must be added manually in Sigma UI
 - Role-playing dimensions — Supported; each relationship includes the join key in its name (e.g. "DATE_DIM via Order Date Key")
