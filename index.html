@@ -3576,10 +3576,13 @@ How it works:
                              ondragleave="this.classList.remove('drag-over')"
                              ondrop="handleQlikDrop(event)">
                             <div style="font-size: 28px; margin-bottom: 8px;">🔮</div>
-                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop Qlik metadata JSON here</div>
-                            <div style="font-size: 11px; color: var(--text-muted);">REST API export · or paste below</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop Qlik metadata JSON or .qvd files here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">REST API export · QVD files · or paste below</div>
                         </div>
-                        <input type="file" id="qlikFileInput" accept=".json" style="display:none" onchange="handleQlikFileInput(event)">
+                        <input type="file" id="qlikFileInput" accept=".json,.qvd" multiple style="display:none" onchange="handleQlikFileInput(event)">
+                        <div style="flex-shrink: 0; padding: 6px 8px; background: var(--bg-tertiary); border-left: 3px solid var(--accent-primary); border-radius: 4px; font-size: 10px; color: var(--text-muted); line-height: 1.4;">
+                            <b>QVD files:</b> only header metadata is read (table + fields + types). Set Database/Schema overrides for the warehouse path — QVDs don't include the load script.
+                        </div>
 
                         <div id="qlikFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
 
@@ -15917,15 +15920,138 @@ views:
         let _qlikModel = null; // parsed Qlik metadata JSON
 
         function handleQlikFileInput(event) {
-            const file = event.target.files[0];
-            if (file) processQlikFile(file);
+            const files = Array.from(event.target.files || []);
+            if (files.length) processQlikFiles(files);
         }
 
         function handleQlikDrop(event) {
             event.preventDefault();
             event.currentTarget.classList.remove('drag-over');
-            const file = event.dataTransfer.files[0];
-            if (file) processQlikFile(file);
+            const files = Array.from(event.dataTransfer.files || []);
+            if (files.length) processQlikFiles(files);
+        }
+
+        // ── QVD header parser ────────────────────────────────────────────────
+        // QVD files are Qlik's binary data extract format. Header is plain UTF-8 XML
+        // terminated by a \0 byte; we only read the header (no symbol/index tables).
+        // Format spec: https://pyqvd.readthedocs.io/stable/guide/qvd-file-format.html
+        function parseQvdHeader(buf) {
+            // buf may be Uint8Array
+            let endIdx = -1;
+            for (let i = 0; i < buf.length; i++) {
+                if (buf[i] === 0) { endIdx = i; break; }
+            }
+            if (endIdx < 0) throw new Error('QVD header: no NUL terminator found — not a valid QVD file');
+            const xml = new TextDecoder('utf-8').decode(buf.slice(0, endIdx));
+            if (!xml.includes('<QvdTableHeader>')) throw new Error('QVD header: missing <QvdTableHeader> root element');
+
+            const decodeEnt = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+            const xmlText = (scope, tag) => {
+                const m = scope.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+                return m ? decodeEnt(m[1].trim()) : '';
+            };
+            const xmlSection = (scope, tag) => {
+                const m = scope.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+                return m ? m[1] : '';
+            };
+
+            const tableName = xmlText(xml, 'TableName');
+            const noOfRecords = parseInt(xmlText(xml, 'NoOfRecords') || '0', 10);
+            const fieldsScope = xmlSection(xml, 'Fields');
+            const fields = [];
+            const fieldRe = /<QvdFieldHeader>([\s\S]*?)<\/QvdFieldHeader>/g;
+            let m;
+            while ((m = fieldRe.exec(fieldsScope))) {
+                const f = m[1];
+                const name = xmlText(f, 'FieldName');
+                const numFmt = xmlSection(f, 'NumberFormat');
+                const type = xmlText(numFmt, 'Type') || 'UNKNOWN';
+                const tagsScope = xmlSection(f, 'Tags');
+                const tagRe = /<String>([^<]+)<\/String>/g;
+                const tags = [];
+                let tm;
+                while ((tm = tagRe.exec(tagsScope))) tags.push(tm[1]);
+                const noOfSymbols = parseInt(xmlText(f, 'NoOfSymbols') || '0', 10);
+                if (name) fields.push({ name, type, tags, noOfSymbols });
+            }
+            return { tableName, noOfRecords, fields };
+        }
+
+        // Convert a parsed QVD header into a qtr-shaped table entry (mirrors Qlik
+        // Engine API GetTablesAndKeys output) so it flows through _qlikParseInput.
+        function _qvdHeaderToQtrTable(header, fallbackName) {
+            return {
+                qName: header.tableName || fallbackName,
+                qNoOfRows: header.noOfRecords,
+                qFields: header.fields.map(f => ({
+                    qName: f.name,
+                    qnTotalDistinctValues: f.noOfSymbols,
+                    qnRows: header.noOfRecords,
+                    qTags: f.tags
+                }))
+            };
+        }
+
+        async function processQlikFiles(files) {
+            // Branch by extension. Mixed extensions are not supported — a single
+            // .json carries the whole model, while .qvd files are accumulated.
+            const qvds = files.filter(f => f.name.toLowerCase().endsWith('.qvd'));
+            const jsons = files.filter(f => f.name.toLowerCase().endsWith('.json'));
+            if (!qvds.length && !jsons.length) {
+                showToast('❌ Please provide .json or .qvd files', 'error');
+                return;
+            }
+            if (qvds.length && jsons.length) {
+                showToast('❌ Mixed .json and .qvd uploads — pick one type', 'error');
+                return;
+            }
+
+            if (jsons.length) {
+                // Existing single-JSON path — only process the first file.
+                return processQlikFile(jsons[0]);
+            }
+
+            // QVD path: parse each header, synthesize a qtr-shaped Qlik model.
+            const qtr = [];
+            const qvdWarnings = [];
+            const fileBadges = [];
+            for (const file of qvds) {
+                try {
+                    const ab = await file.arrayBuffer();
+                    const buf = new Uint8Array(ab);
+                    const header = parseQvdHeader(buf);
+                    const fallback = file.name.replace(/\.qvd$/i, '').toUpperCase();
+                    qtr.push(_qvdHeaderToQtrTable(header, fallback));
+                    fileBadges.push({ name: file.name, tableName: header.tableName || fallback, fields: header.fields.length, rows: header.noOfRecords });
+                } catch (e) {
+                    qvdWarnings.push(`${file.name}: ${e.message}`);
+                }
+            }
+            if (!qtr.length) {
+                showToast('❌ Failed to parse any QVD headers', 'error');
+                _qlikModel = null;
+                return;
+            }
+            _qlikModel = { appName: 'Qlik QVDs', qtr, masterMeasures: [], masterDimensions: [] };
+
+            const { tables, masterMeasures, masterDimensions } = _qlikParseInput(_qlikModel);
+            const fieldCount = tables.reduce((n, t) => n + (t.fields || []).length, 0);
+
+            document.getElementById('qlikFileList').innerHTML = fileBadges.map(b =>
+                `<div style="display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-tertiary);border-radius:6px;font-size:11px;"><span>🔮</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${b.name}">${b.name}</span><span style="color:var(--text-muted);flex-shrink:0;">${b.tableName} · ${b.fields} fields · ${b.rows} rows</span></div>`
+            ).join('');
+
+            document.getElementById('qlikInputStats').innerHTML = [
+                `<span class="dbt-stat-badge dimensions">${tables.length} table${tables.length !== 1 ? 's' : ''}</span>`,
+                fieldCount ? `<span class="dbt-stat-badge">${fieldCount} fields</span>` : '',
+                `<span class="dbt-stat-badge">QVD headers</span>`
+            ].filter(Boolean).join('');
+
+            document.getElementById('qlikConvertBtn').disabled = false;
+            const msg = qvdWarnings.length
+                ? `Loaded ${qtr.length}/${qvds.length} QVD${qvds.length !== 1 ? 's' : ''} (${qvdWarnings.length} skipped)`
+                : `Loaded ${qtr.length} QVD${qtr.length !== 1 ? 's' : ''}: ${tables.length} tables · ${fieldCount} fields`;
+            showToast(msg, qvdWarnings.length ? 'warning' : 'success');
         }
 
         async function processQlikFile(file) {
@@ -25559,7 +25685,13 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
 <p>Save the response as a <code>.json</code> file and drop it here, or paste directly.</p>
 <p><b>Option 2 — Qlik CLI:</b></p>
 <pre style="background:var(--bg-primary);padding:8px;border-radius:6px;font-size:11px;">qlik app data metadata get --app-id &lt;appId&gt; &gt; metadata.json</pre>
-<p><b>Option 3 — Extended format (adds master items for metrics):</b></p>
+<p><b>Option 3 — QVD files (QlikView / Qlik Sense data extracts):</b></p>
+<p>Drop one or more <code>.qvd</code> files. The converter reads the XML header (table name, fields, types, distinct counts) and skips the binary data — Sigma re-pulls from the warehouse on save. Multiple QVDs become multiple elements; shared field names auto-create relationships.</p>
+<ul>
+    <li><b>Note:</b> QVDs don't contain the load script, so you must set the <i>Database</i> and <i>Schema</i> overrides for the warehouse path.</li>
+    <li><b>Note:</b> Master measures/dimensions aren't stored in QVDs — use Option 1 or 4 for those.</li>
+</ul>
+<p><b>Option 4 — Extended format (adds master items for metrics):</b></p>
 <pre style="background:var(--bg-primary);padding:8px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre-wrap;">{
   "appName": "My App",
   "tables": [ /* from /data/metadata */ ],

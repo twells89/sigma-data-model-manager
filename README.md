@@ -370,6 +370,8 @@ Authorization: Bearer <API_KEY>
 qlik app data metadata get --app-id <appId> > metadata.json
 ```
 
+**QVD file support:** drop one or more `.qvd` files (QlikView / Qlik Sense data extracts). The converter reads the XML header (table name, fields, types, distinct counts) and skips the binary data — Sigma re-pulls from the warehouse on save. Shared field names across multiple QVDs auto-create relationships. Note: QVDs don't contain the load script, so set the Database/Schema overrides for the warehouse path; master measures/dimensions aren't stored in QVDs (use the REST API path for those).
+
 To include master measures and master dimensions, use the extended format:
 ```json
 {
