@@ -253,3 +253,31 @@ Report one of:
 - **WARN** — commit is likely safe but flag items to monitor
 
 Only after a PASS verdict should you proceed with `git commit`.
+
+## Step 12 — CSA enablement docs sync
+After a passing commit, decide whether the change needs to be reflected in the [`sigmacomputing/csa`](https://github.com/sigmacomputing/csa) enablement docs at `docusaurus/docs/projects/data-model-converter/`.
+
+**Sync triggers** — a CSA docs PR is required when the diff:
+- Adds, removes, or renames a converter (touch `converters/<format>.md` plus the format list in `overview.md`)
+- Changes a converter's accepted input format, supported features, or known limitations (`converters/<format>.md`)
+- Changes the Fix-with-AI tools list, tier breakpoints, or AI provider list (`fix-with-ai.md`)
+- Changes the browser tool's auth flow, save flow, or supported regions (`browser-tool.md`)
+- Adds or removes a major UX surface (new tab, new help modal, new button visible to CSAs)
+
+**No sync needed** when the diff is purely:
+- Internal refactor / dead code removal
+- Test fixture updates
+- Bug fixes that don't change documented behavior
+- README-only changes already mirrored to `overview.md`
+
+**Process:**
+1. Clone or `cd` into a checkout of `sigmacomputing/csa` on a fresh branch named `tj/<short-description>`.
+2. Update the affected docs under `docusaurus/docs/projects/data-model-converter/`. Match the existing frontmatter shape (`sidebar_position`, `title`, `owner`, `status`, `doc-type`, `last-updated`, `description`, `tags`).
+3. `git add` only the changed docs, commit with a message that names the source-repo commit (e.g., "Sync data-model-converter docs after sigma-data-model-manager@abc1234").
+4. `gh pr create --base main` against `sigmacomputing/csa`.
+5. Drop the PR URL into the source-repo commit message or PR body so the trail is two-way.
+
+**Verdict on sync**
+- **SYNC OK** — CSA docs PR opened and linked
+- **SYNC SKIPPED** — diff is internal-only; no doc-visible behavior changed
+- **SYNC TODO** — sync is needed but deferred; file a beads ticket so it's not forgotten
