@@ -58,11 +58,13 @@ Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) 
 - LOD FIXED / INCLUDE / EXCLUDE expressions → A `kind:sql` helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves.
 - Sets → Boolean calculated columns; condition sets → formula column, member sets → `In([Field], ...)` column
 - Bins → Bucketed `Floor()` calculated columns
-- Table calculations → `RUNNING_SUM` → `CumulativeSum()`, `RANK` → `Rank()` / `DenseRank()`, `INDEX` → `RowNumber()`
+- Window / table calculations (`RUNNING_SUM`, `RUNNING_AVG/MIN/MAX`, `WINDOW_SUM/AVG/MIN/MAX/COUNT`, `LOOKUP`, `PREVIOUS_VALUE`, `RANK`, `RANK_DENSE`, `RANK_UNIQUE`, `INDEX`, `FIRST`, `LAST`) → A `kind:sql` helper element with explicit Snowflake `OVER()` clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys come from worksheet `rows` shelves; order keys from time-truncated `cols` shelves. Multiple window calcs sharing the same partition+order share a single helper.
 
 **Known limitations:**
 - LOD INCLUDE / EXCLUDE without worksheet context — When a calc field is not placed on any worksheet's rows/cols shelf, the converter cannot derive the view dimensions and the LOD is skipped with a warning. Place the calc on at least one worksheet so the converter can determine the effective grouping.
-- Complex table calculations (LOOKUP, PREVIOUS_VALUE, nested) — Flagged but not converted
+- Window calc partition/order heuristic — Partition dims come from rows shelves, order dims from time-truncated cols shelves (`mn:`/`yr:`/`qr:`/`dy:` prefixes). Other Tableau "Compute Using" addressing modes (Pane, Cell, Specific Dimensions) are not yet parsed; if the heuristic mis-derives the grouping, edit the helper element's SQL after import.
+- Window helper grain — Window-helper SQL uses `DATE_TRUNC('month', ...)` as the default order grain. If your worksheet uses year/quarter/day grain, edit the SQL after import.
+- Post-create validation — After saving, call `GET /v2/dataModels/{id}/columns` and inspect for `type.type === "error"` entries; both LOD and window helpers can post as success even if a referenced column is missing.
 - Cross-element calculated columns — Automatically moved to the derived child element; metrics with cross-element refs are removed with a warning and must be added manually in Sigma UI
 - Role-playing dimensions — Supported; each relationship includes the join key in its name (e.g. "DATE_DIM via Order Date Key")
 - Top N / Bottom N sets — Cannot be auto-converted; recreate as filters in Sigma UI
