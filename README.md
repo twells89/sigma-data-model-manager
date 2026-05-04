@@ -59,6 +59,7 @@ Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) 
 - Sets → Boolean calculated columns; condition sets → formula column, member sets → `In([Field], ...)` column
 - Bins → Bucketed `Floor()` calculated columns
 - Window / table calculations (`RUNNING_SUM`, `RUNNING_AVG/MIN/MAX`, `WINDOW_SUM/AVG/MIN/MAX/COUNT`, `LOOKUP`, `PREVIOUS_VALUE`, `RANK`, `RANK_DENSE`, `RANK_UNIQUE`, `INDEX`, `FIRST`, `LAST`) → A `kind:sql` helper element with explicit Snowflake `OVER()` clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys come from worksheet `rows` shelves; order keys from time-truncated `cols` shelves. Multiple window calcs sharing the same partition+order share a single helper.
+- Top N / Bottom N sets (global, parameterized, partitioned) → A `kind:sql` RANK helper element + relationship from the base on the dim key (and partition cols, if any). Helper exposes an `IS_TOP_N` boolean. Literal-N sets compute the boolean in SQL; parameter-driven N emits a Sigma calc col `[Rank] <= [Control]` plus a `number` control with the Tableau parameter's default value. Bottom-N swaps `DESC` → `ASC`.
 
 **Known limitations:**
 - LOD INCLUDE / EXCLUDE without worksheet context — When a calc field is not placed on any worksheet's rows/cols shelf, the converter cannot derive the view dimensions and the LOD is skipped with a warning. Place the calc on at least one worksheet so the converter can determine the effective grouping.
@@ -67,7 +68,6 @@ Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) 
 - Post-create validation — After saving, call `GET /v2/dataModels/{id}/columns` and inspect for `type.type === "error"` entries; both LOD and window helpers can post as success even if a referenced column is missing.
 - Cross-element calculated columns — Automatically moved to the derived child element; metrics with cross-element refs are removed with a warning and must be added manually in Sigma UI
 - Role-playing dimensions — Supported; each relationship includes the join key in its name (e.g. "DATE_DIM via Order Date Key")
-- Top N / Bottom N sets — Cannot be auto-converted; recreate as filters in Sigma UI
 - Custom SQL data sources — Converted to Sigma custom SQL elements; Tableau-specific SQL syntax may need manual adjustment
 - Extracts (`.hyper`) — Extract-only fields and extract filters not converted
 - Data blending — Multi-connection sources not supported; each data source converted independently

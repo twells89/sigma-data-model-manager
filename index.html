@@ -21465,12 +21465,13 @@ ${cleanedSql}`;
                 if (ds.getAttribute('hasconnection') === 'false' || ds.getAttribute('name') === 'Parameters') {
                     for (const col of ds.querySelectorAll(':scope > column')) {
                         const colName = (col.getAttribute('caption') || col.getAttribute('name') || '').replace(/^\[|\]$/g, '');
+                        const rawName = (col.getAttribute('name') || '').replace(/^\[|\]$/g, '');
                         if (colName && !_tableauParsed.parameters.some(p => p.name === colName)) {
                             const colType = col.getAttribute('datatype') || 'string';
                             const domainType = col.getAttribute('param-domain-type') || 'all';
                             const members = Array.from(col.querySelectorAll('member')).map(m => m.getAttribute('value')).filter(Boolean);
                             const calcEl = col.querySelector('calculation');
-                            _tableauParsed.parameters.push({ name: colName, type: colType, domainType, members, defaultVal: calcEl ? calcEl.getAttribute('formula') : '' });
+                            _tableauParsed.parameters.push({ name: colName, rawName, type: colType, domainType, members, defaultVal: calcEl ? calcEl.getAttribute('formula') : '' });
                         }
                     }
                     continue;
@@ -21777,6 +21778,55 @@ ${cleanedSql}`;
                 }
             }
             return { byField };
+        }
+
+        // ── Tableau Top-N / Bottom-N Set parser ──────────────────────────
+        // Parses <calculation class='categorical-set'> with a
+        // <groupfilter function='end'> child (Tableau Top-N/Bottom-N set)
+        // into a structured form so the converter can lower it to a
+        // kind:'sql' RANK helper element + relationship.
+        function tableauParseTopNSet(calcEl, caption, setName) {
+            if (!calcEl || calcEl.getAttribute('class') !== 'categorical-set') return null;
+            const endFilter = calcEl.querySelector('groupfilter[function="end"]');
+            if (!endFilter) return null;
+            const rawDim    = endFilter.getAttribute('field') || '';
+            const rawCount  = endFilter.getAttribute('count') || '';
+            const rawCtl    = endFilter.getAttribute('count-control') || '';
+            const direction = (endFilter.getAttribute('direction') || 'top').toLowerCase();
+            const dimField  = rawDim.replace(/^\[|\]$/g, '').trim().toUpperCase();
+            if (!dimField) return null;
+            let count = null, countControl = null;
+            if (rawCount) count = parseInt(rawCount, 10);
+            else if (rawCtl) countControl = rawCtl.replace(/^\[|\]$/g, '').trim();
+            if (count === null && countControl === null) return null;
+            // Inner: walk groupfilter[function='aggregation'] for the by-field/by-agg,
+            // and groupfilter[function='filter'] for any user:partition-by attribute.
+            let byField = '', byAggFunc = 'SUM';
+            const partitionBy = [];
+            const aggNode = calcEl.querySelector('groupfilter[function="aggregation"]');
+            if (aggNode) {
+                const opField = aggNode.getAttribute('user:op-field') || aggNode.getAttribute('op-field') || '';
+                const op = (aggNode.getAttribute('user:op') || aggNode.getAttribute('op') || 'SUM').toUpperCase();
+                if (opField) byField = opField.replace(/^\[|\]$/g, '').trim().toUpperCase();
+                byAggFunc = op === 'COUNTD' ? 'COUNTD' : op;
+            }
+            for (const fNode of calcEl.querySelectorAll('groupfilter[function="filter"]')) {
+                const partRaw = fNode.getAttribute('user:partition-by') || fNode.getAttribute('partition-by') || '';
+                if (partRaw) {
+                    const matches = partRaw.match(/\[[^\]]+\]/g) || [];
+                    for (const m of matches) partitionBy.push(m.replace(/^\[|\]$/g, '').trim().toUpperCase());
+                }
+            }
+            if (!byField) return null;
+            return { _isTopN: true, setName, caption, dimField, byField, byAggFunc, count, countControl, direction, partitionBy };
+        }
+        function _topNAlias(caption, used) {
+            let base = (caption || 'TOPN').toUpperCase().replace(/[^A-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '').replace(/_+/g, '_');
+            if (!base) base = 'TOPN';
+            let a = base, n = 2;
+            while (used.has(a)) a = base + '_' + (n++);
+            used.add(a);
+            return a;
         }
 
         function tableauFormulaToSigma(formula, warnings) {
@@ -22339,6 +22389,9 @@ ${cleanedSql}`;
                         (e.columns||[]).length > (best.columns||[]).length ? e : best
                     , elements[0]);
 
+                // Hoisted so the parameters→controls loop (outside if-factEl)
+                // can detect Top-N parameters that need a number control.
+                const _topNParamControls = {};
                 if (factEl) {
                     const factColIdMap = {};
                     (factEl.columns || []).forEach(c => {
@@ -22633,6 +22686,122 @@ ${cleanedSql}`;
                         }
                     };
 
+                    // ── Top-N / Bottom-N Set helper-element registry ─────
+                    // Each Tableau Top-N set becomes a kind:'sql' RANK helper
+                    // element + a relationship from the base on the dim key
+                    // (and partition cols, if any). The set's boolean is
+                    // exposed as IS_TOP_N (literal N) or via a Sigma calc-col
+                    // formula referencing a DM control (parameterized N).
+                    const _topNHelpers = [];
+                    const _topNUsedAliases = new Set();
+                    const _topNSetIndex = {};      // captionUpper / setNameUpper → entry
+                    // _topNParamControls is hoisted outside if(factEl) so the param→controls loop can see it
+                    const _emitTopNHelper = (top) => {
+                        const keyResolved = _resolveLodDim(top.dimField);
+                        if (!keyResolved || !keyResolved.baseColId) {
+                            warnings.push('⚠ Set "' + top.caption + '": ranking key [' + top.dimField + '] not on base; skipped.');
+                            return false;
+                        }
+                        const partResolved = [];
+                        for (const p of top.partitionBy) {
+                            const r = _resolveLodDim(p);
+                            if (!r || !r.baseColId) {
+                                warnings.push('⚠ Set "' + top.caption + '": partition dim [' + p + '] not on base; skipped.');
+                                return false;
+                            }
+                            partResolved.push(r);
+                        }
+                        let nLiteral, controlId = null;
+                        if (top.count !== null) {
+                            nLiteral = String(top.count);
+                        } else if (top.countControl) {
+                            const param = (_tableauParsed.parameters || []).find(p =>
+                                p.name.toUpperCase() === top.countControl.toUpperCase()
+                                || (p.rawName && p.rawName.toUpperCase() === top.countControl.toUpperCase())
+                                || sigmaDisplayName(p.name).toUpperCase() === sigmaDisplayName(top.countControl).toUpperCase()
+                            );
+                            const ctlSourceName = (param && param.name) || top.countControl;
+                            const cidBase = sigmaDisplayName(ctlSourceName).replace(/\s+/g, '-');
+                            controlId = cidBase;
+                            const defaultVal = parseInt((param && param.defaultVal) || '10', 10) || 10;
+                            if (param) _topNParamControls[param.name] = { controlId: cidBase, defaultVal };
+                            _topNParamControls[top.countControl] = { controlId: cidBase, defaultVal };
+                            nLiteral = '[' + cidBase + ']';
+                        } else {
+                            warnings.push('⚠ Set "' + top.caption + '": no count or count-control; skipped.');
+                            return false;
+                        }
+                        const dirSql = top.direction === 'bottom' ? 'ASC' : 'DESC';
+                        _topNAlias(top.caption, _topNUsedAliases); // reserve
+                        const helperId = sigmaShortId();
+                        const cols = [], order = [];
+                        const keyColId = sigmaShortId();
+                        cols.push({ id: keyColId, formula: '[Custom SQL/' + keyResolved.dimUpper + ']', name: keyResolved.displayName });
+                        order.push(keyColId);
+                        const partColIds = [];
+                        for (const p of partResolved) {
+                            const pid = sigmaShortId();
+                            cols.push({ id: pid, formula: '[Custom SQL/' + p.dimUpper + ']', name: p.displayName });
+                            order.push(pid);
+                            partColIds.push(pid);
+                        }
+                        const totalColId = sigmaShortId();
+                        cols.push({ id: totalColId, formula: '[Custom SQL/TOTAL]', name: top.caption + ' Total' });
+                        order.push(totalColId);
+                        const rnkColId = sigmaShortId();
+                        const rankColName = top.caption + ' Rank';
+                        cols.push({ id: rnkColId, formula: '[Custom SQL/RNK]', name: rankColName });
+                        order.push(rnkColId);
+                        const isTopNColId = sigmaShortId();
+                        const isTopNName = top.caption + ' ' + (top.direction === 'bottom' ? 'Bottom' : 'Top') + ' N';
+                        let isTopNFormula, emitIsTopNInSql = false;
+                        if (controlId) {
+                            isTopNFormula = '[' + rankColName + '] <= [' + controlId + ']';
+                        } else {
+                            isTopNFormula = '[Custom SQL/IS_TOP_N]';
+                            emitIsTopNInSql = true;
+                        }
+                        cols.push({ id: isTopNColId, formula: isTopNFormula, name: isTopNName });
+                        order.push(isTopNColId);
+                        const baseFq = (factEl.source && factEl.source.path && factEl.source.path.length >= 2)
+                            ? factEl.source.path.join('.') : factTableName;
+                        const groupCols = [keyResolved.dimUpper].concat(partResolved.map(p => p.dimUpper));
+                        const groupByIdx = groupCols.map((_g, i) => i + 1).join(', ');
+                        let aggSql = top.byAggFunc;
+                        if (aggSql === 'COUNTD') aggSql = 'COUNT(DISTINCT ' + top.byField + ')';
+                        else aggSql = aggSql + '(' + top.byField + ')';
+                        const partBy = top.partitionBy.length > 0 ? 'PARTITION BY ' + top.partitionBy.join(', ') + ' ' : '';
+                        const overClause = 'RANK() OVER (' + partBy + 'ORDER BY s ' + dirSql + ')';
+                        const innerSelect = 'SELECT ' + groupCols.join(', ') + ', ' + aggSql + ' AS s FROM ' + baseFq + ' GROUP BY ' + groupByIdx;
+                        const rankedSelect = 'SELECT ' + groupCols.join(', ') + ', s, ' + overClause + ' AS RNK FROM agg';
+                        const outerCols = emitIsTopNInSql
+                            ? (groupCols.join(', ') + ', s AS TOTAL, RNK, (RNK <= ' + nLiteral + ') AS IS_TOP_N')
+                            : (groupCols.join(', ') + ', s AS TOTAL, RNK');
+                        const outerSelect = 'SELECT ' + outerCols + ' FROM ranked';
+                        const statement = 'WITH agg AS (' + innerSelect + '), ranked AS (' + rankedSelect + ') ' + outerSelect;
+                        const helperEl = {
+                            id: helperId, kind: 'table',
+                            name: top.caption + ' Top-N Helper',
+                            source: { connectionId: connectionId, kind: 'sql', statement },
+                            columns: cols, order
+                        };
+                        if (!factEl.relationships) factEl.relationships = [];
+                        const relName = factTableName + '_TOPN_' + (top.caption.toUpperCase().replace(/[^A-Z0-9_]+/g,'_').replace(/^_|_$/g,''));
+                        const relKeys = [{ sourceColumnId: keyResolved.baseColId, targetColumnId: keyColId }];
+                        for (let i = 0; i < partResolved.length; i++) {
+                            if (partResolved[i].baseColId) relKeys.push({ sourceColumnId: partResolved[i].baseColId, targetColumnId: partColIds[i] });
+                        }
+                        factEl.relationships.push({ id: sigmaShortId(), targetElementId: helperEl.id, keys: relKeys, name: relName });
+                        _topNHelpers.push({ element: helperEl, isTopNColId, relationshipName: relName });
+                        const idx = { helperEl, relName, isTopNColId };
+                        _topNSetIndex[top.setName.toUpperCase()] = idx;
+                        _topNSetIndex[top.caption.toUpperCase()] = idx;
+                        const nDesc = top.count !== null ? top.count : ('[' + top.countControl + ']');
+                        const partDesc = top.partitionBy.length ? (' per ' + top.partitionBy.join(',')) : '';
+                        warnings.push('✅ Set "' + top.caption + '" (' + top.direction.toUpperCase() + '-' + nDesc + partDesc + ') → kind:sql RANK helper');
+                        return true;
+                    };
+
                     for (const col of ds.element.querySelectorAll(':scope > column')) {
                         const rawName  = col.getAttribute('name') || '';
                         const caption  = col.getAttribute('caption') || rawName.replace(/^\[|\]$/g,'');
@@ -22667,10 +22836,10 @@ ${cleanedSql}`;
                         if (calcEl && calcEl.getAttribute('class') === 'categorical-set') {
                             const setFormula = (calcEl.getAttribute('formula') || '').trim();
 
-                            // Top N / Bottom N sets — aggregate-dependent, can't express as row-level boolean
-                            const topFilter = calcEl.querySelector('groupfilter[function="end"], groupfilter[function="top"]');
-                            if (topFilter) {
-                                warnings.push('⚠ Set "' + caption + '": Top N/Bottom N set cannot be expressed as a row-level boolean — skipped. Recreate in Sigma using a ranked child element.');
+                            // Top-N / Bottom-N set → kind:'sql' RANK helper element + relationship
+                            const topN = tableauParseTopNSet(calcEl, caption, fieldKey);
+                            if (topN) {
+                                _emitTopNHelper(topN);
                                 continue;
                             }
 
@@ -22895,6 +23064,12 @@ ${cleanedSql}`;
                         warnings.push('ℹ ' + lodChildElements.length + ' LOD helper element' + (lodChildElements.length !== 1 ? 's' : '') + ' created (kind:sql)');
                     }
 
+                    // ── Add Top-N helper child elements to the elements array ──
+                    if (_topNHelpers.length > 0) {
+                        for (const rec of _topNHelpers) elements.push(rec.element);
+                        warnings.push('ℹ ' + _topNHelpers.length + ' Top-N helper element' + (_topNHelpers.length !== 1 ? 's' : '') + ' created (kind:sql)');
+                    }
+
                     // ── Group set boolean columns into a "Sets" folder ──
                     if (setColIds.length > 0) {
                         if (!factEl.folders) factEl.folders = [];
@@ -22956,6 +23131,20 @@ ${cleanedSql}`;
                 const controls = [];
                 for (const p of parameters) {
                     const controlId = sigmaDisplayName(p.name).replace(/\s+/g,'-');
+                    // Top-N parameter: emit a single-number control with the
+                    // Tableau default value. (The Top-N IS_TOP_N calc col
+                    // references this control by id.)
+                    if (_topNParamControls[p.name]) {
+                        const def = _topNParamControls[p.name];
+                        const defVal = parseInt(p.defaultVal || String(def.defaultVal), 10) || def.defaultVal;
+                        controls.push({
+                            kind: 'control', controlId: def.controlId, id: sigmaShortId() + 'con',
+                            controlType: 'number', mode: '<=', value: defVal,
+                            includeNulls: 'when-no-value-is-selected'
+                        });
+                        warnings.push('ℹ Parameter "' + p.name + '" → number control (Top-N driver, default ' + defVal + ')');
+                        continue;
+                    }
                     if (p.domainType === 'list' && p.members.length > 0) {
                         controls.push({ kind:'control', controlId, id: sigmaShortId()+'con',
                             controlType:'list', mode:'include', selectionMode:'single', values:[],
@@ -25532,6 +25721,7 @@ models:
     <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves.</li>
     <li><b>Window / table calculations</b> (<code>RUNNING_SUM</code>, <code>RUNNING_AVG</code>, <code>RUNNING_MIN</code>, <code>RUNNING_MAX</code>, <code>WINDOW_SUM</code>, <code>WINDOW_AVG</code>, <code>WINDOW_MIN</code>, <code>WINDOW_MAX</code>, <code>WINDOW_COUNT</code>, <code>LOOKUP</code>, <code>PREVIOUS_VALUE</code>, <code>RANK</code>, <code>RANK_DENSE</code>, <code>RANK_UNIQUE</code>, <code>INDEX</code>, <code>FIRST</code>, <code>LAST</code>) → A <code>kind:sql</code> helper element with explicit Snowflake <code>OVER()</code> clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys are derived from worksheet <code>rows</code> shelves, order keys from time-truncated <code>cols</code> shelves. Multiple window calcs sharing the same partition+order signature are emitted as separate aliases on a single helper element.</li>
     <li><b>Sets</b> → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → <code>In([Field], ...)</code> column. Add a filter control on these columns in your Sigma workbook to replicate set-based filtering.</li>
+    <li><b>Top N / Bottom N sets</b> (global, parameterized, partitioned) → A <code>kind:sql</code> RANK helper element + relationship from the base on the dim key (and partition cols, if any). The helper exposes <code>IS_TOP_N</code> as a boolean. For literal-N sets the boolean is computed in SQL (<code>(rnk &lt;= N) AS IS_TOP_N</code>); for parameter-driven N a Sigma calc col references both the local Rank column and a number control derived from the Tableau parameter. Bottom-N is the same with <code>ASC</code> ordering. Partitioned sets emit <code>PARTITION BY</code> in the OVER clause.</li>
     <li><b>Derived element</b> → For fact tables with relationships, a derived element is created that surfaces all own columns plus related dimension columns via <code>[FACT_TABLE/RELATIONSHIP_NAME/Col]</code> cross-element formulas — no manual wiring required</li>
 </ul>
 
@@ -25544,7 +25734,6 @@ models:
     <li><b>Cross-element calculated columns</b> — Tableau calculated fields that reference columns from related tables are automatically moved to the derived child element (Sigma calculated columns can only reference columns local to their element). Related dimension columns are accessible via the derived element using <code>[FACT/RELATIONSHIP/Col]</code> formulas.</li>
     <li><b>Role-playing dimensions</b> — Multiple relationships from a fact table to the same dimension are now supported. Each relationship gets a unique name including the join key (e.g. "DATE_DIM via Order Date Key"). Review the generated names for clarity.</li>
     <li><b>Bins</b> — Converted to bucketed <code>Floor()</code> calculated columns.</li>
-    <li><b>Top N / Bottom N sets</b> — Top N and Bottom N sets cannot be auto-converted and generate a warning. Recreate these as filters in the Sigma UI after saving.</li>
     <li><b>Custom SQL data sources</b> — Converted to Sigma custom SQL elements. The raw SQL is passed through as-is. Tableau-specific SQL syntax may need manual adjustment.</li>
     <li><b>Extracts (.hyper)</b> — Extract-only fields and extract filters are not converted. The converter reads the logical model definition, not the physical extract.</li>
     <li><b>Data blending</b> — Multi-connection blended data sources are not supported. Each data source is converted independently.</li>
