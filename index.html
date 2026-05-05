@@ -20030,13 +20030,6 @@ ${cleanedSql}`;
                 });
             });
 
-            // ── Resolve cross-view ref markers → Lookup() formulas ───────────
-            const physElements = Object.values(physViewMap).reduce((acc, r) => {
-                if (!acc.some(e => e.id === r.elementId)) acc.push(r.element);
-                return acc;
-            }, []);
-            resolveXviewMarkers(physElements, elementMap, warnings);
-
             // ── Collect unique elements (one per physical view) ───────────────
             const seenIds = new Set();
             let allElements = Object.values(physViewMap).filter(r => {
@@ -20065,6 +20058,19 @@ ${cleanedSql}`;
                 if (aHasRel === bHasRel) return 0;
                 return aHasRel ? 1 : -1;  // dims first, fact last
             });
+
+            // ── Cross-element calc cols → derived "<Table> View" elements ─────
+            // Pull cross-view calc cols off source warehouse-table elements (where
+            // bare [Field] refs to related-table cols can't resolve) and re-place
+            // them on the auto-generated derived element with rewritten
+            // [Base/REL_NAME/Field] cross-element refs. Replaces the older
+            // __XVIEW__/Lookup()-based resolveXviewMarkers approach which silently
+            // produced type:error columns at runtime. (closes beads-sigma-txw.)
+            // Run BEFORE the bespoke "explore element" block below — that block
+            // copies columns straight from baseEl, and a cross-element calc col
+            // copied verbatim before the move pass would error with the same
+            // "Unknown name" failure.
+            buildDerivedElementsAndMoveCalcs(allElements, warnings);
 
             // ── Derived explore element (relationships strategy only) ─────────────
             // Surfaces all base + joined view fields in a single flat element via
@@ -21060,6 +21066,22 @@ ${cleanedSql}`;
                     // Expand ${yesno_field} refs to full boolean expressions before converting
                     const expandedSql = expandYesnoRefs(d.sql);
                     let sigmaFormula = lookSqlToSigmaRules(expandedSql, tableName);
+                    if (!sigmaFormula) {
+                        // Deterministic fallback: pre-strip ${TABLE}. / ${view.field} /
+                        // ${field} markers and run the generic expression converter.
+                        // Required so function-call SQL like CONCAT('x', ${other_view.field})
+                        // still emits a working Sigma formula when no Pattern matched.
+                        // Mirrors MCP's lookConvertView fallback (beads-sigma-047).
+                        const stripped = (d.sql || '')
+                            .replace(/\$\{TABLE\}\./gi, '')
+                            .replace(/\$\{[^.}]+\.([^}]+)\}/g, (_, f) => f.toUpperCase())
+                            .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, n) => n.toUpperCase())
+                            .replace(/[\r\n]+\s*/g, ' ')
+                            .trim();
+                        if (/^[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(stripped)) {
+                            sigmaFormula = lookConvertExpression(stripped);
+                        }
+                    }
                     if (!sigmaFormula) {
                         sigmaFormula = await lookSqlToSigmaFormulaAI(expandedSql, d._name, tableName);
                     }
