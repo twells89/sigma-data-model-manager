@@ -3,6 +3,16 @@ This applies whenever you work on index.html in /tmp/sigma-data-model-manager or
 
 Run a pre-commit review of the sigma conversion tool before committing.
 
+## Step 0 — Working tree freshness (preflight)
+
+Before reviewing the diff, confirm you're on top of `origin/main`:
+```bash
+git fetch && git status -sb
+```
+If the working tree shows `behind N` for any N > 0, STOP and `git pull --rebase` before continuing — a review against a stale base produces false-positives (the agent that triggered this rule worked on a 40-commit-stale clone of the MCP repo and conflicted at push time, 2026-05-05).
+
+If the working tree has uncommitted changes from a prior session that aren't part of this fix, STOP and surface to the user.
+
 Follow these steps in order:
 
 ## Step 1 — Show the diff
@@ -200,13 +210,47 @@ grep -nE "name:\s*(targetModel|join\.name|tgtName|rTable)\b" <changed-file>
 ```
 If you find any of these without `.toUpperCase()` and a `path[last]` lookup, FAIL.
 
+**G. Cross-element calc-col move coherence**
+When a converter moves a calc col from a source element to its derived element (because the formula references columns on a related element via `buildDerivedElementsAndMoveCalcs` or equivalent), TWO things must happen alongside the move:
+1. The moved column ID must be REMOVED from any `folder.items[]` array on the source element. Otherwise the saved spec fails with `"Column or folder not found: <id>"` (real bug 2026-05-05, beads-sigma-6o3).
+2. The moved formula's bare `[FieldName]` references to columns on RELATED elements must be rewritten to the cross-element triple form `[SourceElement/REL_NAME/FieldName]`. The bare form fails to resolve at query time because the derived element exposes related columns under disambiguated names; the parenthesized form `[FieldName (REL_NAME)]` also does NOT work — parens collide with formula function-call syntax (real bug 2026-05-05, beads-sigma-k2r).
+```
+grep -nE "buildDerivedElementsAndMoveCalcs|moveCalcs|crossElementCalcs?\b" <changed-file>
+```
+If found, scan the surrounding code for both the folder-scrub pass and the formula-rewrite pass. If either is missing, FAIL.
+
 **Verdict on spec audit**
-- **Spec OK** — all six items pass for the converter(s) touched
+- **Spec OK** — all seven items pass for the converter(s) touched
 - **Spec FAIL** — list which item(s) regressed and where; fix before committing
 
 ## Step 10 — End-to-end UI test (live POST + data verification)
 
+This step has TWO mandates:
+1. **Per-converter test** — when the diff touches a converter's view-build loop, run a real-UI test for that converter (existing behavior, detailed below).
+2. **Mandatory regression-fixture sweep** — on EVERY commit that touches `index.html`'s converter section, regardless of which converter the diff touches, run the fixed regression-fixture corpus below. This catches bugs in code paths the diff didn't *seem* to touch but does indirectly (e.g. shared helpers like `buildDerivedElementsAndMoveCalcs`). On 2026-05-05 a Tableau converter PR shipped without exercising the move pass; a real customer TDS hit the bug post-merge. The corpus prevents that.
+
 When the diff touches a converter's view-build loop (the part that produces the `sigmaModel` JSON), run a real-UI test that drives the local browser tool, saves through the actual Save flow, and verifies the saved spec resolves data correctly via the Sigma MCP V2 server. JSDOM-based or function-extracting harnesses are NOT a substitute — they bypass DOM-driven setup and have produced false negatives historically. The bar for "PASS" on this step is: a query against the saved data model returns real warehouse data, not error-typed columns or null rows.
+
+**Mandatory regression-fixture corpus (run on EVERY converter-touching commit):**
+The following fixtures must run end-to-end (convert → POST → query → check error columns → cleanup) before commit. Failure on any of these is a HARD FAIL:
+
+| Fixture | Path | Purpose |
+|---|---|---|
+| `lod_test.twb` | `/Users/tjwells/Downloads/sigma-data-model-mcp-update/test-fixtures/lod_test.twb` | LOD INCLUDE/EXCLUDE/FIXED + helper dedup |
+| `setsbug_test.twb` | author from `beads-sigma-6o3` repro | Cross-element calc move + folders interaction |
+| `retail_analytics_sets_real.tds` | `/tmp/setsbug_test/real_user_tds.tds` (from `/Users/tjwells/Desktop/Converter Files/retail_analytics_sets_tableau.tds`) | Real customer TDS that hit beads-sigma-6o3 + beads-sigma-k2r |
+| `window_test.twb` | from prior agent's window-calc work | RUNNING_SUM / WINDOW_SUM / LOOKUP / RANK |
+
+For each, the test must:
+1. Load via JSDOM or Puppeteer harness
+2. Run the converter
+3. POST to Sigma test folder
+4. **`GET /v2/dataModels/{id}/columns`** → assert ZERO entries with `type.type === "error"`. **This is a hard gate.** A spec that POSTs 200 but has even one error column is a FAIL — silent runtime breakage hides under successful saves.
+5. Cleanup via `DELETE /v2/files/{dataModelId}`
+
+Long-term, this corpus moves to `regression-corpus/` + `npm run regression` per `beads-sigma-ee6`. Until then, run the fixtures inline.
+
+**Bug-driven corpus growth:** every bug ticket fixed must add a fixture that reproduces the original failure. Adding the fixture is part of the fix commit, not a follow-up.
 
 **Setup:**
 - Puppeteer is installed at `/Users/tjwells/sigma-data-model-manager/tableau-local/node_modules/puppeteer`. Import via `import puppeteer from '/Users/tjwells/sigma-data-model-manager/tableau-local/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js'`.
@@ -248,9 +292,14 @@ The 2026-05-03 E2E sweep produced THREE false-positive "regressions" (lookml, om
 
 ## Step 11 — Final verdict
 Report one of:
-- **PASS** — code, docs, README, MCP sync, spec audit, and UI test are all correct; safe to commit
-- **FAIL** — list specific issues found; do NOT commit; suggest fixes
-- **WARN** — commit is likely safe but flag items to monitor
+- **PASS** — code, docs, README, MCP sync, spec audit (Step 9 all 7 items including 9.G), and UI test (per-converter + mandatory regression corpus, all error-column scans clean) all green. Safe to commit.
+- **FAIL** — list specific issues found; do NOT commit; suggest fixes.
+- **WARN** — commit is likely safe BUT each warn item must be explicitly justified. A WARN is only acceptable if EVERY item meets one of:
+  1. The deviating behavior was empirically verified to work end-to-end (cite live DM URL + numerics).
+  2. The risk is documented in a beads ticket as a known follow-up.
+  3. The user explicitly waived the check.
+
+Do NOT accept WARN silently. If you're tempted to ship WARN without naming each justification, FAIL it instead and ask the user.
 
 Only after a PASS verdict should you proceed with `git commit`.
 
