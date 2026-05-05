@@ -15126,7 +15126,16 @@ views:
                     const id = isCustomSql ? sigmaShortId() : sigmaInodeId(fieldName.toUpperCase());
                     colIdMap[fieldName.toUpperCase()] = id;
                     const col = { id, formula };
+                    // Always set a `name` for calc cols (formulas that are not a
+                    // simple [Table/Field] passthrough). Without a name, the
+                    // shared cross-element move pass (buildDerivedElementsAndMoveCalcs)
+                    // skips them — leaving cross-cube refs like `${OtherCube.field}`
+                    // (which translate to bare `[Field]`) on the source warehouse-table
+                    // element where Sigma cannot resolve them. Closes beads-sigma-uzi.
+                    const isPassthrough = typeof formula === 'string'
+                        && /^\[[^\]\/]+\/[^\]]+\]$/.test(formula);
                     if (label) col.name = label;
+                    else if (!isPassthrough) col.name = sigmaDisplayName(fieldName);
                     element.columns.push(col); element.order.push(id);
                     return id;
                 }
@@ -15274,6 +15283,14 @@ views:
                 if (el.metrics?.length === 0) delete el.metrics;
                 if (el.relationships?.length === 0) delete el.relationships;
             }
+
+            // Build derived "view" elements that surface joined-cube columns via
+            // [BaseElement/REL_NAME/Field] cross-element refs, and move any calc
+            // cols whose formulas reference cross-cube fields onto those derived
+            // elements (rewriting bare `[Field]` refs to the triple form).
+            // Mirrors the MCP cube fix at src/cube.ts (commit 7fe03f2).
+            // Closes beads-sigma-uzi.
+            buildDerivedElementsAndMoveCalcs(elements, warnings);
 
             const modelName = cubes.length === 1 && views.length === 0
                 ? sigmaDisplayName(cubes[0].name)
@@ -15661,9 +15678,10 @@ views:
                 return `${sigmaFn}(${_tsWrapColumnRefs(arg.trim())})`;
             });
 
-            // safe_divide(a, b) → a / NullIf(b, 0)  (NullIf handles both null and zero denominator)
-            s = s.replace(/\bsafe_divide\s*\(([^,)]+),([^)]+)\)/gi, (_, a, b) =>
-                `${a.trim()} / NullIf(${b.trim()}, 0)`);
+            // safe_divide(a, b) → If(IsNull(b) or b = 0, null, a / b)
+            // Paren-balanced parser handles nested calls like safe_divide(sum(x), sum(y)).
+            // Note: bare `null` (Null() is not a valid Sigma function).
+            s = _tsRewriteSafeDivide(s);
 
             // isnull(x) → IsNull(x)
             s = s.replace(/\bisnull\s*\(/gi, 'IsNull(');
@@ -15684,6 +15702,42 @@ views:
             s = _tsWrapColumnRefs(s);
 
             return s;
+        }
+
+        // Paren-balanced rewrite of `safe_divide(a, b)` → `If(IsNull(b) or b = 0, null, a / b)`.
+        // The simple regex form (`[^,)]+,[^)]+`) doesn't match when args contain nested
+        // parens like `safe_divide(sum(x), sum(y))`. Bare `null` (not Null()) — Sigma has no Null function.
+        function _tsRewriteSafeDivide(s) {
+            let out = '';
+            let i = 0;
+            const re = /\bsafe_divide\s*\(/gi;
+            let m;
+            while ((m = re.exec(s)) !== null) {
+                out += s.slice(i, m.index);
+                let depth = 1;
+                let j = re.lastIndex;
+                let commaIdx = -1;
+                while (j < s.length && depth > 0) {
+                    const ch = s[j];
+                    if (ch === '(') depth++;
+                    else if (ch === ')') { depth--; if (depth === 0) break; }
+                    else if (ch === ',' && depth === 1 && commaIdx === -1) commaIdx = j;
+                    j++;
+                }
+                if (depth !== 0 || commaIdx === -1) {
+                    // unbalanced or single-arg — bail out, leave the original token
+                    out += m[0];
+                    i = re.lastIndex;
+                    continue;
+                }
+                const a = s.slice(re.lastIndex, commaIdx).trim();
+                const b = s.slice(commaIdx + 1, j).trim();
+                out += `If(IsNull(${b}) or ${b} = 0, null, ${a} / ${b})`;
+                i = j + 1;
+                re.lastIndex = i;
+            }
+            out += s.slice(i);
+            return out;
         }
 
         function _tsConvertIfThenElse(s) {
@@ -17034,9 +17088,16 @@ views:
                                 metrics.push(mObj);
                                 colMap.set(colName.toUpperCase(), { colId: metricId, displayName: colDisp });
                             } else {
-                                // Derived dimension column
+                                // Derived dimension column.
+                                // Carry `name` so buildDerivedElementsAndMoveCalcs can identify
+                                // calc cols whose formula references a related-table column and
+                                // move them to the derived "<Table> View" element with the
+                                // [BaseElement/REL_NAME/Field] triple form. Without `name`, the
+                                // post-pass cannot detect cross-element refs and the formula's
+                                // bare [Col] refs collapse to broken refs that don't resolve on
+                                // the source warehouse-table element. Closes beads-sigma-mj6.
                                 const colId = sigmaShortId();
-                                columns.push({ id: colId, formula });
+                                columns.push({ id: colId, name: colDisp, formula });
                                 order.push(colId);
                                 colMap.set(colName.toUpperCase(), { colId, displayName: colDisp });
                             }
@@ -26357,7 +26418,7 @@ models:
     <li><code>if (cond) then X else Y</code> → <code>If(cond, X, Y)</code></li>
     <li><code>sum(Revenue)</code> → <code>Sum([Revenue])</code></li>
     <li><code>count_distinct(CustomerID)</code> → <code>CountDistinct([CustomerID])</code></li>
-    <li><code>safe_divide(a, b)</code> → <code>a / NullIf(b, 0)</code></li>
+    <li><code>safe_divide(a, b)</code> → <code>If(IsNull(b) or b = 0, null, a / b)</code></li>
     <li><code>col in {A, B, C}</code> → <code>In([col], A, B, C)</code></li>
     <li><code>isnull(x)</code> → <code>IsNull(x)</code></li>
     <li><code>date_diff(unit, start, end)</code> → <code>DateDiff(unit, start, end)</code></li>
