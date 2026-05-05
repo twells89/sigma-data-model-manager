@@ -257,7 +257,14 @@ The runner:
 
 **Bug-driven corpus growth (mandatory rule):** every bug fix must add a fixture to `regression-corpus/<format>/<bugslug>/` that reproduces the original failure. Adding the fixture is part of the fix commit. The fix is not landed if the corpus does not include a regression-test for it. See `regression-corpus/README.md` in the MCP repo for fixture shape.
 
-**v1 limitation (track in beads-sigma-ee6 v2):** the runner currently exercises only the MCP converter. Browser-tool surfaces (`index.html` and `tableau-local.html`) are NOT yet wired in — for converter changes that touch only the browser tools, the per-converter UI test below is still required as a substitute. v2 will add a Puppeteer-driven browser variant that runs the same corpus against all 3 surfaces.
+**Browser-variant runner (`npm run regression:browser`)** — added 2026-05-05 (closes beads-sigma-ksd). Drives the same `regression-corpus/` fixtures through `index.html` via Puppeteer, reading each converter's output JSON textarea and POSTing to Sigma directly. Catches a bug class the MCP runner can't see — e.g. converters that omit `schemaVersion: 1` at the model root (invisible via the UI Save flow which injects it, broken on direct POST). When `index.html`'s converter section changes, prefer `npm run regression:all` (both surfaces). Not strictly required to ALWAYS run; strongly encouraged when index.html itself changes.
+
+**Surface matrix coverage**:
+- `npm run regression` — MCP server-side converters (`src/<format>.ts`).
+- `npm run regression:browser` — smm browser tool (`index.html` per-converter tabs).
+- `npm run regression:all` — both, in order. Exit 0 only if both green.
+
+**Tableau-local (`tableau-local.html`) is NOT yet wired in** — file a follow-up if it becomes a regression source.
 
 **Setup:**
 - Puppeteer is installed at `/Users/tjwells/sigma-data-model-manager/tableau-local/node_modules/puppeteer`. Import via `import puppeteer from '/Users/tjwells/sigma-data-model-manager/tableau-local/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js'`.
