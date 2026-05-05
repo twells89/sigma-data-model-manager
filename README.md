@@ -51,7 +51,7 @@ Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) 
 **What gets converted:**
 - Data sources → Sigma elements with warehouse table paths (standard joins, virtual connections, custom SQL)
 - Virtual connections (type=collection) → Tableau 2020.2+ relationship model with role-playing dimensions
-- Joins / Relationships → Sigma relationships on the fact element
+- Joins / Relationships → Sigma relationships on the fact element. Tableau 2020.2+ relationship model ("noodles") maps 1:1 to Sigma relationships — both tools resolve join type and granularity at viz time, so no semantic information is lost. Cardinality hints (1:1, 1:N, N:1, N:N) are preserved when present and default to N:1 (the dominant fact-to-dim pattern) when Tableau leaves them unspecified. Pre-2020.2 physical joins (older Tableau Server on-prem versions back to 2018.x) are handled via the Join Strategy dropdown: Auto routes many-to-one joins to relationships and others to physical joins; Force Relationships keeps everything lazy; Force Physical Joins keeps everything eager.
 - Calculated fields → Sigma calculated columns with formula conversion
 - Simple aggregates → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)
 - Parameters → Sigma controls (list, date-range, text)
@@ -489,7 +489,7 @@ Converts [Cube.dev](https://cube.dev) schemas to Sigma data model JSON. Accepts 
 Converts [Tableau Prep](https://www.tableau.com/products/prep) flow files (`.tfl` / `.tflx`) to Sigma data model JSON. JSZip extracts the inner `flow` JSON automatically when you drop the archive into the converter.
 
 **What gets converted:**
-- Inputs (`.v1.LoadSql`, `LoadCsv`, `LoadExcel`, `LoadJson`, `LoadHyper`, `LoadGoogle`) → warehouse-table elements; CSV/Excel/JSON/Hyper inputs map to a warehouse table by basename (override via the **Table mapping** field)
+- Inputs (`.v1.LoadSql`, `LoadCsv`, `LoadExcel`, `LoadJson`, `LoadHyper`, `LoadGoogle`) → warehouse-table elements; CSV/Excel/JSON/Hyper inputs map to a warehouse table by basename (override via the **Table mapping** field). Orphan inputs (empty `nextNodes`, not referenced by any other node — leftovers from prior flow editing) are pruned before emission when the flow has at least one output, so a published flow only emits elements that contribute to its output
 - `LoadSqlProxy` (Tableau Server published datasource) → Custom SQL placeholder, OR auto-resolved when a companion `.tds` / `.tdsx` is dropped alongside the `.tfl` (matched by datasource caption — `type='table'` relations become warehouse-table elements, `type='text'` relations become Custom SQL with the real SELECT body)
 - Containers (`.v1.Container`) → recursively flattened into the parent graph
 - Linear transform chains on a single element:
