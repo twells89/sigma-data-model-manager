@@ -9398,6 +9398,22 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 return 'pages-insert';
             }
 
+            // Check for a full new element (table) with its own source — this MUST come
+            // before the element-fragment / page checks so a complete `{id, name,
+            // kind:'table', source, columns:[...]}` shape is recognised as a new element
+            // to APPEND, rather than misread as a column-fragment to merge into an
+            // existing element. (beads-sigma-785, Bug C.)
+            if (obj.id && obj.name && obj.kind === 'table' && obj.source) {
+                return 'element';
+            }
+
+            // Check for a full new page (has its own elements array) — also must come
+            // before the elements-fragment check so a real page shape isn't auto-wrapped
+            // and merged in.
+            if (obj.id && obj.name && obj.elements && Array.isArray(obj.elements)) {
+                return 'page';
+            }
+
             // Check for elements[] at top level without pages wrapper (e.g. {elements: [{id, columns, order}]})
             // Auto-wrap into pages-insert
             if (!obj.pages && obj.elements && Array.isArray(obj.elements)) {
@@ -9415,36 +9431,37 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 return 'element-fragment';
             }
 
-            // Check for column
-            if (obj.id && obj.formula && (obj.name || obj.description)) {
-                return 'column';
-            }
-            
-            // Check for metric
-            if (obj.id && obj.formula && obj.name) {
-                return 'metric';
-            }
-            
             // Check for relationship
             if (obj.id && obj.targetElementId && obj.keys) {
                 return 'relationship';
             }
-            
+
             // Check for filter
             if (obj.id && obj.columnId && obj.kind) {
                 return 'filter';
             }
-            
-            // Check for element (table)
-            if (obj.id && obj.name && obj.kind === 'table' && obj.source) {
-                return 'element';
+
+            // Check for metric vs column (beads-sigma-785, Bug A).
+            // Both are `{id, formula, name}` shapes. Distinguish by:
+            //   • explicit `_kind: 'metric'` marker (preferred for AI output)
+            //   • aggregation function at the start of the formula
+            //     (Sum, Avg, Count, Min, Max, CountDistinct, Median, StDev, Variance, etc.)
+            // Otherwise treat as a column. A `description` field is a strong column signal too.
+            if (obj.id && obj.formula && obj.name) {
+                if (obj._kind === 'metric') return 'metric';
+                if (obj._kind === 'column') return 'column';
+                if (typeof obj.formula === 'string' &&
+                    /^\s*(Sum|Avg|Average|Count|CountDistinct|Min|Max|Median|StDev|Stdev|StDevP|Variance|VarianceP|First|Last|Total)\s*\(/i.test(obj.formula) &&
+                    !obj.description) {
+                    return 'metric';
+                }
+                return 'column';
             }
-            
-            // Check for page
-            if (obj.id && obj.name && obj.elements) {
-                return 'page';
+            // {id, formula, description} (no name) → still a column
+            if (obj.id && obj.formula && obj.description) {
+                return 'column';
             }
-            
+
             return 'unknown';
         }
 
@@ -9562,45 +9579,67 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         // Find where to insert the suggestion
         function findInsertionPoint(json, suggestionType, suggestionObj) {
             switch (suggestionType) {
-                case 'column':
-                    // Find the first table element with columns array
+                case 'column': {
+                    // Pick the table with the most columns (fact-table heuristic) so single
+                    // calc columns referencing fact-table fields land in the right place.
+                    let bestPage = -1, bestElem = -1, bestEl = null;
                     for (let pageIdx = 0; pageIdx < json.pages.length; pageIdx++) {
                         const page = json.pages[pageIdx];
                         for (let elemIdx = 0; elemIdx < (page.elements || []).length; elemIdx++) {
                             const element = page.elements[elemIdx];
-                            if (element.kind === 'table' && Array.isArray(element.columns)) {
-                                return {
-                                    success: true,
-                                    path: ['pages', pageIdx, 'elements', elemIdx, 'columns'],
-                                    description: `Page "${page.name}" → Table "${element.name}" → Columns`
-                                };
+                            if (element.kind !== 'table' || !Array.isArray(element.columns)) continue;
+                            if (!bestEl || element.columns.length > bestEl.columns.length) {
+                                bestPage = pageIdx; bestElem = elemIdx; bestEl = element;
                             }
                         }
+                    }
+                    if (bestEl) {
+                        return {
+                            success: true,
+                            path: ['pages', bestPage, 'elements', bestElem, 'columns'],
+                            description: `Page "${json.pages[bestPage].name}" → Table "${bestEl.name}" → Columns`
+                        };
                     }
                     return {
                         success: false,
                         error: 'No table with columns array found. Create a table element first.'
                     };
+                }
                     
-                case 'metric':
-                    // Find the first table element with metrics array (or create it)
+                case 'metric': {
+                    // Smart targeting (mirrors element-fragment auto-target):
+                    //   • Prefer the table that already has metrics
+                    //   • Otherwise pick the table with the most columns (fact-table heuristic)
+                    let bestPage = -1, bestElem = -1, bestEl = null;
+                    let withMetricsPage = -1, withMetricsElem = -1, withMetricsEl = null;
                     for (let pageIdx = 0; pageIdx < json.pages.length; pageIdx++) {
                         const page = json.pages[pageIdx];
                         for (let elemIdx = 0; elemIdx < (page.elements || []).length; elemIdx++) {
                             const element = page.elements[elemIdx];
-                            if (element.kind === 'table') {
-                                return {
-                                    success: true,
-                                    path: ['pages', pageIdx, 'elements', elemIdx, 'metrics'],
-                                    description: `Page "${page.name}" → Table "${element.name}" → Metrics`
-                                };
+                            if (element.kind !== 'table') continue;
+                            if (element.metrics && element.metrics.length > 0 && !withMetricsEl) {
+                                withMetricsPage = pageIdx; withMetricsElem = elemIdx; withMetricsEl = element;
+                            }
+                            if (!bestEl || (element.columns || []).length > (bestEl.columns || []).length) {
+                                bestPage = pageIdx; bestElem = elemIdx; bestEl = element;
                             }
                         }
+                    }
+                    const usePage = withMetricsEl ? withMetricsPage : bestPage;
+                    const useElem = withMetricsEl ? withMetricsElem : bestElem;
+                    const useEl   = withMetricsEl || bestEl;
+                    if (useEl) {
+                        return {
+                            success: true,
+                            path: ['pages', usePage, 'elements', useElem, 'metrics'],
+                            description: `Page "${json.pages[usePage].name}" → Table "${useEl.name}" → Metrics`
+                        };
                     }
                     return {
                         success: false,
                         error: 'No table element found. Create a table element first.'
                     };
+                }
                     
                 case 'relationship':
                     // Find the first table element with relationships array (or create it)
