@@ -489,7 +489,7 @@ Converts [Cube.dev](https://cube.dev) schemas to Sigma data model JSON. Accepts 
 Converts [Tableau Prep](https://www.tableau.com/products/prep) flow files (`.tfl` / `.tflx`) to Sigma data model JSON. JSZip extracts the inner `flow` JSON automatically when you drop the archive into the converter.
 
 **What gets converted:**
-- Inputs (`.v1.LoadSql`, `LoadCsv`, `LoadExcel`, `LoadJson`, `LoadHyper`, `LoadGoogle`) → warehouse-table elements; CSV/Excel/JSON/Hyper inputs map to a warehouse table by basename (override via the **Table mapping** field)
+- Inputs (`.v1.LoadSql`, `LoadCsv`, `LoadExcel`, `LoadJson`, `LoadHyper`, `LoadGoogle`) → warehouse-table elements; CSV/Excel/JSON/Hyper inputs map to a warehouse table by basename (override via the **Table mapping** field). Orphan inputs (empty `nextNodes`, not referenced by any other node — leftovers from prior flow editing) are pruned before emission when the flow has at least one output, so a published flow only emits elements that contribute to its output
 - `LoadSqlProxy` (Tableau Server published datasource) → Custom SQL placeholder, OR auto-resolved when a companion `.tds` / `.tdsx` is dropped alongside the `.tfl` (matched by datasource caption — `type='table'` relations become warehouse-table elements, `type='text'` relations become Custom SQL with the real SELECT body)
 - Containers (`.v1.Container`) → recursively flattened into the parent graph
 - Linear transform chains on a single element:
