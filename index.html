@@ -11590,11 +11590,29 @@ relationships:
                         // have their own dimension entry, so they'd be missing without this step.
                         // Skip any physical name that another dimension will register on its own (avoids
                         // duplicates when e.g. START_DATE appears in DATEDIFF but also has its own time dim).
+                        // ALSO skip cross-entity refs (physical name doesn't match any of THIS model's
+                        // own entities/dimensions/measures) — buildDerivedElementsAndMoveCalcs pulls
+                        // those calc cols onto a derived element where related cols are in scope, and
+                        // adding them as fake passthrough cols here would land on the wrong element
+                        // (e.g. customer_segment from customer_dim showing up on order_fact). [beads-sigma-30t]
+                        const _physOnThisModel = new Set();
+                        for (const e of model.entities || []) {
+                            _physOnThisModel.add((e.expr || e.name || '').split('.').pop().replace(/"/g,'').toUpperCase());
+                        }
+                        for (const d of model.dimensions || []) {
+                            _physOnThisModel.add((d.expr || d.name || '').split('.').pop().replace(/"/g,'').toUpperCase());
+                        }
+                        for (const me of model.measures || []) {
+                            _physOnThisModel.add((me.expr || me.name || '').split('.').pop().replace(/"/g,'').toUpperCase());
+                        }
+                        _physOnThisModel.delete('');
                         const bracketRefs = formula.match(/\[([^\]/]+)\]/g) || [];
                         for (const ref of bracketRefs) {
                             const displayName = ref.slice(1, -1);
                             const physicalName = displayName.replace(/ /g, '_').toUpperCase();
                             if (colIdMap[physicalName]) continue; // already registered
+                            // Skip cross-entity refs — handled later by buildDerivedElementsAndMoveCalcs
+                            if (!_physOnThisModel.has(physicalName)) continue;
                             const handledByOtherDim = (model.dimensions || []).some(d =>
                                 d !== dim &&
                                 ((d.expr || d.name) || '').split('.').pop().replace(/"/g,'').toUpperCase() === physicalName
@@ -17138,10 +17156,17 @@ views:
                         }
                     }
 
+                    // Don't set element `name` here. For a warehouse-table element, Sigma
+                    // resolves the element's identifier from the path-tail (physKey) — that's
+                    // also what raw column formulas `[physKey/Col]` reference. Setting `name`
+                    // to a different string (e.g. the OAC logical table display name "Order Fact")
+                    // makes Sigma fail to resolve the element's own raw formulas. Cross-element
+                    // refs and derived elements correctly fall back to path-tail via
+                    // buildDerivedElements (`srcEl.name || srcTableName`). Closes beads-sigma-mj6.
+                    void tableDisplay;
                     const element = {
                         id:     elementId,
                         kind:   'table',
-                        name:   tableDisplay,
                         source: { connectionId, kind: 'warehouse-table', path: pathParts },
                         columns,
                         order:  [...order]
@@ -20882,13 +20907,21 @@ ${cleanedSql}`;
             // Pre-expand same-view ${field_ref} references before passing SQL to the converter:
             //   • yesno refs  → (BOOLEAN_EXPR)  so they work as logical values in If/And/Or
             //   • other refs  → [Display Name]  so label-based names are used correctly
+            // Cross-view refs ${other_view.field} → bare [Display Name]. The calc col
+            // is later moved off the source warehouse-table element onto the derived
+            // "<Table> View" element by buildDerivedElementsAndMoveCalcs, which rewrites
+            // bare [Field] refs to the cross-element triple form [Base/REL_NAME/Field].
+            // The previous Lookup() approach (resolveXviewMarkers) did not resolve at the
+            // DM layer — calc cols emitted as Lookup([TABLE/Field], ...) errored at runtime
+            // with "Unknown name: Xview <view> <field>". (closes beads-sigma-txw.)
             // Note: [Mixed Case Name] tokens survive lookConvertExpression's ALL_CAPS regex
             // without being re-converted, so pre-expanded bracket refs are safe.
             function expandYesnoRefs(sql) {
                 if (!yesnoExprMap.size && !fieldDisplayMap.size) return sql;
                 return sql.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?\}/g, (match, n, field) => {
                     if (field && n.toLowerCase() !== viewName.toLowerCase()) {
-                        return `__XVIEW__${n}__${field}__`;
+                        // Cross-view ref → bare [Display Name]; move-pass rewrites to triple form
+                        return `[${sigmaDisplayName(field)}]`;
                     }
                     const lname = (field ?? n).toLowerCase();
                     const yesnoExpr = yesnoExprMap.get(lname);
@@ -20932,7 +20965,11 @@ ${cleanedSql}`;
                     }
                 }
 
-                // ── Pure cross-view ref: ${other_view.field} → Lookup placeholder ──
+                // ── Pure cross-view ref: ${other_view.field} → bare [Display Name] ──
+                // The calc col is moved to the derived "<Table> View" element by
+                // buildDerivedElementsAndMoveCalcs, which rewrites the bare [X] ref to
+                // [Base/REL_NAME/X]. Replaces the older Lookup()-based resolveXviewMarkers
+                // path which errored at runtime. (closes beads-sigma-txw.)
                 {
                     const xvMatch = (d.sql || '').match(/^\s*\$\{([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\}\s*$/);
                     if (xvMatch && xvMatch[1].toLowerCase() !== viewName.toLowerCase()) {
@@ -20940,7 +20977,7 @@ ${cleanedSql}`;
                         colIdMap[colName] = colId;
                         element.columns.push({
                             id: colId,
-                            formula: `__XVIEW__${xvMatch[1]}__${xvMatch[2]}__`,
+                            formula: `[${sigmaDisplayName(xvMatch[2])}]`,
                             name: d.label || sigmaDisplayName(d._name)
                         });
                         element.order.push(colId);
