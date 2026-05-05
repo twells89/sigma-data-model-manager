@@ -12234,6 +12234,7 @@ relationships:
                 name: semanticModels.length === 1
                     ? sigmaDisplayName(semanticModels[0].name)
                     : 'Dbt Semantic Models',
+                schemaVersion: 1,
                 pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
             };
 
@@ -13039,6 +13040,7 @@ metrics:
                 name: views.length === 1
                     ? sigmaDisplayName(views[0].name || views[0].view || 'Omni Model')
                     : 'Omni Analytics Model',
+                schemaVersion: 1,
                 pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
             };
 
@@ -15066,7 +15068,7 @@ views:
 
             if (!cubes.length && !views.length) {
                 return {
-                    sigmaModel: { name: 'Cube Model', pages: [{ id: sigmaShortId(), name: 'Page 1', elements: [] }] },
+                    sigmaModel: { name: 'Cube Model', schemaVersion: 1, pages: [{ id: sigmaShortId(), name: 'Page 1', elements: [] }] },
                     warnings: warnings.length ? warnings : ['No cubes or views found in the provided files'],
                     stats: { cubes: 0, views: 0, totalDims: 0, totalMeasures: 0 },
                 };
@@ -15278,7 +15280,7 @@ views:
                 : 'Cube Model';
 
             return {
-                sigmaModel: { name: modelName, pages: [{ id: sigmaShortId(), name: 'Page 1', elements }] },
+                sigmaModel: { name: modelName, schemaVersion: 1, pages: [{ id: sigmaShortId(), name: 'Page 1', elements }] },
                 warnings,
                 stats: {
                     cubes: cubes.length, views: views.length, elements: elements.length,
@@ -16637,6 +16639,7 @@ views:
                 // ── Build output ────────────────────────────────────────────
                 const sigma = {
                     name: sigmaDisplayName(modelName),
+                    schemaVersion: 1,
                     pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
                 };
 
@@ -17142,6 +17145,7 @@ views:
                 // ── Write output ───────────────────────────────────────────────
                 const outputJson = {
                     name:  selectedBm,
+                    schemaVersion: 1,
                     pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
                 };
                 document.getElementById('oacJsonOutput').value = JSON.stringify(outputJson, null, 2);
@@ -20288,6 +20292,7 @@ ${cleanedSql}`;
             const modelName = explore.label || exploreName;
             const outputJson = {
                 name: modelName,
+                schemaVersion: 1,
                 pages: [{
                     id: sigmaShortId(),
                     name: 'Page 1',
@@ -20486,6 +20491,7 @@ ${cleanedSql}`;
                 .replace(/.*[\\/]/, '').replace(/\.model\.lkml$|\.lkml$/, '');
             const outputJson = {
                 name: modelBaseName,
+                schemaVersion: 1,
                 pages: [{
                     id: sigmaShortId(),
                     name: 'Page 1',
@@ -24110,6 +24116,7 @@ ${cleanedSql}`;
                 const modelName = _pbiModel.name || model.name || 'Power BI Import';
                 const outputJson = {
                     name: modelName,
+                    schemaVersion: 1,
                     pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
                 };
 
@@ -25260,6 +25267,7 @@ view: date_dim {
 
                 const sigmaModel = {
                     name: modelName,
+                    schemaVersion: 1,
                     pages: [{ id: sigmaShortId(), name: 'Page 1', elements }]
                 };
 
