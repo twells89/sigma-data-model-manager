@@ -13693,6 +13693,11 @@ explores:
             const chainState = new Map();
             const visited = new Set();
             const queue = [];
+            // Tracks element names already assigned to input nodes so we can disambiguate when
+            // multiple input nodes resolve to the same warehouse table (common in flows that branch
+            // a single source into several pipelines). Cross-element refs use element name, so name
+            // collisions cause Sigma to resolve refs ambiguously.
+            const inputNameCounts = new Map();
             for (const id of (flow.initialNodes || [])) if (flatNodes[id]) queue.push(id);
             for (const [nid, n] of Object.entries(flatNodes)) {
                 if (n.baseType === 'input' && !queue.includes(nid)) queue.push(nid);
@@ -13710,6 +13715,16 @@ explores:
 
                 if (n.baseType === 'input') {
                     const state = _prepProcessInputNode(n, conn, dbOverride, schemaOverride, tableMapping, tdsIndex, warnings);
+                    // De-duplicate element names across sibling input nodes pointing at the same table.
+                    // The path stays untouched (still resolves to the same warehouse table); only the
+                    // element's `name` field gets a numeric suffix so downstream cross-element ref
+                    // formulas can disambiguate via [ELEMENT_NAME/REL/Col].
+                    if (state && state.element && state.element.name) {
+                        const baseName = state.element.name;
+                        const seen = inputNameCounts.get(baseName) || 0;
+                        if (seen > 0) state.element.name = `${baseName} ${seen + 1}`;
+                        inputNameCounts.set(baseName, seen + 1);
+                    }
                     stats.inputs++;
                     for (const action of (n.actions || [])) _prepApplyTransformAction(action, state, warnings, stats);
                     chainState.set(nid, state);
@@ -13752,7 +13767,7 @@ explores:
             if (!connectionId) warnings.unshift('⚠ Connection ID not set — update in JSON before saving to Sigma');
 
             return {
-                sigmaModel: { name: 'Tableau Prep Flow', pages: [{ id: sigmaShortId(), name: 'Page 1', elements }] },
+                sigmaModel: { name: 'Tableau Prep Flow', schemaVersion: 1, pages: [{ id: sigmaShortId(), name: 'Page 1', elements }] },
                 warnings,
                 stats: {
                     nodes: stats.nodes, inputs: stats.inputs, joins: stats.joins, unions: stats.unions,
@@ -13897,7 +13912,13 @@ explores:
             } else if (nodeType.startsWith('.v1.Load')) {
                 let tableName = '';
                 if (nodeType === '.v1.LoadSql') {
-                    tableName = String(n.connectionAttributes?.table || n.connectionAttributes?.['table-name'] || inputName).toUpperCase();
+                    let rawTable = String(n.connectionAttributes?.table || n.connectionAttributes?.['table-name'] || inputName);
+                    // Virtual-connection inputs leave connectionAttributes empty; inputName then carries Tableau Prep's
+                    // display annotation like "EMPLOYEES (CSA.EMPLOYEES)" or "ABSENCE_RECORDS (CSA.ABSENCE_RECORDS) 2"
+                    // (the trailing " 2"/" 3" is Tableau's auto-dedup suffix when the same source appears multiple times).
+                    // Strip the parens annotation and the dedup suffix so the path's last segment is the real table name.
+                    rawTable = rawTable.replace(/\s*\([^)]*\)\s*\d*\s*$/, '').replace(/\s+\d+\s*$/, '').trim();
+                    tableName = rawTable.toUpperCase();
                 } else {
                     const fname = String(n.connectionAttributes?.filename || inputName);
                     const base = fname.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
@@ -13933,17 +13954,29 @@ explores:
         // (.v1.LoadSql / file / LoadSqlProxy stub / .tds-resolved).
         function _prepFinishInput(n, element, sourceTable, isCustomSql, inputName) {
             const colByName = new Map();
+            // Tableau virtual-connection flows replace physical column names with internal UUIDs in
+            // fields[].name and put the real warehouse column name in fields[].caption. Detect that
+            // shape and substitute the caption so column formulas/IDs reference the actual column.
+            const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
             for (const f of (n.fields || [])) {
                 if (!f.name) continue;
-                const dispName = (f.caption || sigmaDisplayName(f.name));
-                const upper = f.name.toUpperCase();
+                const isUuidName = UUID_RE.test(f.name);
+                // Physical identifier used to build column ID and warehouse-table column formulas.
+                // For UUID names, fall back to caption (the real warehouse column); for normal names,
+                // f.name is already the right physical identifier.
+                const physical = isUuidName ? (f.caption || sigmaDisplayName(f.name)) : f.name;
+                const dispName = (f.caption || sigmaDisplayName(physical));
+                const upper = physical.toUpperCase();
                 const id = isCustomSql ? sigmaShortId() : sigmaInodeId(upper);
-                const formula = isCustomSql ? `[Custom SQL/${dispName}]` : sigmaColFormula(sourceTable, f.name);
+                const formula = isCustomSql ? `[Custom SQL/${dispName}]` : sigmaColFormula(sourceTable, physical);
                 const col = { id, formula };
                 if (!isCustomSql && f.caption) col.name = f.caption;
                 element.columns.push(col); element.order.push(id);
                 colByName.set(dispName, id);
                 colByName.set(f.name, id);
+                // Also map by the physical name so downstream nodes that reference by warehouse column
+                // (rather than by Tableau UUID) resolve correctly.
+                if (isUuidName) colByName.set(physical, id);
             }
             return { element, colByName, upstreamChainIds: [n.id], sourceTable, isCustomSql, finalized: false,
                 displayableName: sigmaDisplayName(inputName) };
@@ -14212,7 +14245,11 @@ explores:
                     const dn = c.name || _prepExtractDisplay(c.formula);
                     if (!dn) continue;
                     const id = sigmaShortId();
-                    const xref = `[${leftSrcTable}/${relName}/${dn}]`;
+                    // Cross-element ref must use the LEFT element's actual `name` field, not its
+                    // warehouse table name — sibling input nodes pointing at the same table get
+                    // numeric suffixes (EMPLOYEES, EMPLOYEES 2, EMPLOYEES 3) so the relationship
+                    // is anchored to the renamed element, not the bare table name.
+                    const xref = `[${leftElementName}/${relName}/${dn}]`;
                     joinView.columns.push({ id, formula: xref, name: dn });
                     joinView.order.push(id);
                     if (!joinColByName.has(dn)) {
@@ -26714,7 +26751,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
 
 <h3>What Gets Converted</h3>
 <ul>
-    <li><b>Inputs</b> (<code>.v1.LoadSql</code>, <code>LoadCsv</code>, <code>LoadExcel</code>, <code>LoadJson</code>, <code>LoadHyper</code>, <code>LoadGoogle</code>) → Sigma warehouse-table elements. CSV/Excel/JSON/Hyper inputs map to a warehouse table by basename (override via <b>Table mapping</b> field).</li>
+    <li><b>Inputs</b> (<code>.v1.LoadSql</code>, <code>LoadCsv</code>, <code>LoadExcel</code>, <code>LoadJson</code>, <code>LoadHyper</code>, <code>LoadGoogle</code>) → Sigma warehouse-table elements. CSV/Excel/JSON/Hyper inputs map to a warehouse table by basename (override via <b>Table mapping</b> field). <b>Virtual-connection inputs</b> (empty <code>connectionAttributes</code>, UUID-shaped <code>fields[].name</code>) are detected automatically: the parens-annotated label (<code>EMPLOYEES (CSA.EMPLOYEES)</code>) is stripped to the bare table name and column captions are substituted for UUIDs in formulas/IDs. When multiple input nodes resolve to the same warehouse table, element names are de-duplicated with numeric suffixes (<code>EMPLOYEES</code>, <code>EMPLOYEES 2</code>, <code>EMPLOYEES 3</code>) so cross-element refs stay unambiguous.</li>
     <li><b>LoadSqlProxy</b> (Tableau Server published datasource) → Sigma Custom SQL placeholder element with a TODO comment. <b>Drop a companion <code>.tds</code> / <code>.tdsx</code></b> alongside the .tfl with a matching datasource caption to auto-resolve the stub: relations of <code>type='table'</code> become warehouse-table elements, <code>type='text'</code> relations become Custom SQL elements with the real <code>SELECT</code> body.</li>
     <li><b>Containers</b> (<code>.v1.Container</code>) → recursively flattened into the parent graph; inner action chains process linearly.</li>
     <li><b>Linear transform chains</b> on a single element:
