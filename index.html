@@ -10218,7 +10218,51 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 if (!de.source || de.source.kind !== 'table' || !de.source.elementId) return;
                 var calcs = crossElCalcsByElId[de.source.elementId];
                 if (!calcs || !calcs.length) return;
-                calcs.forEach(function(col) { de.columns.push(col); de.order.push(col.id); });
+
+                // Build name map: any related column whose display name is "X" is exposed
+                // on the derived element under formula [<base>/<REL_NAME>/X] — so a moved
+                // formula's bare [X] ref must rewrite to that cross-element triple form to
+                // resolve.  (Sigma's auto-disambiguated label "X (REL_NAME)" is not usable
+                // as a bracket ref because parens collide with formula function-call syntax.)
+                // Local (own) columns pass through unchanged on the derived element, so we
+                // leave those refs alone.
+                var srcEl = elements.find(function(e) { return e.id === de.source.elementId; });
+                var srcBaseName = (srcEl && (srcEl.name || (srcEl.source && srcEl.source.path && srcEl.source.path[srcEl.source.path.length-1]))) || '';
+                var relatedNameMap = {}; // localDispName -> "<base>/<REL_NAME>/<dispName>"
+                if (srcEl && srcEl.relationships && srcBaseName) {
+                    srcEl.relationships.forEach(function(rel) {
+                        if (!rel.name) return;
+                        var tgtEl = elements.find(function(e) { return e.id === rel.targetElementId; });
+                        if (!tgtEl || !tgtEl.source || tgtEl.source.kind !== 'warehouse-table') return;
+                        (tgtEl.columns || []).forEach(function(tc) {
+                            if (!tc.formula || tc.formula.startsWith('/*')) return;
+                            var fm = tc.formula.match(/^\[([^\]]+)\]$/);
+                            if (!fm) return;
+                            var inner = fm[1];
+                            var s = inner.lastIndexOf('/');
+                            var dispName = s >= 0 ? inner.slice(s + 1) : inner;
+                            // First-rel-wins; later collisions for the same local name still
+                            // produce a valid unambiguous ref (the [X (REL)] disambiguated
+                            // column does exist), just to whichever rel hit first.
+                            if (!(dispName in relatedNameMap)) {
+                                relatedNameMap[dispName] = srcBaseName + '/' + rel.name + '/' + dispName;
+                            }
+                        });
+                    });
+                }
+
+                calcs.forEach(function(col) {
+                    if (col.formula && Object.keys(relatedNameMap).length) {
+                        // Rewrite every [bracketed-ref] whose name appears in the related map.
+                        // Tokens that don't match (locals, other calc cols, literals) pass through.
+                        col.formula = col.formula.replace(/\[([^\]\/]+)\]/g, function(match, refName) {
+                            var rewritten = relatedNameMap[refName];
+                            return rewritten ? '[' + rewritten + ']' : match;
+                        });
+                    }
+                    de.columns.push(col);
+                    de.order.push(col.id);
+                });
                 if (warnings) warnings.push('ℹ ' + calcs.length + ' calculated column' +
                     (calcs.length !== 1 ? 's' : '') + ' moved to derived element "' +
                     (de.name || 'derived') + '" — formula references related-table columns.');
