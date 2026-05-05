@@ -231,26 +231,33 @@ This step has TWO mandates:
 
 When the diff touches a converter's view-build loop (the part that produces the `sigmaModel` JSON), run a real-UI test that drives the local browser tool, saves through the actual Save flow, and verifies the saved spec resolves data correctly via the Sigma MCP V2 server. JSDOM-based or function-extracting harnesses are NOT a substitute — they bypass DOM-driven setup and have produced false negatives historically. The bar for "PASS" on this step is: a query against the saved data model returns real warehouse data, not error-typed columns or null rows.
 
-**Mandatory regression-fixture corpus (run on EVERY converter-touching commit):**
-The following fixtures must run end-to-end (convert → POST → query → check error columns → cleanup) before commit. Failure on any of these is a HARD FAIL:
+**Mandatory regression-corpus run (on EVERY converter-touching commit):**
 
-| Fixture | Path | Purpose |
-|---|---|---|
-| `lod_test.twb` | `/Users/tjwells/Downloads/sigma-data-model-mcp-update/test-fixtures/lod_test.twb` | LOD INCLUDE/EXCLUDE/FIXED + helper dedup |
-| `setsbug_test.twb` | author from `beads-sigma-6o3` repro | Cross-element calc move + folders interaction |
-| `retail_analytics_sets_real.tds` | `/tmp/setsbug_test/real_user_tds.tds` (from `/Users/tjwells/Desktop/Converter Files/retail_analytics_sets_tableau.tds`) | Real customer TDS that hit beads-sigma-6o3 + beads-sigma-k2r |
-| `window_test.twb` | from prior agent's window-calc work | RUNNING_SUM / WINDOW_SUM / LOOKUP / RANK |
+The corpus runner lives in the MCP repo (`twells89/sigma-data-model-mcp`). To run it:
 
-For each, the test must:
-1. Load via JSDOM or Puppeteer harness
-2. Run the converter
-3. POST to Sigma test folder
-4. **`GET /v2/dataModels/{id}/columns`** → assert ZERO entries with `type.type === "error"`. **This is a hard gate.** A spec that POSTs 200 but has even one error column is a FAIL — silent runtime breakage hides under successful saves.
-5. Cleanup via `DELETE /v2/files/{dataModelId}`
+```bash
+# Fresh-clone (per Step 0 freshness rule):
+git clone https://github.com/twells89/sigma-data-model-mcp.git /tmp/mcp-regress
+cd /tmp/mcp-regress
+npm install && npm run build
 
-Long-term, this corpus moves to `regression-corpus/` + `npm run regression` per `beads-sigma-ee6`. Until then, run the fixtures inline.
+# Run all fixtures:
+SIGMA_BASE_URL=https://aws-api.sigmacomputing.com \
+  SIGMA_CLIENT_ID=$SIGMA_CLIENT_ID \
+  SIGMA_CLIENT_SECRET=$SIGMA_CLIENT_SECRET \
+  npm run regression
+```
 
-**Bug-driven corpus growth:** every bug ticket fixed must add a fixture that reproduces the original failure. Adding the fixture is part of the fix commit, not a follow-up.
+The runner:
+1. Walks `regression-corpus/<format>/<name>/` — discovers fixtures.
+2. For each: runs the MCP converter → POSTs to Sigma test folder → `GET /v2/dataModels/{id}/columns` → asserts zero `type.type === "error"` → DELETEs.
+3. Reports pass/fail matrix. Exits 0 on all-green, 1 if any fixture fails.
+
+**HARD GATE**: `npm run regression` exit code MUST be 0 before commit. A 200-OK save with even one column showing `type.type === "error"` is a FAIL — silent runtime breakage hides under successful saves (real example: beads-sigma-k2r, where Order Value Tier shipped silently broken until the runner caught it on the same TDS).
+
+**Bug-driven corpus growth (mandatory rule):** every bug fix must add a fixture to `regression-corpus/<format>/<bugslug>/` that reproduces the original failure. Adding the fixture is part of the fix commit. The fix is not landed if the corpus does not include a regression-test for it. See `regression-corpus/README.md` in the MCP repo for fixture shape.
+
+**v1 limitation (track in beads-sigma-ee6 v2):** the runner currently exercises only the MCP converter. Browser-tool surfaces (`index.html` and `tableau-local.html`) are NOT yet wired in — for converter changes that touch only the browser tools, the per-converter UI test below is still required as a substitute. v2 will add a Puppeteer-driven browser variant that runs the same corpus against all 3 surfaces.
 
 **Setup:**
 - Puppeteer is installed at `/Users/tjwells/sigma-data-model-manager/tableau-local/node_modules/puppeteer`. Import via `import puppeteer from '/Users/tjwells/sigma-data-model-manager/tableau-local/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js'`.
