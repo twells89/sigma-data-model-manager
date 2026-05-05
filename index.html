@@ -9910,6 +9910,22 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             state.tokenExpiry = null;
             document.getElementById('clientId').value = '';
             document.getElementById('clientSecret').value = '';
+
+            // Reset cached org-scoped lookups (connections, workspaces, folders)
+            // so an export/import flow between two different orgs picks up the
+            // new org's lists on the next connect, not the prior one's.
+            wizardState.connections = [];
+            wizardState.workspaces = [];
+            wizardState.folders = [];
+
+            // Reset the per-converter connection dropdowns to placeholder so a
+            // stale connection from the prior org isn't pre-selected.
+            const dropdownIds = ['dbtConnectionId','snowConnectionId','bulkUploadConnectionId','lookConnectionId','tableauConnectionId','pbiConnectionId','alteryxConnectionId','contractConnectionId','omniConnectionId','tsConnectionId','qlikConnectionId','oacConnectionId','ssasConnectionId','sqlConnectionId'];
+            dropdownIds.forEach(id => {
+                const sel = document.getElementById(id);
+                if (sel) sel.innerHTML = '<option value="">— Connect to Sigma to load —</option>';
+            });
+
             showToast('Saved credentials cleared', 'success');
         }
         
