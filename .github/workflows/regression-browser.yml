@@ -1,0 +1,53 @@
+name: regression-browser
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: regression-browser-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression-browser:
+    name: regression-browser (smm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout smm
+        uses: actions/checkout@v4
+        with:
+          path: smm
+
+      - name: Checkout MCP (sibling, for runner + corpus)
+        uses: actions/checkout@v4
+        with:
+          repository: twells89/sigma-data-model-mcp
+          ref: main
+          path: mcp-checkout
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install MCP deps (incl. puppeteer)
+        working-directory: mcp-checkout
+        run: npm ci
+
+      - name: Build MCP
+        working-directory: mcp-checkout
+        run: npm run build
+
+      - name: Run browser regression corpus (smm)
+        working-directory: mcp-checkout
+        env:
+          SIGMA_BASE_URL: https://aws-api.sigmacomputing.com
+          SIGMA_CLIENT_ID: ${{ secrets.SIGMA_CLIENT_ID }}
+          SIGMA_CLIENT_SECRET: ${{ secrets.SIGMA_CLIENT_SECRET }}
+          SMM_INDEX_PATH: ${{ github.workspace }}/smm/index.html
+        run: npm run regression:browser
