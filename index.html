@@ -11195,6 +11195,25 @@ relationships:
             return args;
         }
 
+        // Uppercase any bare identifier in `expr` that matches a known column name (case-insensitive),
+        // so that downstream lookSqlToSigmaRules / lookConvertExpression picks them up as references
+        // (its bracketing regex requires ALL_CAPS) and turns them into [Display Name] form.
+        // Identifiers inside double-quoted OR single-quoted string literals are left alone — Sigma
+        // uses double quotes for string literals (and dbt YAML exprs commonly use either form, e.g.
+        // `customer_segment = "Pro"`). Mirrors MCP src/dbt.ts preBracketKnownNames. [beads-sigma-30t]
+        function dbtPreBracketKnownNames(expr, knownNames) {
+            if (!knownNames || !knownNames.size) return expr;
+            const parts = expr.split(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/);
+            for (let i = 0; i < parts.length; i++) {
+                if (i % 2 === 1) continue; // odd indices are quoted string literals
+                parts[i] = parts[i].replace(/\b([A-Za-z_][A-Za-z0-9_]*)\b/g, (m) => {
+                    if (/^(AND|OR|NOT|NULL|IS|IN|BETWEEN|LIKE|THEN|ELSE|END|WHEN|CASE|TRUE|FALSE)$/i.test(m)) return m;
+                    return knownNames.has(m.toUpperCase()) ? m.toUpperCase() : m;
+                });
+            }
+            return parts.join('');
+        }
+
         // Wraps bare identifiers in [Display Name] brackets, skipping SQL keywords,
         // string literals, and already-bracketed references.
         function dbtConvertColumnReferences(expr) {
@@ -11466,7 +11485,7 @@ relationships:
             return `${fn}([${dn}], ${combinedFilter})`;
         }
 
-        function convertDbtSemanticModel(model, config, allMeasuresByModel, referencedMeasureNames) {
+        function convertDbtSemanticModel(model, config, allMeasuresByModel, referencedMeasureNames, knownNames) {
             const connectionId = config.connectionId || '<CONNECTION_ID>';
 
             // Resolve table path — prefer manifest node_relation, else ref(), else model name
@@ -11575,8 +11594,13 @@ relationships:
                 const isSimpleRef = /^[\w."]+$/.test(rawExpr);
                 if (!isSimpleRef && rawExpr && rawExpr !== dim.name) {
                     // Try rule-based first (handles ROUND, DATEDIFF, COALESCE, etc. with proper Sigma names/quotes)
-                    // then fall back to iterative converter for CASE/CONCAT/SPLIT_PART
-                    const formula = lookSqlToSigmaRules(rawExpr) || dbtConvertExpressionToSigma(rawExpr);
+                    // then fall back to iterative converter for CASE/CONCAT/SPLIT_PART.
+                    // Pre-uppercase any bare identifier that matches a known column name across the
+                    // YAML — lookSqlToSigmaRules / lookConvertExpression's bracketing regex requires
+                    // ALL_CAPS, but dbt exprs often use lowercase (e.g. customer_segment). Without
+                    // this, cross-entity refs survive bare and produce type:error cols. [beads-sigma-30t]
+                    const preBracketed = dbtPreBracketKnownNames(rawExpr, knownNames);
+                    const formula = lookSqlToSigmaRules(preBracketed) || dbtConvertExpressionToSigma(preBracketed);
                     if (formula) {
                         // Skip columns whose formula contains SQL constructs with no Sigma equivalent.
                         // Leaving these in would cause a save error; better to omit and surface via skippedDims.
@@ -12013,9 +12037,28 @@ relationships:
             const elementData = [];
             { const fnWarn = friendlyNameWarning(); if (fnWarn) warnings.push(fnWarn); }
 
+            // Build a set of all known column identifiers across all semantic models so that
+            // cross-element refs in calc-col exprs (e.g. order_fact.is_pro_segment referencing
+            // customer_segment from customer_dim via foreign entity) survive as upper-case
+            // identifiers that lookConvertExpression then brackets as [Display Name]. [beads-sigma-30t]
+            const dbtKnownNames = new Set();
+            for (const m of semanticModels) {
+                for (const e of m.entities || []) dbtKnownNames.add((e.expr || e.name || '').toUpperCase());
+                for (const d of m.dimensions || []) {
+                    const dExpr = (d.expr || d.name || '').trim();
+                    if (lookIsComplexSql(dExpr)) dbtKnownNames.add((d.name || '').toUpperCase());
+                    else dbtKnownNames.add((dExpr.split('.').pop().replace(/"/g, '') || d.name).toUpperCase());
+                }
+                for (const me of m.measures || []) {
+                    const mExpr = (me.expr || me.name || '').trim();
+                    dbtKnownNames.add((mExpr.split('.').pop().replace(/"/g, '') || me.name).toUpperCase());
+                }
+            }
+            dbtKnownNames.delete('');
+
             for (const model of semanticModels) {
                 try {
-                    const { element, aggTimeDims, timeDimInfo, skippedDims } = convertDbtSemanticModel(model, config, allMeasuresByModel, referencedMeasureNames);
+                    const { element, aggTimeDims, timeDimInfo, skippedDims } = convertDbtSemanticModel(model, config, allMeasuresByModel, referencedMeasureNames, dbtKnownNames);
                     elements.push(element);
                     elementData.push({ aggTimeDims, timeDimInfo });
                     for (const { name, reason } of skippedDims || []) {
@@ -12063,13 +12106,19 @@ relationships:
                     const physicalFk  = (entity.expr || entity.name || '').toUpperCase();
                     const entityId    = physicalFk; // used to add/find the FK column on source
 
-                    // Match target by logical name against target primary/unique entity names
-                    const targetIdx = semanticModels.findIndex(m =>
-                        m.entities?.some(en =>
+                    // Match target by logical name against target primary/unique entity names.
+                    // Capture the matched target entity itself so we can look up the dim's PK
+                    // column by its physical expr (the actual column registered via addCol),
+                    // not just by the logical entity name. [beads-sigma-30t]
+                    let targetEntity = null;
+                    const targetIdx = semanticModels.findIndex(m => {
+                        const found = m.entities?.find(en =>
                             (en.name || '').toUpperCase() === logicalName &&
                             (en.type === 'primary' || en.type === 'unique')
-                        )
-                    );
+                        );
+                        if (found) { targetEntity = found; return true; }
+                        return false;
+                    });
                     if (targetIdx < 0 || !elements[targetIdx]) {
                         warnings.push(`Foreign entity "${entity.name}" on "${model.name}" — no matching primary entity found in this YAML`);
                         continue;
@@ -12087,10 +12136,16 @@ relationships:
                         elementColIdMaps[i][entityId] = srcColId;
                     }
 
-                    // Look up target column by logical name (PK name), not physical FK name
-                    const tgtColId = elementColIdMaps[targetIdx][logicalName];
+                    // Look up target column by the target entity's physical expr first
+                    // (e.g. customer_key — the actual column on the dim table that addCol
+                    // registered), falling back to the logical entity name (the alias
+                    // registration above maps logical→physical when expr ≠ name). The
+                    // expr-first order matches MCP dbt and avoids dropping the relationship
+                    // when expr differs from name. [beads-sigma-30t]
+                    const tgtColKey = ((targetEntity && (targetEntity.expr || targetEntity.name)) || logicalName).toUpperCase();
+                    const tgtColId = elementColIdMaps[targetIdx][tgtColKey] || elementColIdMaps[targetIdx][logicalName];
                     if (!tgtColId) {
-                        warnings.push(`Foreign entity "${entity.name}" on "${model.name}" — target column "${logicalName}" not found on target element`);
+                        warnings.push(`Foreign entity "${entity.name}" on "${model.name}" — target column "${tgtColKey}" not found on target element`);
                         continue;
                     }
 
@@ -12190,63 +12245,15 @@ relationships:
                 });
             }
 
-            // ── Derived elements for models with foreign-entity relationships ──────
+            // ── Derived "<Table> View" elements + cross-element calc-col move ──────
             // Each model that joins to dimension tables gets a derived element that
-            // surfaces all fields (own + related) via [SRC_TABLE/REL_TABLE/Col] formulas.
-            // This mirrors the SQL converter's derived view pattern.
-            const dbtDerivedElements = [];
-            elements.forEach((el, i) => {
-                if (i >= semanticModels.length) return; // skip time-spine elements
-                if (!el.relationships?.length) return;
-                if (el.source?.kind !== 'warehouse-table') return;
-
-                const elPath = el.source.path;
-                const elTableName = elPath[elPath.length - 1];
-                const dbtViewCols = [], dbtViewOrder = [];
-
-                // Helper: extract display-name portion from [TABLE/Display Name] or [Display Name]
-                const _dbtDispName = (formula) => {
-                    const m = formula.match(/^\[([^\]]+)\]$/);
-                    if (!m) return null;
-                    const inner = m[1];
-                    const s = inner.lastIndexOf('/');
-                    return s >= 0 ? inner.slice(s + 1) : inner;
-                };
-
-                // Own columns first
-                el.columns.forEach(col => {
-                    if (!col.formula) return;
-                    const cId = sigmaShortId();
-                    dbtViewCols.push({ id: cId, formula: col.formula });
-                    dbtViewOrder.push(cId);
-                });
-
-                // Related dimension columns via [SRC_TABLE/TARGET_TABLE/Col]
-                el.relationships.forEach(rel => {
-                    const tgtEl = elements.find(e => e.id === rel.targetElementId);
-                    if (!tgtEl || tgtEl.source?.kind !== 'warehouse-table') return;
-                    tgtEl.columns.forEach(col => {
-                        if (!col.formula) return;
-                        const dispName = _dbtDispName(col.formula);
-                        if (!dispName) return;
-                        const cId = sigmaShortId();
-                        dbtViewCols.push({ id: cId, formula: `[${elTableName}/${rel.name}/${dispName}]` });
-                        dbtViewOrder.push(cId);
-                    });
-                });
-
-                if (dbtViewCols.length > 0) {
-                    dbtDerivedElements.push({
-                        id: sigmaShortId(),
-                        kind: 'table',
-                        name: sigmaDisplayName(semanticModels[i].name),
-                        source: { kind: 'table', elementId: el.id },
-                        columns: dbtViewCols,
-                        order: dbtViewOrder
-                    });
-                }
-            });
-            elements.push(...dbtDerivedElements);
+            // surfaces all fields (own + related) via [SRC_TABLE/REL_NAME/Col] formulas.
+            // The shared helper also pulls calc cols whose formulas reference cross-
+            // entity columns off the source warehouse-table element (where bare
+            // [Field] refs to related-table cols can't resolve) and re-places them
+            // on the derived element with rewritten triple-form refs. Mirrors the
+            // MCP dbt fix at src/dbt.ts (commit 5ca707a). [beads-sigma-30t]
+            buildDerivedElementsAndMoveCalcs(elements, warnings);
 
             const sigmaModel = {
                 name: semanticModels.length === 1
