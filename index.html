@@ -750,6 +750,9 @@
             border-bottom: 1px solid rgba(220, 38, 38, 0.25);
             padding: 10px 24px;
             animation: slideDown 0.2s ease;
+            max-height: 50vh;
+            overflow-y: auto;
+            flex-shrink: 0;
         }
         @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
         .save-error-content {
@@ -2592,7 +2595,7 @@
                         </details>
                         <details class="save-error-details" id="fixAITraceDetails" style="display:none;margin-top:8px;">
                             <summary>🤖 AI tool-use trace <span id="fixAITierBadge" style="color:#666;font-weight:normal;font-size:11px;"></span></summary>
-                            <pre class="save-error-raw" id="fixAITrace" style="max-height:280px;overflow-y:auto;font-size:11px;"></pre>
+                            <pre class="save-error-raw" id="fixAITrace" style="max-height:220px;overflow-y:auto;font-size:11px;"></pre>
                         </details>
                     </div>
                     <div class="save-error-actions">
@@ -3037,7 +3040,7 @@ How it works:
 
                         <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
                             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;">
-                                <input type="checkbox" id="tableauMultiConn" onchange="onTableauMultiConnChange()" style="cursor:pointer;accent-color:var(--accent);flex-shrink:0;">
+                                <input type="checkbox" id="tableauMultiConn" onchange="onTableauMultiConnChange()" style="width:auto;cursor:pointer;accent-color:var(--accent);flex-shrink:0;">
                                 Multiple connections
                             </label>
                             <div class="form-hint">Tables span more than one connection</div>
@@ -6744,8 +6747,18 @@ Probe POSTs are auto-named AI_PROBE_<timestamp> and forced into the user's test 
             if (reply.stop_reason !== 'tool_use' || toolUses.length === 0) {
               const allText = texts.map(t => t.text).join('\n');
               const m = allText.match(/\{[\s\S]*\}/);
-              if (!m) throw new Error('AI did not return a JSON object');
-              return JSON.parse(m[0]);
+              if (m) {
+                try { return JSON.parse(m[0]); } catch (_) { /* fall through to reprompt */ }
+              }
+              // Model emitted text-only diagnosis with no tool_use and no parseable JSON.
+              // Don't abort — re-prompt so it either takes another action or returns the fix.
+              if (stepN >= limits.profile.maxSteps) break;
+              log(`  ⚠ no tool_use and no parseable JSON; re-prompting`);
+              messages.push({
+                role: 'user',
+                content: `You returned text only — no tool_use and no parseable JSON object. You must either (a) call another tool to continue investigating, or (b) emit ONLY the corrected spec as a single JSON object starting with { and ending with }. Diagnoses without a fix are not useful. Continue now.`
+              });
+              continue;
             }
 
             const results = [];
