@@ -11540,6 +11540,80 @@ relationships:
             return `${fn}([${dn}], ${combinedFilter})`;
         }
 
+        // Normalizes dbt "model-level YAML" (the newer form where semantic info is
+        // co-located inside `models[]` entries via `semantic_model:` + `columns:`)
+        // into the standard semantic_models[] + top-level metrics[] shape the rest
+        // of the converter expects. No-op if the input already uses the standard form.
+        // OLCM-style metrics with inline `agg`+`expr` (no type_params.measure) are
+        // hoisted into the model's measures[] so descriptions flow through correctly.
+        function dbtNormalizeModelLevelYaml(parsed) {
+            if (!parsed || !Array.isArray(parsed.models)) return parsed;
+            const semanticModels = [];
+            const liftedMetrics = [];
+            for (const model of parsed.models) {
+                const sm = model.semantic_model;
+                if (!sm) continue;
+                const entities = [];
+                const dimensions = [];
+                const measures = [];
+                for (const col of model.columns || []) {
+                    if (col.entity) {
+                        entities.push({
+                            name: col.entity.name || col.name,
+                            type: col.entity.type,
+                            expr: col.name,
+                            ...(col.description ? { description: col.description } : {})
+                        });
+                    } else if (col.dimension) {
+                        dimensions.push({
+                            name: col.name,
+                            type: col.dimension.type,
+                            ...(col.dimension.type_params ? { type_params: col.dimension.type_params } : {}),
+                            expr: col.name,
+                            ...(col.description ? { description: col.description } : {})
+                        });
+                    } else if (col.measure) {
+                        measures.push({
+                            name: col.measure.name || col.name,
+                            agg: col.measure.agg,
+                            expr: col.name,
+                            ...(col.description ? { description: col.description } : {}),
+                            ...(col.measure.filter ? { filter: col.measure.filter } : {})
+                        });
+                    }
+                }
+                for (const m of model.metrics || []) {
+                    if (m.agg && (m.expr || m.measure)) {
+                        // Inline measure-style metric — hoist into measures[]
+                        measures.push({
+                            name: m.name,
+                            agg: m.agg,
+                            expr: m.expr || m.measure,
+                            ...(m.description ? { description: m.description } : {}),
+                            ...(m.filter ? { filter: m.filter } : {})
+                        });
+                    } else {
+                        // Properly-formed top-level dbt metric — lift to parsed.metrics
+                        liftedMetrics.push(m);
+                    }
+                }
+                semanticModels.push({
+                    name: sm.name || model.name,
+                    ...(model.description ? { description: model.description } : (sm.description ? { description: sm.description } : {})),
+                    model: model.model || `ref('${model.name}')`,
+                    ...(sm.agg_time_dimension ? { defaults: { agg_time_dimension: sm.agg_time_dimension } } : {}),
+                    entities,
+                    dimensions,
+                    measures
+                });
+            }
+            if (semanticModels.length) {
+                parsed.semantic_models = (parsed.semantic_models || []).concat(semanticModels);
+                if (liftedMetrics.length) parsed.metrics = (parsed.metrics || []).concat(liftedMetrics);
+            }
+            return parsed;
+        }
+
         function convertDbtSemanticModel(model, config, allMeasuresByModel, referencedMeasureNames, knownNames) {
             const connectionId = config.connectionId || '<CONNECTION_ID>';
 
@@ -11890,6 +11964,7 @@ relationships:
                         const _dbtMetric2 = { id: sigmaShortId(), formula, name };
                         const _dbtFmt2 = _inferSigmaFormat(formula, name);
                         if (_dbtFmt2) _dbtMetric2.format = _dbtFmt2;
+                        if (metric.description) _dbtMetric2.description = metric.description;
                         result.push({ targetElementId: targetId, metric: _dbtMetric2 });
                     }
                 }
@@ -11966,7 +12041,7 @@ relationships:
                         }
                         loadedFiles.push({ name: file.name, type: 'JSON', count: models.length });
                     } else if (name.endsWith('.yml') || name.endsWith('.yaml')) {
-                        const parsed = jsyaml.load(text);
+                        const parsed = dbtNormalizeModelLevelYaml(jsyaml.load(text));
                         if (!parsed) { errors++; continue; }
                         const yamlModels = parsed.semantic_models || (parsed.name && (parsed.entities || parsed.dimensions || parsed.measures) ? [parsed] : []);
                         allModels.push(...yamlModels);
@@ -12042,7 +12117,7 @@ relationships:
             if (!yamlText) { showToast('Paste some dbt YAML first', 'warning'); return; }
 
             let parsed;
-            try { parsed = jsyaml.load(yamlText); }
+            try { parsed = dbtNormalizeModelLevelYaml(jsyaml.load(yamlText)); }
             catch(e) {
                 showToast('YAML parse error: ' + e.message, 'error');
                 document.getElementById('dbtJsonOutput').value = '// YAML parse error:\n// ' + e.message;
@@ -12174,15 +12249,13 @@ relationships:
                         if (found) { targetEntity = found; return true; }
                         return false;
                     });
-                    if (targetIdx < 0 || !elements[targetIdx]) {
-                        warnings.push(`Foreign entity "${entity.name}" on "${model.name}" — no matching primary entity found in this YAML`);
-                        continue;
-                    }
-
-                    const targetEl = elements[targetIdx];
+                    // Materialize the FK source column unconditionally — even when the
+                    // target dim table isn't loaded — so the column still appears in
+                    // the output (the FK is a real warehouse column regardless of
+                    // whether a relationship can be wired). Previously the addCol was
+                    // gated on a found target, which silently dropped FK columns when
+                    // users uploaded a single fact-table YAML without its dim files.
                     const srcTableName = (element.source?.path?.[2] || model.name).toUpperCase();
-
-                    // Ensure FK column exists on source element — add it if not present
                     let srcColId = elementColIdMaps[i][entityId];
                     if (!srcColId) {
                         srcColId = sigmaInodeId(entityId);
@@ -12190,6 +12263,13 @@ relationships:
                         element.order.push(srcColId);
                         elementColIdMaps[i][entityId] = srcColId;
                     }
+
+                    if (targetIdx < 0 || !elements[targetIdx]) {
+                        warnings.push(`Foreign entity "${entity.name}" on "${model.name}" — no matching primary entity found in this YAML; FK column added without relationship wiring`);
+                        continue;
+                    }
+
+                    const targetEl = elements[targetIdx];
 
                     // Look up target column by the target entity's physical expr first
                     // (e.g. customer_key — the actual column on the dim table that addCol
@@ -26272,14 +26352,15 @@ models:
 
 <h3>What Gets Converted</h3>
 <ul>
-    <li><b>Semantic models</b> → Sigma elements; warehouse path from <code>node_relation</code>, <code>model: ref()</code>, or <code>source()</code></li>
+    <li><b>Semantic models</b> → Sigma elements; warehouse path from <code>node_relation</code>, <code>model: ref()</code>, or <code>source()</code>. Both YAML shapes are accepted: the canonical <code>semantic_models:</code> list and the newer dbt model-level form (<code>models[].semantic_model</code> + <code>columns[]</code> with inline <code>entity:</code>/<code>dimension:</code>/<code>measure:</code> blocks + nested <code>metrics:</code>)</li>
     <li><b>Entities — primary &amp; unique</b> → Join-key columns; logical alias registered when <code>expr</code> differs from <code>name</code></li>
-    <li><b>Entities — foreign</b> → Sigma relationships (named after the target table for cross-element formula compatibility), auto-resolved across multiple uploaded files; each model with foreign-entity relationships also gets a <b>derived element</b> that surfaces own + related dimension columns via <code>[SRC_TABLE/TARGET_TABLE/Col]</code> formulas</li>
+    <li><b>Entities — foreign</b> → Sigma relationships (named after the target table for cross-element formula compatibility), auto-resolved across multiple uploaded files; each model with foreign-entity relationships also gets a <b>derived element</b> that surfaces own + related dimension columns via <code>[SRC_TABLE/TARGET_TABLE/Col]</code> formulas. If a referenced dim isn't included in the upload, the FK column is still materialized on the source element (with a warning) so the column appears in Sigma even without the wired relationship</li>
     <li><b>Entities — natural</b> → Source column (no join)</li>
     <li><b>Dimensions — categorical</b> → Sigma columns; complex <code>expr</code> SQL auto-converted (see table below)</li>
     <li><b>Dimensions — time</b> → <code>DateTrunc("granularity", [col])</code> columns</li>
     <li><b>Measures</b> → Sigma metrics when not referenced by a <code>metrics:</code> entry; <code>filter:</code> → conditional aggregates (<code>SumIf</code>, <code>CountIf</code>, <code>CountDistinctIf</code>, etc.)</li>
-    <li><b>Metrics — simple / ratio / derived</b> → Named Sigma metrics; metric-level filters stacked on top of measure filters. When a simple metric references a measure, the measure itself is suppressed to avoid duplicates.</li>
+    <li><b>Metrics — simple / ratio / derived</b> → Named Sigma metrics; metric-level filters stacked on top of measure filters. When a simple metric references a measure, the measure itself is suppressed to avoid duplicates. <code>description</code> from the metric block is preserved on the emitted Sigma metric.</li>
+    <li><b>Descriptions</b> → <code>description</code> fields on entities, dimensions, measures, and top-level metrics are all copied onto the corresponding Sigma column or metric and round-trip through <code>POST /v2/dataModels/spec</code></li>
     <li><b>node_relation</b> → Auto-populates Database / Schema fields and resolves table alias</li>
     <li><b>Multi-file upload</b> → Drop any number of YAML files at once; cross-file entity relationships resolve automatically</li>
     <li><b>Time spine</b> → Include <code>semantic_manifest.json</code> alongside your YAMLs; <code>project_configuration.time_spines</code> generates <code>ts_&lt;granularity&gt;</code> elements and wires <code>agg_time_dimension</code> N:1 relationships automatically</li>
