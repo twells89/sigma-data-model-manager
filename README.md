@@ -159,13 +159,14 @@ Converts LookML projects (multiple `.lkml` files) to Sigma data model JSON. Drop
 Converts dbt semantic model YAML files and `semantic_manifest.json` artifacts to Sigma data model JSON. Implements the same conversion logic as the [official Sigma GitHub Action](https://github.com/sigmacomputing/dbt-sigma-action), adapted for standalone use.
 
 **What gets converted:**
-- Semantic models → Sigma elements; warehouse path from `node_relation`, `model: ref()`, or `source()`
+- Semantic models → Sigma elements; warehouse path from `node_relation`, `model: ref()`, or `source()`. Both YAML shapes are accepted: the canonical `semantic_models:` list and the newer dbt model-level form (`models[].semantic_model` + `columns[]` with inline `entity:` / `dimension:` / `measure:` blocks + nested `metrics:`)
 - Entities (primary / unique) → Join-key columns
-- Entities (foreign) → Sigma relationships + a derived element surfacing all own + related dimension columns
+- Entities (foreign) → Sigma relationships + a derived element surfacing all own + related dimension columns. If a referenced dim isn't included in the upload, the FK column is still materialized on the source element (with a warning) so it appears in Sigma even without the wired relationship
 - Dimensions (categorical) → Sigma columns with formula conversion
 - Dimensions (time) → `DateTrunc("granularity", [col])` columns
 - Measures → Sigma metrics when not referenced by a `metrics:` entry; `filter:` → conditional aggregates (`SumIf`, `CountIf`, etc.)
-- Metrics (simple / ratio / derived) → Named Sigma metrics with metric-level filters; referenced measures are suppressed to avoid duplicates
+- Metrics (simple / ratio / derived) → Named Sigma metrics with metric-level filters; referenced measures are suppressed to avoid duplicates. `description` from the metric block is preserved on the emitted Sigma metric.
+- Descriptions → `description` fields on entities, dimensions, measures, and top-level metrics are all copied onto the corresponding Sigma column or metric
 - Time spine (via `semantic_manifest.json`) → `ts_<granularity>` elements with `agg_time_dimension` relationships
 - Multi-file upload → Drop any number of YAML files; cross-file entity relationships resolve automatically
 
