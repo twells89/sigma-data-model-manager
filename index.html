@@ -10162,10 +10162,14 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
 
                 var srcPath = srcEl.source.path;
                 var srcTableName = srcPath[srcPath.length - 1];
-                // baseName must match how Sigma resolves the base element's identifier:
-                //   - explicit `name` field wins
-                //   - else Sigma falls back to the warehouse-table path-tail uppercase
-                var baseName = srcEl.name || srcTableName;
+                // baseName must match how the base element addresses its OWN columns.
+                // Warehouse-table elements always reference their columns by the
+                // path-tail (e.g. [SUPERSTORE_ORDERS/Order Id]) and their columns
+                // carry no explicit `name` field, so cross-element refs on a derived
+                // child must use the same path-tail prefix — using the element's
+                // display name (e.g. [Superstore Orders/Order Id]) fails because
+                // Sigma's resolver can't match "Order Id" against unnamed columns.
+                var baseName = srcTableName;
                 // Derived element name must differ from base so [<base>/Field] is unambiguous.
                 var derivedName = (srcEl.name || sigmaDisplayName(srcTableName)) + ' View';
                 var viewCols = [], viewOrder = [];
