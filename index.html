@@ -23949,7 +23949,9 @@ ${cleanedSql}`;
         };
 
         function pbiDaxToSigma(dax, warnings, measureName) {
-            if (!dax || !dax.trim()) return null;
+            // BIM/TMSL serializes multi-line DAX expressions as a string[] (one entry per line)
+            if (Array.isArray(dax)) dax = dax.join('\n');
+            if (typeof dax !== 'string' || !dax.trim()) return null;
             let f = dax.trim();
 
             // ── Tier 4: Structural patterns → warnings only ──────────────────
