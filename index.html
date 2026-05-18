@@ -22928,7 +22928,7 @@ ${cleanedSql}`;
                         const cols = [], order = [], groupDimColIds = [];
                         for (const d of dimResolved) {
                             const colId = sigmaShortId();
-                            cols.push({ id: colId, formula: '[Custom SQL/' + d.dimUpper + ']', name: d.displayName });
+                            cols.push({ id: colId, formula: '[' + d.dimUpper + ']', name: d.displayName });
                             order.push(colId);
                             groupDimColIds.push(colId);
                         }
@@ -22963,7 +22963,7 @@ ${cleanedSql}`;
                         if (rec.aggsByExpr[dedupKey]) return { alias: rec.aggsByExpr[dedupKey].alias, caption: rec.aggsByExpr[dedupKey].caption };
                         const calcId = sigmaShortId();
                         rec.aggsByExpr[dedupKey] = { alias, aggFunc, aggExpr, calcId, caption: cap };
-                        rec.element.columns.push({ id: calcId, formula: '[Custom SQL/' + alias + ']', name: cap });
+                        rec.element.columns.push({ id: calcId, formula: '[' + alias + ']', name: cap });
                         rec.element.order.push(calcId);
                         return { alias, caption: cap };
                     };
@@ -23012,7 +23012,7 @@ ${cleanedSql}`;
                         const cols = [], order = [], partitionDimColIds = [];
                         for (const d of partitionDims) {
                             const colId = sigmaShortId();
-                            cols.push({ id: colId, formula: '[Custom SQL/' + d.dimUpper + ']', name: d.displayName });
+                            cols.push({ id: colId, formula: '[' + d.dimUpper + ']', name: d.displayName });
                             order.push(colId);
                             partitionDimColIds.push(colId);
                         }
@@ -23021,7 +23021,7 @@ ${cleanedSql}`;
                             orderDimAlias = orderDimDateTrunc ? (orderDimRaw.replace(/_DATE$/, '') + '_' + orderDimDateTrunc.toUpperCase()) : orderDimRaw;
                             if (partitionDims.find(p => p.dimUpper === orderDimAlias)) orderDimAlias += '_W';
                             orderDimColId = sigmaShortId();
-                            cols.push({ id: orderDimColId, formula: '[Custom SQL/' + orderDimAlias + ']', name: sigmaDisplayName(orderDimAlias) });
+                            cols.push({ id: orderDimColId, formula: '[' + orderDimAlias + ']', name: sigmaDisplayName(orderDimAlias) });
                             order.push(orderDimColId);
                         }
                         const helperEl = {
@@ -23119,7 +23119,7 @@ ${cleanedSql}`;
                         rec.windowOverParts.push(overSql + ' AS ' + windowAlias);
                         rec.windowAliases.add(windowAlias);
                         const calcId = sigmaShortId();
-                        rec.element.columns.push({ id: calcId, formula: '[Custom SQL/' + windowAlias + ']' });
+                        rec.element.columns.push({ id: calcId, formula: '[' + windowAlias + ']' });
                         rec.element.order.push(calcId);
                         return { ok: true };
                     };
@@ -23200,21 +23200,21 @@ ${cleanedSql}`;
                         const helperId = sigmaShortId();
                         const cols = [], order = [];
                         const keyColId = sigmaShortId();
-                        cols.push({ id: keyColId, formula: '[Custom SQL/' + keyResolved.dimUpper + ']', name: keyResolved.displayName });
+                        cols.push({ id: keyColId, formula: '[' + keyResolved.dimUpper + ']', name: keyResolved.displayName });
                         order.push(keyColId);
                         const partColIds = [];
                         for (const p of partResolved) {
                             const pid = sigmaShortId();
-                            cols.push({ id: pid, formula: '[Custom SQL/' + p.dimUpper + ']', name: p.displayName });
+                            cols.push({ id: pid, formula: '[' + p.dimUpper + ']', name: p.displayName });
                             order.push(pid);
                             partColIds.push(pid);
                         }
                         const totalColId = sigmaShortId();
-                        cols.push({ id: totalColId, formula: '[Custom SQL/TOTAL]', name: top.caption + ' Total' });
+                        cols.push({ id: totalColId, formula: '[TOTAL]', name: top.caption + ' Total' });
                         order.push(totalColId);
                         const rnkColId = sigmaShortId();
                         const rankColName = top.caption + ' Rank';
-                        cols.push({ id: rnkColId, formula: '[Custom SQL/RNK]', name: rankColName });
+                        cols.push({ id: rnkColId, formula: '[RNK]', name: rankColName });
                         order.push(rnkColId);
                         const isTopNColId = sigmaShortId();
                         const isTopNName = top.caption + ' ' + (top.direction === 'bottom' ? 'Bottom' : 'Top') + ' N';
@@ -23222,7 +23222,7 @@ ${cleanedSql}`;
                         if (controlId) {
                             isTopNFormula = '[' + rankColName + '] <= [' + controlId + ']';
                         } else {
-                            isTopNFormula = '[Custom SQL/IS_TOP_N]';
+                            isTopNFormula = '[IS_TOP_N]';
                             emitIsTopNInSql = true;
                         }
                         cols.push({ id: isTopNColId, formula: isTopNFormula, name: isTopNName });
