@@ -1,0 +1,864 @@
+{
+      "AwsAccountId": "420887654007",
+      "AnalysisId": "analysis1",
+      "Name": "Assets as Code - Sample Analysis",
+      "Definition": {
+            "DataSetIdentifierDeclarations": [
+                  {
+                        "DataSetArn": "arn:aws:quicksight:us-east-1:420887654007:dataset/5793e4cf-74e0-4b08-b6d8-552ae48aa13c",
+                        "Identifier": "SaaS-Sales.csv"
+                  }
+            ],
+            "AnalysisDefaults": {
+                  "DefaultNewSheetConfiguration": {
+                        "InteractiveLayoutConfiguration": {
+                              "FreeForm": {
+                                    "CanvasSizeOptions": {
+                                          "ScreenCanvasSizeOptions": {
+                                                "OptimizedViewPortWidth": "1600px"
+                                          }
+                                    }
+                              }
+                        },
+                        "SheetContentType": "INTERACTIVE"
+                  }
+            },
+            "CalculatedFields": [
+                  {
+                        "DataSetIdentifier": "SaaS-Sales.csv",
+                        "Expression": "{Sales} - {Profit}",
+                        "Name": "Cost"
+                  }
+            ],
+            "FilterGroups": [
+                  {
+                        "CrossDataset": "ALL_DATASETS",
+                        "FilterGroupId": "filtergroup1",
+                        "Filters": [
+                              {
+                                    "CategoryFilter": {
+                                          "FilterId": "productfilter1",
+                                          "Column": {
+                                                "DataSetIdentifier": "SaaS-Sales.csv",
+                                                "ColumnName": "Product"
+                                          },
+                                          "Configuration": {
+                                                "FilterListConfiguration": {
+                                                      "MatchOperator": "CONTAINS",
+                                                      "CategoryValues": [
+                                                            "Alchemy",
+                                                            "Big Ol Database",
+                                                            "Data Smasher",
+                                                            "OneView",
+                                                            "ChatBot Plugin"
+                                                      ]
+                                                }
+                                          }
+                                    }
+                              }
+                        ],
+                        "ScopeConfiguration": {
+                              "SelectedSheets": {
+                                    "SheetVisualScopingConfigurations": [
+                                          {
+                                                "Scope": "ALL_VISUALS",
+                                                "SheetId": "sheet1"
+                                          }
+                                    ]
+                              }
+                        },
+                        "Status": "ENABLED"
+                  },
+                  {
+                        "CrossDataset": "ALL_DATASETS",
+                        "FilterGroupId": "filtergroup2",
+                        "Filters": [
+                              {
+                                    "TimeRangeFilter": {
+                                          "FilterId": "timerangefilter1",
+                                          "Column": {
+                                                "DataSetIdentifier": "SaaS-Sales.csv",
+                                                "ColumnName": "Order Date"
+                                          },
+                                          "NullOption": "ALL_VALUES",
+                                          "RangeMinimumValue": {
+                                                "Parameter": "Date"
+                                          }
+                                    }
+                              }
+                        ],
+                        "ScopeConfiguration": {
+                              "SelectedSheets": {
+                                    "SheetVisualScopingConfigurations": [
+                                          {
+                                                "Scope": "ALL_VISUALS",
+                                                "SheetId": "sheet1"
+                                          }
+                                    ]
+                              }
+                        },
+                        "Status": "ENABLED"
+                  }
+            ],
+            "ParameterDeclarations": [
+                  {
+                        "DateTimeParameterDeclaration": {
+                              "Name": "Date",
+                              "DefaultValues": {
+                                    "StaticValues": [
+                                          "2017/01/01"
+                                    ]
+                              },
+                              "TimeGranularity": "DAY"
+                        }
+                  },
+                  {
+                        "IntegerParameterDeclaration": {
+                              "Name": "digit",
+                              "ParameterValueType": "MULTI_VALUED"
+                        }
+                  }
+            ],
+            "Sheets": [
+                  {
+                        "SheetId": "sheet1",
+                        "Description": "This dashboard shows YTD Sales on AnyCompany Products. All the assets in this dashboard (Visuals, Parameters, Filters, Actions, etc.) were programmatically created using assets-as-code.",
+                        "Layouts": [
+                              {
+                                    "Configuration": {
+                                          "GridLayout": {
+                                                "Elements": [
+                                                      {
+                                                            "ElementId": "barchart1",
+                                                            "ElementType": "VISUAL",
+                                                            "ColumnSpan": 13,
+                                                            "RowSpan": 10,
+                                                            "ColumnIndex": 0,
+                                                            "RowIndex": 0
+                                                      },
+                                                      {
+                                                            "ElementId": "barchart2",
+                                                            "ElementType": "VISUAL",
+                                                            "ColumnSpan": 13,
+                                                            "RowSpan": 10,
+                                                            "ColumnIndex": 13,
+                                                            "RowIndex": 0
+                                                      },
+                                                      {
+                                                            "ElementId": "linechart1",
+                                                            "ElementType": "VISUAL",
+                                                            "ColumnSpan": 13,
+                                                            "RowSpan": 10,
+                                                            "ColumnIndex": 0,
+                                                            "RowIndex": 10
+                                                      },
+                                                      {
+                                                            "ElementId": "table1",
+                                                            "ElementType": "VISUAL",
+                                                            "ColumnSpan": 13,
+                                                            "RowSpan": 10,
+                                                            "ColumnIndex": 13,
+                                                            "RowIndex": 10
+                                                      },
+                                                      {
+                                                            "ElementId": "kpi1",
+                                                            "ElementType": "VISUAL",
+                                                            "ColumnSpan": 20,
+                                                            "RowSpan": 20,
+                                                            "ColumnIndex": 20,
+                                                            "RowIndex": 20
+                                                      },
+                                                      {
+                                                            "ElementId": "id1234",
+                                                            "ElementType": "PARAMETER_CONTROL",
+                                                            "ColumnSpan": 7,
+                                                            "RowSpan": 3,
+                                                            "ColumnIndex": 26,
+                                                            "RowIndex": 0
+                                                      }
+                                                ],
+                                                "CanvasSizeOptions": {
+                                                      "ScreenCanvasSizeOptions": {
+                                                            "ResizeOption": "FIXED",
+                                                            "OptimizedViewPortWidth": "1600px"
+                                                      }
+                                                }
+                                          }
+                                    }
+                              }
+                        ],
+                        "Name": "AnyCompany Sales - Grid Layout",
+                        "ParameterControls": [
+                              {
+                                    "DateTimePicker": {
+                                          "ParameterControlId": "id1234",
+                                          "SourceParameterName": "Date",
+                                          "Title": "Date",
+                                          "DisplayOptions": {
+                                                "TitleOptions": {
+                                                      "FontConfiguration": {
+                                                            "FontDecoration": "UNDERLINE"
+                                                      }
+                                                }
+                                          }
+                                    }
+                              }
+                        ],
+                        "Title": "AnyCompany Sales",
+                        "Visuals": [
+                              {
+                                    "BarChartVisual": {
+                                          "VisualId": "barchart1",
+                                          "Actions": [
+                                                {
+                                                      "ActionOperations": [
+                                                            {
+                                                                  "FilterOperation": {
+                                                                        "SelectedFieldsConfiguration": {
+                                                                              "SelectedFieldOptions": "ALL_FIELDS"
+                                                                        },
+                                                                        "TargetVisualsConfiguration": {
+                                                                              "SameSheetTargetVisualConfiguration": {
+                                                                                    "TargetVisualOptions": "ALL_VISUALS"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            }
+                                                      ],
+                                                      "CustomActionId": "quick_filter_action_1",
+                                                      "Name": "Quick Filter",
+                                                      "Trigger": "DATA_POINT_CLICK",
+                                                      "Status": "ENABLED"
+                                                }
+                                          ],
+                                          "ChartConfiguration": {
+                                                "FieldWells": {
+                                                      "BarChartAggregatedFieldWells": {
+                                                            "Category": [
+                                                                  {
+                                                                        "CategoricalDimensionField": {
+                                                                              "FieldId": "Product",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Product",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            ],
+                                                            "Values": [
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Sales",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Sales",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "SUM"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            ]
+                                                      }
+                                                },
+                                                "BarsArrangement": "CLUSTERED",
+                                                "Orientation": "HORIZONTAL",
+                                                "CategoryAxis": {
+                                                      "ScrollbarOptions": {
+                                                            "Visibility": "HIDDEN"
+                                                      }
+                                                }
+                                          },
+                                          "Title": {
+                                                "Visibility": "VISIBLE",
+                                                "FormatText": {
+                                                      "PlainText": "Sum of Sales by Product"
+                                                }
+                                          },
+                                          "Subtitle": {
+                                                "Visibility": "VISIBLE",
+                                                "FormatText": {
+                                                      "PlainText": "Use this visual to drill down into specific products."
+                                                }
+                                          }
+                                    }
+                              },
+                              {
+                                    "BarChartVisual": {
+                                          "VisualId": "barchart2",
+                                          "ChartConfiguration": {
+                                                "FieldWells": {
+                                                      "BarChartAggregatedFieldWells": {
+                                                            "Category": [
+                                                                  {
+                                                                        "CategoricalDimensionField": {
+                                                                              "FieldId": "Product",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Product",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            ],
+                                                            "Values": [
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Profit",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Profit",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "AVERAGE"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            ]
+                                                      }
+                                                },
+                                                "BarsArrangement": "STACKED",
+                                                "Orientation": "HORIZONTAL",
+                                                "CategoryAxis": {
+                                                      "ScrollbarOptions": {
+                                                            "Visibility": "HIDDEN"
+                                                      }
+                                                }
+                                          },
+                                          "Title": {
+                                                "Visibility": "VISIBLE",
+                                                "FormatText": {
+                                                      "PlainText": "Average Profit by Product"
+                                                }
+                                          }
+                                    }
+                              },
+                              {
+                                    "LineChartVisual": {
+                                          "VisualId": "linechart1",
+                                          "ChartConfiguration": {
+                                                "FieldWells": {
+                                                      "LineChartAggregatedFieldWells": {
+                                                            "Category": [
+                                                                  {
+                                                                        "DateDimensionField": {
+                                                                              "FieldId": "Order Date",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Order Date",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "DateGranularity": "MONTH"
+                                                                        }
+                                                                  }
+                                                            ],
+                                                            "Values": [
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Sales",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Sales",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "SUM"
+                                                                              }
+                                                                        }
+                                                                  },
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Profit",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Profit",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "SUM"
+                                                                              }
+                                                                        }
+                                                                  },
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Cost",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Cost",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "SUM"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            ]
+                                                      }
+                                                },
+                                                "XAxisDisplayOptions": {
+                                                      "ScrollbarOptions": {
+                                                            "Visibility": "HIDDEN"
+                                                      }
+                                                },
+                                                "Type": "LINE"
+                                          },
+                                          "Title": {
+                                                "Visibility": "VISIBLE",
+                                                "FormatText": {
+                                                      "PlainText": "Sales vs Profit over time"
+                                                }
+                                          }
+                                    }
+                              },
+                              {
+                                    "TableVisual": {
+                                          "VisualId": "table1",
+                                          "ChartConfiguration": {
+                                                "FieldWells": {
+                                                      "TableAggregatedFieldWells": {
+                                                            "GroupBy": [
+                                                                  {
+                                                                        "CategoricalDimensionField": {
+                                                                              "FieldId": "Product",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Product",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            ],
+                                                            "Values": [
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Sales",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Sales",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "SUM"
+                                                                              },
+                                                                              "FormatConfiguration": {
+                                                                                    "FormatConfiguration": {
+                                                                                          "CurrencyDisplayFormatConfiguration": {
+                                                                                                "Symbol": "USD"
+                                                                                          }
+                                                                                    }
+                                                                              }
+                                                                        }
+                                                                  },
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Profit",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Profit",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "SUM"
+                                                                              },
+                                                                              "FormatConfiguration": {
+                                                                                    "FormatConfiguration": {
+                                                                                          "CurrencyDisplayFormatConfiguration": {
+                                                                                                "Symbol": "USD"
+                                                                                          }
+                                                                                    }
+                                                                              }
+                                                                        }
+                                                                  },
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Quantity",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Quantity",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "SUM"
+                                                                              }
+                                                                        }
+                                                                  },
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Discount",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Discount",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "AVERAGE"
+                                                                              },
+                                                                              "FormatConfiguration": {
+                                                                                    "FormatConfiguration": {
+                                                                                          "PercentageDisplayFormatConfiguration": {
+                                                                                                "Suffix": "%"
+                                                                                          }
+                                                                                    }
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            ]
+                                                      }
+                                                },
+                                                "SortConfiguration": {
+                                                      "RowSort": [
+                                                            {
+                                                                  "FieldSort": {
+                                                                        "Direction": "DESC",
+                                                                        "FieldId": "Sales"
+                                                                  }
+                                                            }
+                                                      ]
+                                                },
+                                                "TableInlineVisualizations": [
+                                                      {
+                                                            "DataBars": {
+                                                                  "FieldId": "Profit"
+                                                            }
+                                                      }
+                                                ],
+                                                "TableOptions": {
+                                                      "CellStyle": {
+                                                            "Border": {
+                                                                  "UniformBorder": {
+                                                                        "Style": "NONE"
+                                                                  }
+                                                            }
+                                                      },
+                                                      "HeaderStyle": {
+                                                            "Border": {
+                                                                  "SideSpecificBorder": {
+                                                                        "InnerHorizontal": {
+                                                                              "Thickness": 2
+                                                                        }
+                                                                  }
+                                                            }
+                                                      }
+                                                }
+                                          },
+                                          "ConditionalFormatting": {
+                                                "ConditionalFormattingOptions": [
+                                                      {
+                                                            "Cell": {
+                                                                  "FieldId": "Sales",
+                                                                  "TextFormat": {
+                                                                        "Icon": {
+                                                                              "CustomCondition": {
+                                                                                    "Expression": "SUM({Sales}) > \"TOP_25_PERCENT\"",
+                                                                                    "IconOptions": {
+                                                                                          "Icon": "THREE_BAR"
+                                                                                    },
+                                                                                    "Color": "#0251D3"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            }
+                                                      },
+                                                      {
+                                                            "Cell": {
+                                                                  "FieldId": "Sales",
+                                                                  "TextFormat": {
+                                                                        "Icon": {
+                                                                              "CustomCondition": {
+                                                                                    "Expression": "(SUM({Sales}) >= \"BOTTOM_25_PERCENT\") AND (SUM({Sales}) <= \"TOP_25_PERCENT\")",
+                                                                                    "IconOptions": {
+                                                                                          "Icon": "TWO_BAR"
+                                                                                    },
+                                                                                    "Color": "#0251D3"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            }
+                                                      },
+                                                      {
+                                                            "Cell": {
+                                                                  "FieldId": "Sales",
+                                                                  "TextFormat": {
+                                                                        "Icon": {
+                                                                              "CustomCondition": {
+                                                                                    "Expression": "SUM({Sales}) < \"BOTTOM_25_PERCENT\"",
+                                                                                    "IconOptions": {
+                                                                                          "Icon": "ONE_BAR"
+                                                                                    },
+                                                                                    "Color": "#0251D3"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            }
+                                                      },
+                                                      {
+                                                            "Cell": {
+                                                                  "FieldId": "Sales",
+                                                                  "TextFormat": {
+                                                                        "TextColor": {
+                                                                              "Gradient": {
+                                                                                    "Expression": "SUM({Sales})",
+                                                                                    "Color": {
+                                                                                          "Stops": [
+                                                                                                {
+                                                                                                      "GradientOffset": 0.0,
+                                                                                                      "DataValue": 0.0,
+                                                                                                      "Color": "#DE3E00"
+                                                                                                },
+                                                                                                {
+                                                                                                      "GradientOffset": 100.0,
+                                                                                                      "DataValue": 200000.0,
+                                                                                                      "Color": "#BADF2D"
+                                                                                                }
+                                                                                          ]
+                                                                                    }
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            }
+                                                      },
+                                                      {
+                                                            "Cell": {
+                                                                  "FieldId": "Discount",
+                                                                  "TextFormat": {
+                                                                        "TextColor": {
+                                                                              "Gradient": {
+                                                                                    "Expression": "AVG({Discount})",
+                                                                                    "Color": {
+                                                                                          "Stops": [
+                                                                                                {
+                                                                                                      "GradientOffset": 0.0,
+                                                                                                      "DataValue": 0.0,
+                                                                                                      "Color": "#DE3E00"
+                                                                                                },
+                                                                                                {
+                                                                                                      "GradientOffset": 100.0,
+                                                                                                      "DataValue": 0.5,
+                                                                                                      "Color": "#BADF2D"
+                                                                                                }
+                                                                                          ]
+                                                                                    }
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            }
+                                                      }
+                                                ]
+                                          },
+                                          "Title": {
+                                                "Visibility": "VISIBLE",
+                                                "FormatText": {
+                                                      "PlainText": "Product Metrics Table"
+                                                }
+                                          }
+                                    }
+                              },
+                              {
+                                    "KPIVisual": {
+                                          "VisualId": "kpi1",
+                                          "ChartConfiguration": {
+                                                "FieldWells": {
+                                                      "KPIFieldWells": {
+                                                            "Values": [
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Sales",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Sales",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "SUM"
+                                                                              },
+                                                                              "FormatConfiguration": {
+                                                                                    "FormatConfiguration": {
+                                                                                          "CurrencyDisplayFormatConfiguration": {
+                                                                                                "Symbol": "USD"
+                                                                                          }
+                                                                                    }
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            ]
+                                                      }
+                                                }
+                                          }
+                                    }
+                              }
+                        ]
+                  },
+                  {
+                        "SheetId": "sheet2",
+                        "Layouts": [
+                              {
+                                    "Configuration": {
+                                          "FreeFormLayout": {
+                                                "Elements": [
+                                                      {
+                                                            "ElementId": "linechart3",
+                                                            "ElementType": "VISUAL",
+                                                            "Height": "300px",
+                                                            "Width": "600px",
+                                                            "XAxisLocation": "0px",
+                                                            "YAxisLocation": "0px"
+                                                      },
+                                                      {
+                                                            "ElementId": "barchart3",
+                                                            "ElementType": "VISUAL",
+                                                            "Height": "300px",
+                                                            "Width": "600px",
+                                                            "XAxisLocation": "600px",
+                                                            "YAxisLocation": "0px"
+                                                      }
+                                                ]
+                                          }
+                                    }
+                              }
+                        ],
+                        "Name": "AnyCompany Sales - Freeform Layout",
+                        "Visuals": [
+                              {
+                                    "BarChartVisual": {
+                                          "VisualId": "barchart3",
+                                          "Actions": [
+                                                {
+                                                      "ActionOperations": [
+                                                            {
+                                                                  "FilterOperation": {
+                                                                        "SelectedFieldsConfiguration": {
+                                                                              "SelectedFieldOptions": "ALL_FIELDS"
+                                                                        },
+                                                                        "TargetVisualsConfiguration": {
+                                                                              "SameSheetTargetVisualConfiguration": {
+                                                                                    "TargetVisualOptions": "ALL_VISUALS"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            }
+                                                      ],
+                                                      "CustomActionId": "quick_filter_action_2",
+                                                      "Name": "Quick Filter",
+                                                      "Trigger": "DATA_POINT_CLICK",
+                                                      "Status": "ENABLED"
+                                                }
+                                          ],
+                                          "ChartConfiguration": {
+                                                "FieldWells": {
+                                                      "BarChartAggregatedFieldWells": {
+                                                            "Category": [
+                                                                  {
+                                                                        "CategoricalDimensionField": {
+                                                                              "FieldId": "Product",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Product",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            ],
+                                                            "Values": [
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Sales",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Sales",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "SUM"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            ]
+                                                      }
+                                                },
+                                                "BarsArrangement": "CLUSTERED",
+                                                "Orientation": "HORIZONTAL",
+                                                "CategoryAxis": {
+                                                      "ScrollbarOptions": {
+                                                            "Visibility": "HIDDEN"
+                                                      }
+                                                }
+                                          },
+                                          "Title": {
+                                                "Visibility": "VISIBLE",
+                                                "FormatText": {
+                                                      "PlainText": "Sum of Sales by Product"
+                                                }
+                                          },
+                                          "Subtitle": {
+                                                "Visibility": "VISIBLE",
+                                                "FormatText": {
+                                                      "PlainText": "Use this visual to drill down into specific products."
+                                                }
+                                          }
+                                    }
+                              },
+                              {
+                                    "LineChartVisual": {
+                                          "VisualId": "linechart3",
+                                          "ChartConfiguration": {
+                                                "FieldWells": {
+                                                      "LineChartAggregatedFieldWells": {
+                                                            "Category": [
+                                                                  {
+                                                                        "DateDimensionField": {
+                                                                              "FieldId": "Order Date",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Order Date",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "DateGranularity": "MONTH"
+                                                                        }
+                                                                  }
+                                                            ],
+                                                            "Values": [
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Sales",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Sales",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "SUM"
+                                                                              }
+                                                                        }
+                                                                  },
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Profit",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Profit",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "SUM"
+                                                                              }
+                                                                        }
+                                                                  },
+                                                                  {
+                                                                        "NumericalMeasureField": {
+                                                                              "FieldId": "Cost",
+                                                                              "Column": {
+                                                                                    "ColumnName": "Cost",
+                                                                                    "DataSetIdentifier": "SaaS-Sales.csv"
+                                                                              },
+                                                                              "AggregationFunction": {
+                                                                                    "SimpleNumericalAggregation": "SUM"
+                                                                              }
+                                                                        }
+                                                                  }
+                                                            ]
+                                                      }
+                                                },
+                                                "XAxisDisplayOptions": {
+                                                      "ScrollbarOptions": {
+                                                            "Visibility": "HIDDEN"
+                                                      }
+                                                },
+                                                "Type": "LINE"
+                                          },
+                                          "Title": {
+                                                "Visibility": "VISIBLE",
+                                                "FormatText": {
+                                                      "PlainText": "Sales vs Profit over time"
+                                                }
+                                          }
+                                    }
+                              }
+                        ]
+                  }
+            ]
+      }
+}

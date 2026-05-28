@@ -1,0 +1,109 @@
+{
+  "_synthetic_note": "Hand-built from AWS DescribeDataSet schema (API_DescribeDataSet.html) — covers RelationalTable + CustomSql in one PhysicalTableMap, a LogicalTable JoinInstruction, CastColumnTypeOperation, CreateColumnsOperation, RenameColumnOperation, ProjectOperation, TagColumnOperation. Use as a structural reference, not a verbatim AWS sample.",
+  "DataSet": {
+    "Arn": "arn:aws:quicksight:us-east-1:111122223333:dataset/orders-with-customers",
+    "DataSetId": "orders-with-customers",
+    "Name": "Orders With Customers",
+    "CreatedTime": 1716230400,
+    "LastUpdatedTime": 1716230400,
+    "ImportMode": "SPICE",
+    "PhysicalTableMap": {
+      "orders-physical": {
+        "RelationalTable": {
+          "DataSourceArn": "arn:aws:quicksight:us-east-1:111122223333:datasource/redshift-prod",
+          "Catalog": "analytics_db",
+          "Schema": "public",
+          "Name": "orders",
+          "InputColumns": [
+            {"Name": "order_id",    "Type": "INTEGER"},
+            {"Name": "customer_id", "Type": "INTEGER"},
+            {"Name": "order_ts",    "Type": "DATETIME"},
+            {"Name": "amount",      "Type": "DECIMAL", "SubType": "FIXED"},
+            {"Name": "region",      "Type": "STRING"}
+          ]
+        }
+      },
+      "customers-physical": {
+        "CustomSql": {
+          "DataSourceArn": "arn:aws:quicksight:us-east-1:111122223333:datasource/redshift-prod",
+          "Name": "active customers",
+          "SqlQuery": "SELECT customer_id, name, segment, signup_date FROM public.customers WHERE is_active = true",
+          "Columns": [
+            {"Name": "customer_id", "Type": "INTEGER"},
+            {"Name": "name",        "Type": "STRING"},
+            {"Name": "segment",     "Type": "STRING"},
+            {"Name": "signup_date", "Type": "DATETIME"}
+          ]
+        }
+      },
+      "leads-s3": {
+        "S3Source": {
+          "DataSourceArn": "arn:aws:quicksight:us-east-1:111122223333:datasource/s3-leads",
+          "UploadSettings": {
+            "Format": "CSV",
+            "StartFromRow": 1,
+            "ContainsHeader": true,
+            "TextQualifier": "DOUBLE_QUOTE",
+            "Delimiter": ","
+          },
+          "InputColumns": [
+            {"Name": "lead_id",  "Type": "STRING"},
+            {"Name": "email",    "Type": "STRING"},
+            {"Name": "score",    "Type": "STRING"}
+          ]
+        }
+      }
+    },
+    "LogicalTableMap": {
+      "orders-logical": {
+        "Alias": "Orders",
+        "Source": {"PhysicalTableId": "orders-physical"},
+        "DataTransforms": [
+          {"CastColumnTypeOperation": {"ColumnName": "order_id", "NewColumnType": "STRING"}},
+          {"CreateColumnsOperation": {
+            "Columns": [
+              {"ColumnId": "calc-margin", "ColumnName": "Margin", "Expression": "{amount} * 0.18"}
+            ]
+          }},
+          {"TagColumnOperation": {"ColumnName": "region", "Tags": [{"ColumnGeographicRole": "STATE"}]}}
+        ]
+      },
+      "customers-logical": {
+        "Alias": "Customers",
+        "Source": {"PhysicalTableId": "customers-physical"},
+        "DataTransforms": [
+          {"RenameColumnOperation": {"ColumnName": "name", "NewColumnName": "Customer Name"}}
+        ]
+      },
+      "joined-logical": {
+        "Alias": "Joined",
+        "Source": {
+          "JoinInstruction": {
+            "LeftOperand": "orders-logical",
+            "RightOperand": "customers-logical",
+            "Type": "LEFT",
+            "OnClause": "{customer_id} = {customer_id[customers-logical]}",
+            "LeftJoinKeyProperties":  {"UniqueKey": false},
+            "RightJoinKeyProperties": {"UniqueKey": true}
+          }
+        },
+        "DataTransforms": [
+          {"ProjectOperation": {"ProjectedColumns": ["order_id","Customer Name","segment","order_ts","amount","Margin","region"]}}
+        ]
+      }
+    },
+    "OutputColumns": [
+      {"Name": "order_id",      "Type": "STRING"},
+      {"Name": "Customer Name", "Type": "STRING"},
+      {"Name": "segment",       "Type": "STRING"},
+      {"Name": "order_ts",      "Type": "DATETIME"},
+      {"Name": "amount",        "Type": "DECIMAL", "SubType": "FIXED"},
+      {"Name": "Margin",        "Type": "DECIMAL"},
+      {"Name": "region",        "Type": "STRING"}
+    ],
+    "FieldFolders": {
+      "Customer": {"columns": ["Customer Name", "segment"], "description": "Customer attributes"}
+    },
+    "DataSetUsageConfiguration": {"DisableUseAsDirectQuerySource": false, "DisableUseAsImportedSource": false}
+  }
+}
