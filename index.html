@@ -2681,6 +2681,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                             <option value="contract">📝 Atlan Data Contract</option>
                             <option value="omni">🌐 Omni Analytics</option>
                             <option value="thoughtspot">🔷 ThoughtSpot</option>
+                            <option value="quicksight">☁️ AWS QuickSight</option>
                             <option value="qlik">🔮 Qlik Sense</option>
                             <option value="oac">☁️ Oracle Analytics Cloud</option>
                             <option value="cube">🟦 Cube.dev</option>
@@ -3562,6 +3563,100 @@ How it works:
                     </div>
                 </div>
                 <!-- ── End ThoughtSpot TML Panel ─────────────────────────────────── -->
+
+                <!-- AWS QuickSight Converter Panel -->
+                <div class="converter-panel" id="subPanelQuicksight">
+
+                    <!-- Left: File Upload + Config -->
+                    <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">QuickSight Assets</span>
+                            <button class="btn-example" onclick="loadQuickSightExample()">Load example</button>
+                        </div>
+
+                        <div id="qsDropZone" class="lookml-drop-zone"
+                             onclick="document.getElementById('qsFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleQuickSightFileDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">☁️</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop QuickSight JSON or .qs files here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">.json · .qs (Asset Bundle zip)</div>
+                        </div>
+                        <input type="file" id="qsFileInput" accept=".json,.qs,.zip" multiple style="display:none" onchange="handleQuickSightFileSelect(event)">
+
+                        <div id="qsFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Connection</label>
+                            <select id="qsConnectionId" class="form-input" style="font-size: 12px;"
+                                    onchange="if(document.getElementById('qsJsonInput').value.trim()) runQuickSightConversion();">
+                                <option value="">— Connect to Sigma to load —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(when RelationalTable.Catalog missing)</span></label>
+                            <input type="text" class="form-input" id="qsDatabase" placeholder="e.g. ANALYTICS" style="font-size: 12px;">
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Schema override <span style="color:var(--text-muted);font-size:10px;">(when RelationalTable.Schema missing)</span></label>
+                            <input type="text" class="form-input" id="qsSchema" placeholder="e.g. PUBLIC" style="font-size: 12px;">
+                        </div>
+
+                        <div class="dbt-badge-row" id="qsInputStats"></div>
+
+                        <textarea id="qsJsonInput" style="flex: 1; min-height: 80px; font-size: 11px; resize: none;" placeholder="Or paste a DescribeAnalysisDefinition or DescribeDataSet JSON directly here…"></textarea>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" onclick="runQuickSightConversion()">
+                                ☁️ Convert to Sigma JSON
+                            </button>
+                        </div>
+
+                        <div style="font-size: 10px; color: var(--text-muted); padding: 0 4px; line-height: 1.4;">
+                            <strong>How to get files:</strong><br>
+                            • <b>Analysis</b>: <code>aws quicksight describe-analysis-definition --account-id X --analysis-id Y &gt; analysis.json</code><br>
+                            • <b>Dataset</b>: <code>aws quicksight describe-data-set --account-id X --data-set-id Z &gt; dataset.json</code> (one per referenced dataset)<br>
+                            • <b>Asset Bundle</b>: drop a <code>.qs</code> zip from <code>start-asset-bundle-export-job</code> — each <code>analyses/*.json</code> and <code>datasets/*.json</code> is auto-extracted
+                        </div>
+                    </div>
+
+                    <!-- Right: Sigma JSON Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copyQuickSightOutput()" id="qsCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadQuickSightOutputToEditor()" id="qsLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="qsWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="qsJsonOutput" readonly placeholder="Convert QuickSight asset JSON to see the Sigma JSON here…
+
+How it works:
+• DescribeAnalysisDefinition + DescribeDataSet JSONs are auto-classified by content
+• PhysicalTable.RelationalTable → Sigma warehouse-table element
+• PhysicalTable.CustomSql → Custom SQL element
+• LogicalTable.JoinInstruction → Sigma relationship on the left-side element
+• DataTransforms (CreateColumns / Cast / Rename / Project / Filter) → calc cols + casts + order
+• AnalysisDefinition.CalculatedFields → calc cols on the derived view (cross-element refs auto-rewritten)
+• ParameterDeclarations → Sigma controls
+• QuickSight window/table-calc functions → comment placeholder + warning (Sigma DM cols don't support windows)"></textarea>
+
+                        <div class="dbt-badge-row" id="qsOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="quickSightLoadAndSave()" id="qsSaveBtn" disabled>
+                                💾 Load &amp; Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <!-- ── End QuickSight Panel ───────────────────────────────────────── -->
 
                 <!-- Qlik Sense Converter Panel -->
                 <div class="converter-panel" id="subPanelQlik">
@@ -7106,7 +7201,7 @@ ${JSON.stringify(failedJson, null, 2)}`;
         async function populateConverterConnections() {
             if (!state.accessToken) return;
             const connections = await fetchConnectionsList();
-            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'tsConnectionId', 'qlikConnectionId', 'oacConnectionId', 'ssasConnectionId', 'sqlConnectionId'];
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'tsConnectionId', 'qsConnectionId', 'qlikConnectionId', 'oacConnectionId', 'ssasConnectionId', 'sqlConnectionId'];
             targetIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (!sel) return;
@@ -10056,10 +10151,10 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         }
 
         function switchConverter(format) {
-            const _convNames = { dbt: 'dbt', snow: 'snowflake', look: 'lookml', tableau: 'tableau', pbi: 'power_bi', alteryx: 'alteryx', contract: 'atlan', omni: 'omni', thoughtspot: 'thoughtspot', qlik: 'qlik', oac: 'oac', cube: 'cube', prep: 'tableau_prep', ssas: 'ssas', sql: 'sql' };
+            const _convNames = { dbt: 'dbt', snow: 'snowflake', look: 'lookml', tableau: 'tableau', pbi: 'power_bi', alteryx: 'alteryx', contract: 'atlan', omni: 'omni', thoughtspot: 'thoughtspot', quicksight: 'quicksight', qlik: 'qlik', oac: 'oac', cube: 'cube', prep: 'tableau_prep', ssas: 'ssas', sql: 'sql' };
             phTrack('converter_selected', { converter: _convNames[format] || format });
-            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Thoughtspot', 'Qlik', 'Oac', 'Cube', 'Prep', 'Ssas', 'Sql'];
-            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', thoughtspot: 'Thoughtspot', qlik: 'Qlik', oac: 'Oac', cube: 'Cube', prep: 'Prep', ssas: 'Ssas', sql: 'Sql' };
+            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Thoughtspot', 'Quicksight', 'Qlik', 'Oac', 'Cube', 'Prep', 'Ssas', 'Sql'];
+            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', thoughtspot: 'Thoughtspot', quicksight: 'Quicksight', qlik: 'Qlik', oac: 'Oac', cube: 'Cube', prep: 'Prep', ssas: 'Ssas', sql: 'Sql' };
             const target = map[format] || 'Dbt';
             panels.forEach(p => {
                 const el = document.getElementById('subPanel' + p);
@@ -16284,6 +16379,824 @@ views:
             document.getElementById('tsFileList').innerHTML = '<div class="file-chip">🔷 example.tml</div>';
             document.getElementById('tsInputStats').innerHTML = '<span class="dbt-badge">example loaded</span>';
             runThoughtSpotConversion();
+        }
+
+        // ── AWS QuickSight Converter ────────────────────────────────────────
+        // Source-of-truth: ../sigma-data-model-mcp/src/quicksight.ts.
+        // Keep this inline JS port in sync with the TypeScript module — both
+        // ship together per ~/.claude memory feedback_mcp_sync.md.
+
+        let _qsRawFiles = [];
+
+        function handleQuickSightFileDrop(event) {
+            event.preventDefault();
+            document.getElementById('qsDropZone').classList.remove('drag-over');
+            const files = Array.from(event.dataTransfer.files).filter(f => /\.(json|qs|zip)$/i.test(f.name));
+            if (!files.length) { showToast('Drop .json or .qs files', 'warning'); return; }
+            loadQuickSightFiles(files);
+        }
+
+        function handleQuickSightFileSelect(event) {
+            const files = Array.from(event.target.files);
+            if (!files.length) return;
+            loadQuickSightFiles(files);
+            event.target.value = '';
+        }
+
+        async function loadQuickSightFiles(files) {
+            _qsRawFiles = [];
+            const listEl = document.getElementById('qsFileList');
+            listEl.innerHTML = '';
+            for (const file of files) {
+                const isZip = /\.(qs|zip)$/i.test(file.name);
+                if (isZip) {
+                    try {
+                        const zip = await JSZip.loadAsync(await file.arrayBuffer());
+                        const entries = Object.values(zip.files).filter(z => !z.dir && /\.json$/i.test(z.name));
+                        for (const entry of entries) {
+                            const content = await entry.async('text');
+                            _qsRawFiles.push({ name: entry.name, content });
+                            const chip = document.createElement('div');
+                            chip.className = 'file-chip';
+                            chip.textContent = '☁️ ' + entry.name;
+                            listEl.appendChild(chip);
+                        }
+                    } catch (e) {
+                        showToast(`Failed to extract ${file.name}: ${e.message}`, 'error');
+                    }
+                } else {
+                    const content = await file.text();
+                    _qsRawFiles.push({ name: file.name, content });
+                    const chip = document.createElement('div');
+                    chip.className = 'file-chip';
+                    chip.textContent = '☁️ ' + file.name;
+                    listEl.appendChild(chip);
+                }
+            }
+            if (_qsRawFiles.length) {
+                document.getElementById('qsJsonInput').value = _qsRawFiles.map(f => `// ${f.name}\n${f.content}`).join('\n---\n');
+                runQuickSightConversion();
+            }
+        }
+
+        function runQuickSightConversion() {
+            const raw = document.getElementById('qsJsonInput').value.trim();
+            if (!raw && _qsRawFiles.length === 0) return;
+            const connectionId = document.getElementById('qsConnectionId').value.trim() || '<CONNECTION_ID>';
+            const dbOverride = document.getElementById('qsDatabase').value.trim();
+            const schOverride = document.getElementById('qsSchema').value.trim();
+
+            // Build files array: prefer loaded files (preserves multi-file shape),
+            // fall back to parsing the textarea as one or more `---`-separated JSON
+            // documents so paste-then-convert works.
+            let files = _qsRawFiles.slice();
+            if (!files.length && raw) {
+                const chunks = raw.split(/^\s*---\s*$/m).map(c => c.trim()).filter(Boolean);
+                files = chunks.map((c, i) => ({
+                    name: `pasted-${i + 1}.json`,
+                    content: c.replace(/^\s*\/\/[^\n]*\n/, '').trim(),
+                }));
+            }
+            if (!files.length) return;
+
+            let result;
+            try {
+                result = convertQuickSightToSigma(files, { connectionId, dbOverride, schOverride });
+            } catch (err) {
+                document.getElementById('qsJsonOutput').value = '// Error: ' + err.message;
+                return;
+            }
+
+            const { spec, warnings } = result;
+            const jsonStr = JSON.stringify(spec, null, 2);
+            document.getElementById('qsJsonOutput').value = jsonStr;
+
+            const warnEl = document.getElementById('qsWarningBox');
+            if (warnings.length) {
+                warnEl.style.display = 'block';
+                warnEl.innerHTML = '<b>⚠ Conversion notes:</b><br>' + warnings.map(w => `• ${w}`).join('<br>');
+            } else {
+                warnEl.style.display = 'none';
+            }
+
+            const elCount = spec.pages?.[0]?.elements?.length || 0;
+            document.getElementById('qsOutputStats').innerHTML =
+                `<span class="dbt-badge">${elCount} elements</span>`;
+            document.getElementById('qsInputStats').innerHTML =
+                `<span class="dbt-badge">✓ loaded</span>`;
+
+            ['qsCopyBtn', 'qsLoadBtn', 'qsSaveBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+
+            try { state._qsTwoStepSpec = JSON.parse(jsonStr); } catch (_) {}
+        }
+
+        function copyQuickSightOutput() {
+            const txt = document.getElementById('qsJsonOutput').value;
+            if (!txt) return;
+            navigator.clipboard.writeText(txt).then(() => showToast('Copied!', 'success'));
+        }
+
+        function loadQuickSightOutputToEditor() {
+            const txt = document.getElementById('qsJsonOutput').value;
+            if (!txt) return;
+            try {
+                const parsed = JSON.parse(txt);
+                state.originalJson = txt;
+                editor.setValue(txt);
+                state.currentDataModelId = null;
+                state.currentModelName = parsed.name || 'Untitled QuickSight Model';
+                document.querySelector('.tab-btn[data-tab="json"]')?.click?.();
+                switchTab('json');
+                showToast('Loaded into editor', 'success');
+            } catch (e) {
+                showToast('Cannot load: invalid JSON', 'error');
+            }
+        }
+
+        async function quickSightLoadAndSave() {
+            loadQuickSightOutputToEditor();
+            // Defer a beat so the editor renders the new content, then save via the
+            // common path used by other converters.
+            setTimeout(() => { if (typeof saveModel === 'function') saveModel(); }, 100);
+        }
+
+        function loadQuickSightExample() {
+            const dataset = JSON.stringify({
+                _source: 'Synthetic example built into the converter for demos. Mirrors the regression-corpus fixture.',
+                DataSet: {
+                    Arn: 'arn:aws:quicksight:us-east-1:111122223333:dataset/sales-insights',
+                    DataSetId: 'sales-insights',
+                    Name: 'Sales Insights',
+                    ImportMode: 'DIRECT_QUERY',
+                    PhysicalTableMap: {
+                        'orders-physical': {
+                            RelationalTable: {
+                                DataSourceArn: 'arn:aws:quicksight:us-east-1:111122223333:datasource/snowflake-prod',
+                                Catalog: 'CSA', Schema: 'TJ', Name: 'ORDER_FACT',
+                                InputColumns: [
+                                    { Name: 'ORDER_ID', Type: 'INTEGER' },
+                                    { Name: 'CUSTOMER_KEY', Type: 'INTEGER' },
+                                    { Name: 'GROSS_REVENUE', Type: 'DECIMAL' },
+                                ],
+                            },
+                        },
+                        'customers-physical': {
+                            RelationalTable: {
+                                DataSourceArn: 'arn:aws:quicksight:us-east-1:111122223333:datasource/snowflake-prod',
+                                Catalog: 'CSA', Schema: 'TJ', Name: 'CUSTOMER_DIM',
+                                InputColumns: [
+                                    { Name: 'CUSTOMER_KEY', Type: 'INTEGER' },
+                                    { Name: 'CUSTOMER_SEGMENT', Type: 'STRING' },
+                                ],
+                            },
+                        },
+                    },
+                    LogicalTableMap: {
+                        'orders-logical': {
+                            Alias: 'Order Fact',
+                            Source: { PhysicalTableId: 'orders-physical' },
+                            DataTransforms: [{
+                                CreateColumnsOperation: {
+                                    Columns: [{ ColumnId: 'calc-net', ColumnName: 'Net Revenue', Expression: '{GROSS_REVENUE} * 0.85' }],
+                                },
+                            }],
+                        },
+                        'customers-logical': {
+                            Alias: 'Customer Dim',
+                            Source: { PhysicalTableId: 'customers-physical' },
+                        },
+                        'joined-logical': {
+                            Alias: 'Sales Insights',
+                            Source: {
+                                JoinInstruction: {
+                                    LeftOperand: 'orders-logical',
+                                    RightOperand: 'customers-logical',
+                                    Type: 'LEFT',
+                                    OnClause: '{CUSTOMER_KEY} = {CUSTOMER_KEY[customers-logical]}',
+                                },
+                            },
+                        },
+                    },
+                },
+            }, null, 2);
+            const analysis = JSON.stringify({
+                AnalysisId: 'qs-sales-analysis',
+                Name: 'Sales Analysis',
+                Definition: {
+                    DataSetIdentifierDeclarations: [{
+                        DataSetArn: 'arn:aws:quicksight:us-east-1:111122223333:dataset/sales-insights',
+                        Identifier: 'Sales Insights',
+                    }],
+                    CalculatedFields: [{
+                        DataSetIdentifier: 'Sales Insights',
+                        Name: 'Discounted Total',
+                        Expression: "ifelse({CUSTOMER_SEGMENT} = 'Enterprise', {GROSS_REVENUE} * 0.95, {GROSS_REVENUE})",
+                    }],
+                    ParameterDeclarations: [
+                        { StringParameterDeclaration: { Name: 'SegmentFilter', ParameterValueType: 'MULTI_VALUED', DefaultValues: { StaticValues: ['Enterprise'] } } },
+                        { DateTimeParameterDeclaration: { Name: 'AsOfDate', ParameterValueType: 'SINGLE_VALUED', DefaultValues: { StaticValues: ['2026-01-01'] }, TimeGranularity: 'DAY' } },
+                    ],
+                    FilterGroups: [],
+                },
+            }, null, 2);
+            _qsRawFiles = [
+                { name: 'dataset.json', content: dataset },
+                { name: 'analysis.json', content: analysis },
+            ];
+            const listEl = document.getElementById('qsFileList');
+            listEl.innerHTML = '<div class="file-chip">☁️ dataset.json</div><div class="file-chip">☁️ analysis.json</div>';
+            document.getElementById('qsJsonInput').value = `// dataset.json\n${dataset}\n---\n// analysis.json\n${analysis}`;
+            document.getElementById('qsInputStats').innerHTML = '<span class="dbt-badge">example loaded</span>';
+            runQuickSightConversion();
+        }
+
+        // ── QuickSight → Sigma core converter ───────────────────────────────
+        function convertQuickSightToSigma(files, options) {
+            options = options || {};
+            const connectionId = options.connectionId || '<CONNECTION_ID>';
+            const dbOverride = (options.dbOverride || '').trim().toUpperCase();
+            const schemaOverride = (options.schOverride || '').trim().toUpperCase();
+            _usedIds.clear();
+
+            const analyses = [];
+            const datasets = [];
+            const warnings = [];
+
+            for (const file of files) {
+                let parsed;
+                try {
+                    parsed = JSON.parse(file.content);
+                } catch (e) {
+                    warnings.push(`${file.name}: JSON parse error — ${e.message}`);
+                    continue;
+                }
+                const classified = qsClassify(parsed);
+                if (classified.kind === 'analysis') analyses.push(classified.value);
+                else if (classified.kind === 'dataset') datasets.push(classified.value);
+                else warnings.push(`${file.name}: unrecognized QuickSight JSON shape — skipped`);
+            }
+
+            if (analyses.length === 0 && datasets.length === 0) {
+                return {
+                    spec: { name: 'QuickSight Model', schemaVersion: 1, pages: [{ id: sigmaShortId(), name: 'Page 1', elements: [] }] },
+                    warnings: warnings.length ? warnings : ['No QuickSight analysis or dataset JSON found in the provided files'],
+                };
+            }
+
+            const datasetRegistry = new Map();
+            const elements = [];
+            const ctx = { connectionId, dbOverride, schemaOverride };
+
+            for (const ds of datasets) {
+                const entry = qsBuildElementsForDataset(ds, ctx, warnings);
+                elements.push(...entry.elements);
+                if (ds.Arn) datasetRegistry.set(ds.Arn, entry);
+                if (ds.DataSetId) datasetRegistry.set(ds.DataSetId, entry);
+                if (ds.Name) datasetRegistry.set(ds.Name, entry);
+            }
+
+            // Pre-build derived views for every source with relationships
+            const derivedViewBySrcId = new Map();
+            const sourceEls = elements.filter(e => e.source?.kind === 'warehouse-table' && (e.relationships?.length || 0) > 0);
+            for (const srcEl of sourceEls) {
+                const view = qsBuildDerivedView(srcEl, elements);
+                if (view) { elements.push(view); derivedViewBySrcId.set(srcEl.id, view); }
+            }
+
+            const controls = [];
+            for (const analysis of analyses) {
+                const def = analysis.Definition || {};
+                const identifierMap = new Map();
+                for (const decl of def.DataSetIdentifierDeclarations || []) {
+                    const ident = decl.Identifier;
+                    const arn = decl.DataSetArn;
+                    let entry;
+                    if (arn && datasetRegistry.has(arn)) entry = datasetRegistry.get(arn);
+                    else if (ident && datasetRegistry.has(ident)) entry = datasetRegistry.get(ident);
+                    if (!entry) {
+                        entry = qsSynthesizeStubDataset(ident || arn || 'Unknown', ctx);
+                        elements.push(...entry.elements);
+                        warnings.push(`ℹ Analysis references dataset "${ident}" (ARN ${arn || '?'}) — no DescribeDataSet JSON supplied; emitted a Custom-SQL stub element. Re-run with the dataset JSON to resolve warehouse columns.`);
+                    }
+                    if (ident) identifierMap.set(ident, entry);
+                }
+                for (const cf of def.CalculatedFields || []) {
+                    const entry = cf.DataSetIdentifier ? identifierMap.get(cf.DataSetIdentifier) : null;
+                    if (!entry) {
+                        warnings.push(`⚠ Analysis calc field "${cf.Name}": DataSetIdentifier "${cf.DataSetIdentifier}" not in DataSetIdentifierDeclarations — skipped`);
+                        continue;
+                    }
+                    qsAddAnalysisCalcCol(entry, cf.Name, cf.Expression, derivedViewBySrcId, elements, warnings);
+                }
+                for (const decl of def.ParameterDeclarations || []) {
+                    const ctl = qsParameterDeclarationToControl(decl, warnings);
+                    if (ctl) controls.push(ctl);
+                }
+                const fg = (def.FilterGroups || []).length;
+                if (fg > 0) warnings.push(`ℹ ${fg} analysis-level FilterGroup(s) skipped — these are visual page filters in QuickSight. Re-create as workbook filters/page controls in Sigma.`);
+            }
+
+            for (const el of elements) {
+                if (el.metrics && el.metrics.length === 0) delete el.metrics;
+                if (el.relationships && el.relationships.length === 0) delete el.relationships;
+            }
+
+            const page = { id: sigmaShortId(), name: 'Page 1', elements };
+            if (controls.length) page.controls = controls;
+
+            const modelName = analyses.length === 1
+                ? sigmaDisplayName(String(analyses[0].Name || analyses[0].AnalysisId || 'QuickSight Analysis'))
+                : datasets.length === 1
+                    ? sigmaDisplayName(String(datasets[0].Name || datasets[0].DataSetId || 'QuickSight DataSet'))
+                    : 'QuickSight Model';
+            return {
+                spec: { name: modelName, schemaVersion: 1, pages: [page] },
+                warnings,
+            };
+        }
+
+        function qsClassify(obj) {
+            if (!obj || typeof obj !== 'object') return { kind: 'unknown' };
+            if (obj.Definition?.DataSetIdentifierDeclarations) return { kind: 'analysis', value: obj };
+            if (obj.AnalysisDefinition?.Definition?.DataSetIdentifierDeclarations) return { kind: 'analysis', value: { ...obj, Definition: obj.AnalysisDefinition.Definition, Name: obj.AnalysisDefinition.Name } };
+            if (obj.Analysis?.Definition?.DataSetIdentifierDeclarations) return { kind: 'analysis', value: { ...obj.Analysis } };
+            if (obj.DataSet?.PhysicalTableMap) return { kind: 'dataset', value: obj.DataSet };
+            if (obj.PhysicalTableMap) return { kind: 'dataset', value: obj };
+            if (obj.QuickSightDataSet?.PhysicalTableMap) return { kind: 'dataset', value: obj.QuickSightDataSet };
+            return { kind: 'unknown' };
+        }
+
+        function qsBuildElementsForDataset(ds, ctx, warnings) {
+            const elementsByLogical = new Map();
+            const colMaps = new Map();
+            const phys = ds.PhysicalTableMap || {};
+            const logical = ds.LogicalTableMap || {};
+            const dsName = ds.Name || ds.DataSetId || 'QuickSight DataSet';
+
+            for (const [logicalId, lt] of Object.entries(logical)) {
+                if (lt.Source?.PhysicalTableId) {
+                    const physId = lt.Source.PhysicalTableId;
+                    const phyTable = phys[physId];
+                    if (!phyTable) {
+                        warnings.push(`⚠ Dataset "${dsName}": logical table "${lt.Alias || logicalId}" references missing PhysicalTableId "${physId}" — skipped`);
+                        continue;
+                    }
+                    const { element, colMap } = qsBuildElementFromPhysical(phyTable, lt.Alias || logicalId, ctx, warnings);
+                    elementsByLogical.set(logicalId, element);
+                    colMaps.set(logicalId, colMap);
+                    qsApplyTransforms(element, lt.DataTransforms || [], colMap, dsName, lt.Alias || logicalId, warnings);
+                }
+            }
+
+            if (elementsByLogical.size === 0) {
+                for (const [physId, phyTable] of Object.entries(phys)) {
+                    const alias = qsInferPhysicalAlias(phyTable, physId);
+                    const { element, colMap } = qsBuildElementFromPhysical(phyTable, alias, ctx, warnings);
+                    elementsByLogical.set(physId, element);
+                    colMaps.set(physId, colMap);
+                }
+            }
+
+            for (const [logicalId, lt] of Object.entries(logical)) {
+                const join = lt.Source?.JoinInstruction;
+                if (!join) continue;
+                const leftEl = elementsByLogical.get(join.LeftOperand);
+                const rightEl = elementsByLogical.get(join.RightOperand);
+                if (!leftEl || !rightEl) {
+                    warnings.push(`⚠ Dataset "${dsName}": join "${lt.Alias || logicalId}" left/right operand not resolvable — skipped`);
+                    continue;
+                }
+                const leftColMap = colMaps.get(join.LeftOperand);
+                const rightColMap = colMaps.get(join.RightOperand);
+                const parsed = qsParseJoinOnClause(join.OnClause || '', join.LeftOperand, join.RightOperand);
+                let leftColId, rightColId;
+                if (parsed && leftColMap && rightColMap) {
+                    leftColId = leftColMap.get(parsed.leftCol.toLowerCase())?.id;
+                    rightColId = rightColMap.get(parsed.rightCol.toLowerCase())?.id;
+                }
+                const rightAlias = (logical[join.RightOperand]?.Alias || join.RightOperand).toString().toUpperCase().replace(/\s+/g, '_');
+                const rel = {
+                    id: sigmaShortId(),
+                    targetElementId: rightEl.id,
+                    name: rightAlias,
+                    relationshipType: join.Type === 'INNER' ? 'N:1' : (join.Type === 'RIGHT' ? '1:N' : 'N:1'),
+                };
+                if (leftColId && rightColId) rel.keys = [{ sourceColumnId: leftColId, targetColumnId: rightColId }];
+                else warnings.push(`ℹ Dataset "${dsName}": join "${lt.Alias || logicalId}" OnClause "${join.OnClause}" — could not resolve FK/PK column IDs; relationship added without keys`);
+                (leftEl.relationships = leftEl.relationships || []).push(rel);
+                qsApplyTransforms(leftEl, lt.DataTransforms || [], leftColMap || new Map(), dsName, lt.Alias || logicalId, warnings);
+            }
+
+            const allEls = Array.from(elementsByLogical.values());
+            const primary = allEls.length === 1
+                ? allEls[0]
+                : allEls.slice().sort((a, b) => (b.relationships?.length || 0) - (a.relationships?.length || 0))[0];
+            return { elements: allEls, primary };
+        }
+
+        function qsInferPhysicalAlias(phy, physId) {
+            if (phy.RelationalTable?.Name) return phy.RelationalTable.Name;
+            if (phy.CustomSql?.Name) return phy.CustomSql.Name;
+            return physId;
+        }
+
+        function qsBuildElementFromPhysical(phy, alias, ctx, warnings) {
+            const colMap = new Map();
+            if (phy.RelationalTable) {
+                const rt = phy.RelationalTable;
+                const tableName = (rt.Name || alias).toString();
+                let path = [];
+                if (rt.Catalog) path.push(rt.Catalog.toUpperCase());
+                if (rt.Schema) path.push(rt.Schema.toUpperCase());
+                path.push(tableName.toUpperCase());
+                if (path.length === 1) {
+                    const t = path[0];
+                    if (ctx.dbOverride && ctx.schemaOverride) path = [ctx.dbOverride, ctx.schemaOverride, t];
+                    else if (ctx.schemaOverride) path = [ctx.schemaOverride, t];
+                    else if (ctx.dbOverride) path = [ctx.dbOverride, t];
+                } else if (path.length === 2 && ctx.dbOverride) {
+                    path = [ctx.dbOverride, path[0], path[1]];
+                }
+                const tail = path[path.length - 1];
+                const element = {
+                    id: sigmaShortId(), kind: 'table',
+                    source: { connectionId: ctx.connectionId, kind: 'warehouse-table', path },
+                    columns: [], metrics: [], order: [],
+                };
+                for (const ic of rt.InputColumns || []) {
+                    const id = sigmaInodeId(ic.Name.toUpperCase());
+                    const display = sigmaDisplayName(ic.Name);
+                    colMap.set(ic.Name.toLowerCase(), { id, display });
+                    element.columns.push({ id, formula: `[${tail}/${display}]` });
+                    element.order.push(id);
+                }
+                return { element, colMap };
+            }
+            if (phy.CustomSql) {
+                const cs = phy.CustomSql;
+                const element = {
+                    id: sigmaShortId(), kind: 'table',
+                    source: { connectionId: ctx.connectionId, kind: 'sql', statement: cs.SqlQuery || '' },
+                    columns: [], metrics: [], order: [],
+                };
+                const cols = cs.Columns || [];
+                if (cols.length === 0) warnings.push(`⚠ CustomSql "${cs.Name}" has no Columns metadata — the SQL element will have no surfaced columns. Add them manually after save.`);
+                for (const ic of cols) {
+                    const id = sigmaInodeId(ic.Name.toUpperCase());
+                    const display = sigmaDisplayName(ic.Name);
+                    colMap.set(ic.Name.toLowerCase(), { id, display });
+                    element.columns.push({ id, formula: `[${display}]` });
+                    element.order.push(id);
+                }
+                return { element, colMap };
+            }
+            if (phy.S3Source) {
+                warnings.push(`ℹ S3Source "${alias}" — Sigma has no direct S3 file connection; emitted as Custom SQL stub. Replace with an external table or warehouse-loaded equivalent.`);
+                const element = {
+                    id: sigmaShortId(), kind: 'table',
+                    source: { connectionId: ctx.connectionId, kind: 'sql', statement: `-- TODO: replace with warehouse SELECT for S3 source "${alias}"\nSELECT 1 AS _placeholder` },
+                    columns: [], metrics: [], order: [],
+                };
+                for (const ic of phy.S3Source.InputColumns || []) {
+                    const id = sigmaInodeId(ic.Name.toUpperCase());
+                    const display = sigmaDisplayName(ic.Name);
+                    colMap.set(ic.Name.toLowerCase(), { id, display });
+                    element.columns.push({ id, formula: `[${display}]` });
+                    element.order.push(id);
+                }
+                return { element, colMap };
+            }
+            warnings.push(`⚠ Physical table "${alias}" has no recognized variant (RelationalTable/CustomSql/S3Source) — emitted empty stub`);
+            return {
+                element: {
+                    id: sigmaShortId(), kind: 'table',
+                    source: { connectionId: ctx.connectionId, kind: 'sql', statement: '-- empty placeholder' },
+                    columns: [], metrics: [], order: [],
+                },
+                colMap,
+            };
+        }
+
+        function qsApplyTransforms(element, transforms, colMap, dsName, logicalAlias, warnings) {
+            for (const tx of transforms) {
+                if (tx.CastColumnTypeOperation) {
+                    const op = tx.CastColumnTypeOperation;
+                    const existing = colMap.get(op.ColumnName.toLowerCase());
+                    if (!existing) { warnings.push(`⚠ ${dsName}/${logicalAlias}: Cast on missing column "${op.ColumnName}" — skipped`); continue; }
+                    const col = element.columns.find(c => c.id === existing.id);
+                    if (!col) continue;
+                    const castFn = qsCastForType(op.NewColumnType);
+                    if (castFn) col.formula = `${castFn}(${col.formula})`;
+                } else if (tx.CreateColumnsOperation) {
+                    for (const nc of tx.CreateColumnsOperation.Columns || []) {
+                        const id = sigmaInodeId(nc.ColumnName.toUpperCase());
+                        const display = sigmaDisplayName(nc.ColumnName);
+                        const translated = quicksightFormulaToSigma(nc.Expression || '', warnings);
+                        colMap.set(nc.ColumnName.toLowerCase(), { id, display });
+                        element.columns.push({ id, formula: translated, name: display });
+                        element.order.push(id);
+                    }
+                } else if (tx.RenameColumnOperation) {
+                    const op = tx.RenameColumnOperation;
+                    const existing = colMap.get(op.ColumnName.toLowerCase());
+                    if (!existing) continue;
+                    const col = element.columns.find(c => c.id === existing.id);
+                    if (!col) continue;
+                    const newDisplay = sigmaDisplayName(op.NewColumnName);
+                    col.name = newDisplay;
+                    colMap.delete(op.ColumnName.toLowerCase());
+                    colMap.set(op.NewColumnName.toLowerCase(), { id: existing.id, display: newDisplay });
+                } else if (tx.ProjectOperation) {
+                    const projected = tx.ProjectOperation.ProjectedColumns || [];
+                    const projectedIds = projected.map(n => colMap.get(n.toLowerCase())?.id).filter(Boolean);
+                    if (projectedIds.length) {
+                        const set = new Set(projectedIds);
+                        const others = element.order.filter(id => !set.has(id));
+                        element.order = [...projectedIds, ...others];
+                    }
+                } else if (tx.FilterOperation) {
+                    const op = tx.FilterOperation;
+                    const translated = quicksightFormulaToSigma(op.ConditionExpression || '', warnings);
+                    const id = sigmaShortId();
+                    const name = `Filter: ${(op.ConditionExpression || '').slice(0, 40)}`;
+                    element.columns.push({ id, formula: translated, name });
+                    element.order.push(id);
+                    warnings.push(`ℹ ${dsName}/${logicalAlias}: FilterOperation lowered to boolean calc column "${name}" — use as a workbook page filter`);
+                } else if (tx.TagColumnOperation) {
+                    warnings.push(`ℹ ${dsName}/${logicalAlias}: TagColumnOperation on "${tx.TagColumnOperation.ColumnName}" skipped (Sigma has no geo-role tagging)`);
+                }
+            }
+        }
+
+        function qsCastForType(t) {
+            switch ((t || '').toUpperCase()) {
+                case 'STRING': return 'Text';
+                case 'INTEGER': return 'Int';
+                case 'DECIMAL': return 'Number';
+                case 'DATETIME': return 'Datetime';
+                default: return null;
+            }
+        }
+
+        function qsParseJoinOnClause(onClause, leftId, rightId) {
+            const m = onClause.match(/\{([^}\[]+?)(?:\[([^\]]+)\])?\}\s*=\s*\{([^}\[]+?)(?:\[([^\]]+)\])?\}/);
+            if (!m) return null;
+            const [, c1, q1, c2, q2] = m;
+            if (q1 && q2) {
+                if (q1 === leftId) return { leftCol: c1.trim(), rightCol: c2.trim() };
+                return { leftCol: c2.trim(), rightCol: c1.trim() };
+            }
+            if (q2 === rightId || q2 === leftId) {
+                return q2 === rightId
+                    ? { leftCol: c1.trim(), rightCol: c2.trim() }
+                    : { leftCol: c2.trim(), rightCol: c1.trim() };
+            }
+            return { leftCol: c1.trim(), rightCol: c2.trim() };
+        }
+
+        function qsSynthesizeStubDataset(identifier, ctx) {
+            const element = {
+                id: sigmaShortId(), kind: 'table',
+                source: { connectionId: ctx.connectionId, kind: 'sql', statement: `-- TODO: replace with the warehouse SELECT for QuickSight dataset "${identifier}"\nSELECT 1 AS _placeholder` },
+                columns: [], metrics: [], order: [],
+            };
+            return { elements: [element], primary: element };
+        }
+
+        function qsAddAnalysisCalcCol(entry, name, expression, derivedViewBySrcId, allElements, warnings) {
+            const id = sigmaInodeId(name.toUpperCase());
+            const display = sigmaDisplayName(name);
+            let formula = quicksightFormulaToSigma(expression || '', warnings);
+            const view = derivedViewBySrcId.get(entry.primary.id);
+            if (view) {
+                const srcEl = entry.primary;
+                const srcPath = srcEl.source.path || [];
+                const srcBase = srcEl.name || srcPath[srcPath.length - 1] || '';
+                const relatedNameMap = qsBuildRelatedNameMap(srcEl, srcBase, allElements);
+                const localNames = new Set();
+                for (const c of view.columns || []) {
+                    const m = c.formula?.match(/^\[([^\]\/]+)\/([^\]]+)\]$/);
+                    if (m) localNames.add(m[2].toLowerCase());
+                }
+                formula = formula.replace(/\[([^\]\/]+)\]/g, (match, refName) => {
+                    const lower = refName.toLowerCase();
+                    if (localNames.has(lower)) return match;
+                    const triple = relatedNameMap[refName];
+                    if (triple) return `[${triple}]`;
+                    const srcCalc = (srcEl.columns || []).find(c => c.name && c.name.toLowerCase() === lower);
+                    if (srcCalc) {
+                        const proxyId = sigmaShortId();
+                        view.columns.push({ id: proxyId, formula: `[${srcBase}/${srcCalc.name}]` });
+                        view.order.push(proxyId);
+                        localNames.add(lower);
+                        return match;
+                    }
+                    return match;
+                });
+                view.columns.push({ id, formula, name: display });
+                view.order.push(id);
+            } else {
+                entry.primary.columns.push({ id, formula, name: display });
+                entry.primary.order.push(id);
+            }
+        }
+
+        function qsBuildRelatedNameMap(srcEl, srcBase, allElements) {
+            const map = {};
+            for (const rel of srcEl.relationships || []) {
+                if (!rel.name) continue;
+                const tgt = allElements.find(e => e.id === rel.targetElementId);
+                if (!tgt || tgt.source?.kind !== 'warehouse-table') continue;
+                for (const c of tgt.columns || []) {
+                    if (!c.formula || c.formula.startsWith('/*')) continue;
+                    const fm = c.formula.match(/^\[([^\]]+)\]$/);
+                    if (!fm) continue;
+                    const inner = fm[1];
+                    const s = inner.lastIndexOf('/');
+                    const disp = s >= 0 ? inner.slice(s + 1) : inner;
+                    if (c.name && !(c.name in map)) map[c.name] = `${srcBase}/${rel.name}/${disp}`;
+                    if (!(disp in map)) map[disp] = `${srcBase}/${rel.name}/${disp}`;
+                }
+            }
+            return map;
+        }
+
+        function qsBuildDerivedView(srcEl, allElements) {
+            const srcPath = srcEl.source.path || [];
+            const srcTableName = srcPath[srcPath.length - 1] || '';
+            const baseName = srcEl.name || srcTableName;
+            const cols = [];
+            const order = [];
+            for (const c of srcEl.columns || []) {
+                if (!c.formula || c.formula.startsWith('/*')) continue;
+                if (c.name) continue;
+                const m = c.formula.match(/^\[([^\]\/]+)\/([^\]]+)\]$/);
+                if (!m) continue;
+                const id = sigmaShortId();
+                cols.push({ id, formula: `[${baseName}/${m[2]}]` });
+                order.push(id);
+            }
+            for (const rel of srcEl.relationships || []) {
+                if (!rel.name) continue;
+                const tgt = allElements.find(e => e.id === rel.targetElementId);
+                if (!tgt || tgt.source?.kind !== 'warehouse-table') continue;
+                for (const c of tgt.columns || []) {
+                    if (!c.formula || c.formula.startsWith('/*')) continue;
+                    const fm = c.formula.match(/^\[([^\]]+)\]$/);
+                    if (!fm) continue;
+                    const inner = fm[1];
+                    const s = inner.lastIndexOf('/');
+                    const disp = s >= 0 ? inner.slice(s + 1) : inner;
+                    const id = sigmaShortId();
+                    cols.push({ id, formula: `[${baseName}/${rel.name}/${disp}]` });
+                    order.push(id);
+                }
+            }
+            if (!cols.length) return null;
+            return {
+                id: sigmaShortId(), kind: 'table',
+                name: `${sigmaDisplayName(srcTableName) || 'Source'} View`,
+                source: { kind: 'table', elementId: srcEl.id },
+                columns: cols, order,
+            };
+        }
+
+        function qsParameterDeclarationToControl(decl, warnings) {
+            const inner = decl.StringParameterDeclaration
+                || decl.IntegerParameterDeclaration
+                || decl.DecimalParameterDeclaration
+                || decl.DateTimeParameterDeclaration;
+            if (!inner) return null;
+            const kind = decl.StringParameterDeclaration ? 'text'
+                : decl.IntegerParameterDeclaration ? 'number'
+                : decl.DecimalParameterDeclaration ? 'number'
+                : 'date';
+            const id = sigmaShortId();
+            const isMulti = inner.ParameterValueType === 'MULTI_VALUED';
+            const staticDefaults = inner.DefaultValues?.StaticValues || [];
+            const control = { id, name: sigmaDisplayName(inner.Name || 'Param'), kind, multiSelect: isMulti };
+            if (staticDefaults.length) control.defaultValue = isMulti ? staticDefaults : staticDefaults[0];
+            if (kind === 'number' && isMulti) warnings.push(`ℹ Parameter "${inner.Name}" is multi-valued numeric — Sigma multi-numeric controls have known limitations; verify in UI.`);
+            return control;
+        }
+
+        // QuickSight calculated-field expression → Sigma formula.
+        // See ../sigma-data-model-mcp/src/quicksight.ts for the source of truth.
+        function quicksightFormulaToSigma(expr, warnings) {
+            if (!expr || typeof expr !== 'string') return '';
+            let s = expr.trim();
+
+            const strings = [];
+            s = s.replace(/'((?:[^'\\]|\\.)*)'/g, (_, body) => {
+                const idx = strings.length;
+                strings.push(`"${body.replace(/"/g, '\\"')}"`);
+                return `__STR${idx}__`;
+            });
+
+            const windowFns = ['sumOver','avgOver','countOver','distinctCountOver','maxOver','minOver','stdevOver','stdevpOver','varOver','varpOver','percentileOver','percentileContOver','percentileDiscOver','percentOfTotal','runningSum','runningAvg','runningCount','runningMax','runningMin','rank','denseRank','percentileRank','lag','lead','firstValue','lastValue','difference','percentDifference','periodOverPeriodDifference','periodOverPeriodLastValue','periodOverPeriodPercentDifference','periodToDateSumOverTime','periodToDateAvgOverTime','periodToDateMaxOverTime','periodToDateMinOverTime','periodToDateCountOverTime','windowSum','windowAvg','windowMax','windowMin','windowCount'];
+            const windowRe = new RegExp(`\\b(${windowFns.join('|')})\\s*\\(`, 'i');
+            if (windowRe.test(s)) {
+                warnings.push(`⚠ Formula uses a QuickSight table-calculation function (${s.match(windowRe)[1]}) — Sigma DM calc columns silently error on window functions. Translated to a comment placeholder; re-author this column as a Custom SQL element or in the workbook layer.`);
+                return `/* TODO QuickSight table-calc — re-author in Sigma: ${expr.replace(/\*\//g, '* /').slice(0, 200)} */`;
+            }
+
+            s = s.replace(/\{([^{}]+)\}/g, (_, raw) => {
+                const cleaned = String(raw).replace(/\[[^\]]+\]\s*$/, '').trim();
+                return `[${sigmaDisplayName(cleaned)}]`;
+            });
+
+            s = qsTransformIfElse(s);
+            s = qsTransformSwitch(s);
+            s = qsRemapFunctions(s);
+            s = s.replace(/<>/g, '!=');
+            s = s.replace(/__STR(\d+)__/g, (_, i) => strings[Number(i)]);
+            return s;
+        }
+
+        function qsTransformIfElse(s) {
+            let prev = '';
+            let safety = 0;
+            while (prev !== s && safety++ < 50) {
+                prev = s;
+                s = s.replace(/\bifelse\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)/i, (_, args) => {
+                    const parts = qsSplitTopLevel(args, ',');
+                    if (parts.length < 3) return `If(${args})`;
+                    const isOdd = parts.length % 2 === 1;
+                    let result = isOdd ? parts[parts.length - 1] : 'null';
+                    const limit = isOdd ? parts.length - 1 : parts.length;
+                    for (let i = limit - 2; i >= 0; i -= 2) {
+                        result = `If(${parts[i]}, ${parts[i + 1]}, ${result})`;
+                    }
+                    return result;
+                });
+            }
+            return s;
+        }
+
+        function qsTransformSwitch(s) {
+            let prev = '';
+            let safety = 0;
+            while (prev !== s && safety++ < 50) {
+                prev = s;
+                s = s.replace(/\bswitch\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)/i, (_, args) => {
+                    const parts = qsSplitTopLevel(args, ',');
+                    if (parts.length < 3) return `Switch(${args})`;
+                    const subject = parts[0];
+                    const rest = parts.slice(1);
+                    const isOdd = rest.length % 2 === 1;
+                    let result = isOdd ? rest[rest.length - 1] : 'null';
+                    const limit = isOdd ? rest.length - 1 : rest.length;
+                    for (let i = limit - 2; i >= 0; i -= 2) {
+                        result = `If(${subject} = ${rest[i]}, ${rest[i + 1]}, ${result})`;
+                    }
+                    return result;
+                });
+            }
+            return s;
+        }
+
+        function qsSplitTopLevel(s, sep) {
+            const out = [];
+            let depth = 0, bracket = 0, cur = '';
+            for (let i = 0; i < s.length; i++) {
+                const ch = s[i];
+                if (ch === '(') depth++;
+                else if (ch === ')') depth--;
+                else if (ch === '[') bracket++;
+                else if (ch === ']') bracket--;
+                if (ch === sep && depth === 0 && bracket === 0) { out.push(cur.trim()); cur = ''; continue; }
+                cur += ch;
+            }
+            if (cur.trim()) out.push(cur.trim());
+            return out;
+        }
+
+        const QS_FUNC_MAP = {
+            sum: 'Sum', avg: 'Avg', min: 'Min', max: 'Max', count: 'Count',
+            distinct_count: 'CountDistinct', distinctcount: 'CountDistinct',
+            median: 'Median', percentile: 'Percentile', percentilecont: 'Percentile', percentiledisc: 'Percentile',
+            stdev: 'Stdev', stdevp: 'StdevP', var: 'Var', varp: 'VarP',
+            isnull: 'IsNull', notnull: 'IsNotNull',
+            coalesce: 'Coalesce', nullif: 'Nullif',
+            concat: 'Concat', substring: 'Mid', strlen: 'Len',
+            tolower: 'Lower', toupper: 'Upper', trim: 'Trim',
+            replace: 'Replace', split: 'Split', locate: 'Find', contains: 'Contains',
+            abs: 'Abs', ceil: 'Ceiling', floor: 'Floor', round: 'Round',
+            log: 'Log', exp: 'Exp', sqrt: 'Sqrt', mod: 'Mod',
+            now: 'Now', today: 'Today',
+            truncdate: 'DateTrunc', adddatetime: 'DateAdd', datediff: 'DateDiff',
+            extract: 'DatePart', epochdate: 'EpochDate',
+            formatdate: 'Text', parsedate: 'Date',
+            in: 'In',
+        };
+
+        function qsRemapFunctions(s) {
+            return s.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\s*(?=\()/g, (match, fn) => {
+                return QS_FUNC_MAP[fn.toLowerCase()] || match;
+            });
         }
 
         // ── Qlik Sense Converter ────────────────────────────────────────────
@@ -26712,6 +27625,64 @@ models:
     <a href="https://developers.thoughtspot.com/docs/tml-import-export" target="_blank">ThoughtSpot TML Import/Export</a>
 </div>`,
 
+            quicksight: `
+<h3>AWS QuickSight Converter</h3>
+<p>Converts AWS QuickSight asset exports — DescribeAnalysisDefinition JSON, DescribeDataSet JSON, and Asset Bundle (<code>.qs</code>) zips — to Sigma data model JSON. Files are auto-classified by content, so you can drop multiple JSONs together (one analysis + one dataset per referenced source).</p>
+
+<h3>How to Get Files</h3>
+<ul>
+    <li><b>Analysis JSON</b>: <code>aws quicksight describe-analysis-definition --account-id X --analysis-id Y &gt; analysis.json</code></li>
+    <li><b>Dataset JSON</b>: <code>aws quicksight describe-data-set --account-id X --data-set-id Z &gt; dataset.json</code> (one per referenced dataset)</li>
+    <li><b>Asset Bundle .qs</b>: <code>aws quicksight start-asset-bundle-export-job ... --export-format QUICKSIGHT_JSON</code>, then drop the resulting <code>.qs</code> zip — each <code>analyses/*.json</code> and <code>datasets/*.json</code> is auto-extracted</li>
+</ul>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>PhysicalTable.RelationalTable</b> → Sigma warehouse-table element. Catalog/Schema/Name become the path; database/schema overrides fill in when omitted</li>
+    <li><b>PhysicalTable.CustomSql</b> → Custom SQL element with the SqlQuery as the statement</li>
+    <li><b>PhysicalTable.S3Source / SaaSTable</b> → Custom SQL placeholder + warning (no native Sigma equivalent)</li>
+    <li><b>LogicalTable.JoinInstruction</b> → Sigma relationship on the left-side element. OnClause <code>{leftCol} = {rightCol[rightOperandId]}</code> is parsed to resolve FK/PK column IDs</li>
+    <li><b>LogicalTable.DataTransforms</b>:
+        <ul>
+            <li><code>CreateColumnsOperation</code> → calc col with formula via <code>quicksightFormulaToSigma</code></li>
+            <li><code>RenameColumnOperation</code> → updates the column display name</li>
+            <li><code>CastColumnTypeOperation</code> → wraps the column formula with <code>Text()</code>/<code>Int()</code>/<code>Number()</code>/<code>Datetime()</code></li>
+            <li><code>ProjectOperation</code> → reorders <code>order[]</code> so projected columns lead</li>
+            <li><code>FilterOperation</code> → boolean calc col <code>Filter: &lt;cond&gt;</code> + warning</li>
+            <li><code>TagColumnOperation</code> → informational warning (Sigma has no geo-role tagging)</li>
+        </ul>
+    </li>
+    <li><b>AnalysisDefinition.CalculatedFields</b> → calc cols on the derived view element (cross-element refs auto-rewritten to <code>[SRC/REL/Field]</code>)</li>
+    <li><b>ParameterDeclarations</b> → Sigma controls (<code>String</code> → text, <code>Integer</code>/<code>Decimal</code> → number, <code>DateTime</code> → date)</li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li><b>Window / table-calculation functions</b> (<code>sumOver</code>, <code>runningSum</code>, <code>lag</code>, <code>lead</code>, <code>rank</code>, <code>denseRank</code>, <code>percentOfTotal</code>, <code>period*</code>, <code>windowSum</code>, etc.) → translated to a <code>/* TODO */</code> comment placeholder with a warning. Sigma DM calc columns silently error on window functions; re-author in a Custom SQL element or in the workbook layer.</li>
+    <li><b>Asset Bundle CloudFormation format</b> (<code>--export-format CLOUDFORMATION_JSON</code>) is NOT supported — use <code>QUICKSIGHT_JSON</code></li>
+    <li><b>FilterGroups</b> (analysis-level page filters) are reported as warnings and skipped — re-create as workbook page controls</li>
+    <li><b>Dataset-of-datasets</b> (<code>LogicalTable.Source.DataSetArn</code> variant) is not yet expanded recursively — supply the referenced dataset's JSON directly</li>
+    <li><b>SPICE row-level security</b> rules are not converted</li>
+    <li><b>Visual layouts</b> (sheets, charts, parameter controls UI placement) are out of scope — this is a data-model converter</li>
+</ul>
+
+<h3>Expression Conversion</h3>
+<ul>
+    <li><code>{Col Name}</code> → <code>[Col Name]</code> (display-name normalization)</li>
+    <li><code>ifelse(c1, v1, c2, v2, default)</code> → nested <code>If(c1, v1, If(c2, v2, default))</code></li>
+    <li><code>switch(expr, k1, v1, k2, v2, default)</code> → nested <code>If(expr = k1, v1, If(expr = k2, v2, default))</code></li>
+    <li><code>'string'</code> → <code>"string"</code>, <code>&lt;&gt;</code> → <code>!=</code></li>
+    <li><code>ifelse / distinct_count / coalesce / nullif / dateDiff / truncDate</code> → <code>If / CountDistinct / Coalesce / Nullif / DateDiff / DateTrunc</code> etc.</li>
+</ul>
+
+<div class="help-links">
+    <div class="help-links-title">📚 Resources</div>
+    <a href="https://docs.aws.amazon.com/quicksight/latest/APIReference/API_AnalysisDefinition.html" target="_blank">AnalysisDefinition API reference</a>
+    <a href="https://docs.aws.amazon.com/quicksight/latest/APIReference/API_DescribeDataSet.html" target="_blank">DescribeDataSet API reference</a>
+    <a href="https://docs.aws.amazon.com/quicksight/latest/developerguide/assetbundle-export.html" target="_blank">Asset Bundle export ops</a>
+    <a href="https://docs.aws.amazon.com/quicksight/latest/user/calculated-field-reference.html" target="_blank">QuickSight calculated-field function reference</a>
+</div>`,
+
             qlik: `
 <h3>Qlik Sense Converter</h3>
 <p>Converts Qlik Sense data model metadata (from the REST API or Engine API) to Sigma data model JSON. Parses tables, fields, automatically inferred associations (relationships), master measures, and master dimensions.</p>
@@ -27859,6 +28830,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
                 <button class="help-tab" onclick="switchHelpTab('contract')">📝 Atlan</button>
                 <button class="help-tab" onclick="switchHelpTab('omni')">🌐 Omni</button>
                 <button class="help-tab" onclick="switchHelpTab('thoughtspot')">🔷 ThoughtSpot</button>
+                <button class="help-tab" onclick="switchHelpTab('quicksight')">☁️ QuickSight</button>
                 <button class="help-tab" onclick="switchHelpTab('qlik')">🔮 Qlik</button>
                 <button class="help-tab" onclick="switchHelpTab('oac')">☁️ Oracle</button>
                 <button class="help-tab" onclick="switchHelpTab('cube')">🟦 Cube.dev</button>

@@ -1,0 +1,35 @@
+{
+  "_source": "https://github.com/hashicorp/terraform-provider-aws/issues/30705 — verbatim aws quicksight describe-data-set output, account ARN redacted.",
+  "DataSet": {
+    "Arn": "arn:aws:quicksight:eu-west-1:ACCOUNT_ID:dataset/test",
+    "DataSetId": "test",
+    "Name": "Test",
+    "CreatedTime": "2023-04-13T16:30:42.274000+01:00",
+    "LastUpdatedTime": "2023-04-13T16:38:03.544000+01:00",
+    "PhysicalTableMap": {
+      "id": {
+        "RelationalTable": {
+          "DataSourceArn": "arn:aws:quicksight:eu-west-1:ACCOUNT_ID:datasource/rds-datasource",
+          "Name": "table",
+          "InputColumns": [
+            {"Name": "name",  "Type": "STRING"},
+            {"Name": "value", "Type": "STRING"}
+          ]
+        }
+      }
+    },
+    "LogicalTableMap": {
+      "id": {
+        "Alias": "table",
+        "Source": {"PhysicalTableId": "id"}
+      }
+    },
+    "OutputColumns": [
+      {"Name": "name",  "Type": "STRING"},
+      {"Name": "value", "Type": "STRING"}
+    ],
+    "ImportMode": "DIRECT_QUERY",
+    "ConsumedSpiceCapacityInBytes": 0,
+    "DataSetUsageConfiguration": {"DisableUseAsDirectQuerySource": false, "DisableUseAsImportedSource": false}
+  }
+}
