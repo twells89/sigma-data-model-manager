@@ -5,3 +5,8 @@ package-lock.json
 *-example*.json
 tableau-local/
 .DS_Store
+
+# PBI fix (beads-sigma-j89/tkd) regression harness — keep tracked despite *.mjs ignore
+!test/
+!test/*.mjs
+!test/*.md
