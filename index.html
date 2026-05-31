@@ -25021,18 +25021,53 @@ ${cleanedSql}`;
         // ── Extract table path from Power Query M expression ──────────────
         function pbiExtractPathFromM(mExpr) {
             if (!mExpr) return null;
-            // Match Sql.Database("server", "database") patterns
-            const dbMatch = mExpr.match(/Sql\.Database\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"/i)
-                || mExpr.match(/Snowflake\.Databases\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"/i);
-            const schemaMatch = mExpr.match(/\{[^}]*\[Schema\s*=\s*"([^"]+)"\]/i)
-                || mExpr.match(/\{[^}]*\[Name\s*=\s*"([^"]+)"\s*,\s*\[Kind\s*=\s*"Schema"\]/i);
-            const tableMatch = mExpr.match(/\{[^}]*\[Name\s*=\s*"([^"]+)"\s*,\s*\[Kind\s*=\s*"Table"\]/i)
-                || mExpr.match(/\{[^}]*\[Name\s*=\s*"([^"]+)"\]\s*\}\s*\[\s*Data\s*\]/i);
-            const db = dbMatch ? dbMatch[1] : null;
-            const schema = schemaMatch ? schemaMatch[1] : null;
-            const table = tableMatch ? tableMatch[1] : null;
-            if (db && schema && table) return [db.toUpperCase(), schema.toUpperCase(), table.toUpperCase()];
-            if (schema && table) return [schema.toUpperCase(), table.toUpperCase()];
+
+            // Pattern 1: explicit SQL Server / Azure connector — Sql.Database("server","DB")
+            const sqlDbMatch = mExpr.match(/Sql\.Database\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"/i);
+            const schemaKindMatch = mExpr.match(/\{[^}]*\[Schema\s*=\s*"([^"]+)"\]/i)
+                || mExpr.match(/\[\s*Name\s*=\s*"([^"]+)"\s*,\s*Kind\s*=\s*"Schema"\s*\]/i);
+            const tableKindMatch = mExpr.match(/\[\s*Name\s*=\s*"([^"]+)"\s*,\s*Kind\s*=\s*"(?:Table|View)"\s*\]/i);
+            if (sqlDbMatch && tableKindMatch) {
+                const db = sqlDbMatch[1];
+                const table = tableKindMatch[1];
+                const schema = schemaKindMatch ? schemaKindMatch[1] : null;
+                if (schema) return [db.toUpperCase(), schema.toUpperCase(), table.toUpperCase()];
+                return [db.toUpperCase(), table.toUpperCase()];
+            }
+
+            // Pattern 2a: Kind-tagged navigation — Snowflake / Databricks / BigQuery / others.
+            // Power BI's Snowflake connector emits navigation steps that carry an explicit Kind:
+            //   Source{[Name = "CSA", Kind = "Database"]}[Data]
+            //   #"Navigation 1"{[Name = "TJ", Kind = "Schema"]}[Data]
+            //   #"Navigation 2"{[Name = "EMPLOYEES", Kind = "Table"]}[Data]
+            // Key on the Kind so each segment maps to the right path slot regardless of order.
+            const kindNavMatches = [...mExpr.matchAll(
+                /\[\s*Name\s*=\s*"([^"]+)"\s*,\s*Kind\s*=\s*"(Database|Schema|Table|View)"\s*\]/gi
+            )];
+            if (kindNavMatches.length) {
+                let db = null, sch = null, tbl = null;
+                for (const m of kindNavMatches) {
+                    const kind = m[2].toLowerCase();
+                    if (kind === 'database') db = m[1];
+                    else if (kind === 'schema') sch = m[1];
+                    else if (kind === 'table' || kind === 'view') tbl = m[1];
+                }
+                if (tbl) {
+                    const parts = [db, sch, tbl].filter(Boolean);
+                    if (parts.length >= 2) return parts.map(x => x.toUpperCase());
+                }
+            }
+
+            // Pattern 2b: plain navigation by {[Name="X"]}[Data] (no Kind tag) —
+            // older Snowflake/Databricks/BigQuery M, positional DB/Schema/Table order.
+            const nameNavMatches = [...mExpr.matchAll(/\{\s*\[Name\s*=\s*"([^"]+)"\s*\]\s*\}\s*\[\s*Data\s*\]/gi)];
+            if (nameNavMatches.length >= 3) {
+                return [nameNavMatches[0][1].toUpperCase(), nameNavMatches[1][1].toUpperCase(), nameNavMatches[2][1].toUpperCase()];
+            }
+            if (nameNavMatches.length === 2) {
+                return [nameNavMatches[0][1].toUpperCase(), nameNavMatches[1][1].toUpperCase()];
+            }
+
             return null;
         }
 
@@ -25212,7 +25247,10 @@ ${cleanedSql}`;
                         }
                     }
 
-                    const element = { id: elementId, kind: 'table', source: { connectionId, kind: 'warehouse-table', path }, columns, order };
+                    // Name the base element after its warehouse table (last path segment) so
+                    // workbook masters can reference it as [TABLE/Col]. (Bug beads-sigma-tkd #1)
+                    const baseElementName = (path && path.length ? path[path.length - 1] : tableName.toUpperCase());
+                    const element = { id: elementId, kind: 'table', name: baseElementName, source: { connectionId, kind: 'warehouse-table', path }, columns, order };
                     if (metrics.length > 0) element.metrics = metrics;
                     if (folders.length > 0) element.folders = folders;
                     if (t.isHidden) element.visibleAsSource = false;
