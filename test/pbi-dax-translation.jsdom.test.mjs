@@ -139,19 +139,40 @@ const RAW_DAX_BANNED =
   console.log('PASS browser/JSDOM n9u: SWITCH(TRUE()) -> nested If');
 }
 
-// ── w9s: non-GENERATESERIES calc table (CALENDAR) -> sql {ok:false}, not warehouse-table ──
+// ── 7mn: ADDCOLUMNS(CALENDAR(a,b)) -> real date-spine sql element (NOT {ok:false}) ──
 {
   const { result, warnText } = await convert('fixture_06_kitchen_sink.bim');
   const sqlEls = result.pages[0].elements.filter(e => e?.source?.kind === 'sql');
   const dd = sqlEls.find(e => e.name === 'DIMDATE');
-  assert.ok(dd, 'w9s: DimDate must be a sql element');
-  assert.equal(dd.ok, false, 'w9s: non-translatable calc table carries ok:false');
-  assert.match(dd.source.statement, /TODO/, 'w9s: placeholder SQL flags manual work');
+  assert.ok(dd, '7mn: DimDate must be a sql element');
+  assert.notEqual(dd.ok, false, '7mn: CALENDAR is translatable — must NOT carry ok:false');
+  assert.doesNotMatch(dd.source.statement, /TODO/, '7mn: real spine SQL must not be a TODO placeholder');
+  assert.match(dd.source.statement, /GENERATOR\s*\(\s*ROWCOUNT\s*=>\s*3287\s*\)/i, '7mn: GENERATOR(ROWCOUNT => 3287)');
+  assert.match(dd.source.statement, /DATEADD\(\s*'day'\s*,\s*SEQ4\(\)\s*,\s*CAST\('2018-01-01' AS DATE\)\)/i, '7mn: DATEADD day-offsets from 2018-01-01');
+  assert.match(dd.source.statement, /EXTRACT\(YEAR FROM d\) AS "Year"/i, '7mn: Year = EXTRACT(YEAR)');
+  assert.match(dd.source.statement, /EXTRACT\(MONTH FROM d\) AS "Month No"/i, '7mn: MonthNo = EXTRACT(MONTH)');
+  assert.match(dd.source.statement, /TO_CHAR\(d, 'Mon'\) AS "Month"/i, "7mn: Month = TO_CHAR(,'Mon')");
   const bases = result.pages[0].elements.filter(e => e?.source?.kind === 'warehouse-table');
-  assert.ok(!bases.some(e => e.name === 'DIMDATE'), 'w9s: DimDate must NOT be a path-guessed warehouse-table');
-  assert.ok(/DimDate/.test(warnText) && /calculated table/i.test(warnText),
-    'w9s: expected a calculated-table refusal warning');
-  console.log('PASS browser/JSDOM w9s: CALENDAR calc table -> sql {ok:false} placeholder');
+  assert.ok(!bases.some(e => e.name === 'DIMDATE'), '7mn: DimDate must NOT be a path-guessed warehouse-table');
+  assert.ok(/DimDate/.test(warnText) && /date-spine/i.test(warnText), '7mn: expected a date-spine synthesis warning');
+  console.log('PASS browser/JSDOM 7mn: CALENDAR/ADDCOLUMNS -> real date-spine sql element (3287 rows)');
 }
 
-console.log('ALL PASS browser/JSDOM pbi-dax-translation (9l2 / 3t9 / n9u / w9s)');
+// ── a8h: WEEKNUM -> Excel-style week formula (NOT ISO DatePart), via window.pbiDaxToSigma ──
+{
+  const dom = new JSDOM(html, { runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://localhost/' });
+  const { window } = dom;
+  const t2 = window.pbiDaxToSigma('WEEKNUM(SAFETY_INCIDENTS[DATE], 2)', [], 'Week Of Year');
+  assert.ok(!/DatePart\s*\(\s*"week"/i.test(t2), 'a8h: must NOT use ISO DatePart("week")');
+  assert.equal(t2, 'Floor((DateDiff("day", DateTrunc("year", [DATE]), [DATE]) + Mod(Weekday(DateTrunc("year", [DATE])) + 5, 7)) / 7) + 1',
+    'a8h: WEEKNUM(d,2) -> Monday-start Excel formula (+5 offset)');
+  const tDef = window.pbiDaxToSigma('WEEKNUM(SAFETY_INCIDENTS[DATE])', [], 'Week Of Year');
+  const t1 = window.pbiDaxToSigma('WEEKNUM(SAFETY_INCIDENTS[DATE], 1)', [], 'Week Of Year');
+  for (const out of [tDef, t1]) {
+    assert.ok(!/DatePart\s*\(\s*"week"/i.test(out), 'a8h: default/type-1 must NOT use ISO DatePart');
+    assert.ok(/Mod\(Weekday\(DateTrunc\("year", \[DATE\]\)\) \+ 6, 7\)/.test(out), 'a8h: Sunday-start (+6 offset)');
+  }
+  console.log('PASS browser/JSDOM a8h: WEEKNUM -> Excel-style week formula (type 2 +5, type 1 +6)');
+}
+
+console.log('ALL PASS browser/JSDOM pbi-dax-translation (9l2 / 3t9 / n9u / w9s / 7mn / a8h)');
