@@ -10473,7 +10473,9 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         // to a Sigma format object.  Returns null for patterns we can't reliably convert.
         function _excelFormatToSigma(mask) {
             if (!mask || /^(General|Text|@)$/i.test(mask.trim())) return null;
-            const m = mask.trim();
+            // Excel/TMSL escapes literals with a backslash (e.g. "\$#,0"); strip
+            // them so the currency/number patterns below match (beads-sigma-4q7k).
+            const m = mask.trim().replace(/\\/g, '');
             // Percentage: 0%, 0.0%, 0.00%, #,##0.0%, etc.
             const pctMatch = m.match(/^[#,]*0(\.0+)?%$/);
             if (pctMatch) {
@@ -25193,6 +25195,53 @@ ${cleanedSql}`;
             return { ok: true, sql: `SELECT v AS "${col}" FROM (VALUES ${rows}) AS t(v)` };
         }
 
+        // COUNTROWS(FILTER(table,pred)) | COUNT(FILTER(table,pred)) -> CountIf(pred).
+        // The bare form (no CALCULATE) otherwise hits the COUNTROWS catch-all whose
+        // [^)]* stops at FILTER's inner ')' -> malformed 'Count())' (beads-sigma-r9oz).
+        function pbiRewriteCountRowsFilter(f) {
+            const re = /\b(?:COUNTROWS|COUNT)\s*\(/gi;
+            for (let guard = 0; guard < 50; guard++) {
+                re.lastIndex = 0;
+                let replaced = false, m;
+                while ((m = re.exec(f)) !== null) {
+                    const { args, endPos } = pbiSplitCallArgs(f, m.index + m[0].length);
+                    if (args.length !== 1) continue;
+                    const inner = args[0].trim();
+                    const fm = inner.match(/^FILTER\s*\(/i);
+                    if (!fm) continue;
+                    const fr = pbiSplitCallArgs(inner, fm[0].length);
+                    if (fr.args.length < 2) continue;
+                    let pred = fr.args.slice(1).join(', ').trim()
+                        .replace(/'[^']+'\[([^\]]+)\]/g, '[$1]')
+                        .replace(/\b[A-Za-z_]\w*\[([^\]]+)\]/g, '[$1]');
+                    f = f.slice(0, m.index) + `CountIf(${pred})` + f.slice(endPos);
+                    replaced = true;
+                    break;
+                }
+                if (!replaced) break;
+            }
+            return f;
+        }
+
+        // Drop metrics referencing a MEASURE that was itself dropped (dangling ref
+        // cascade). droppedNames seeds with measures that didn't translate; pruned
+        // metrics are added back so transitive chains collapse. Measure-scoped only.
+        function pbiPruneDanglingMetrics(metrics, droppedNames, warnings) {
+            for (let pass = 0; pass < 10; pass++) {
+                const before = metrics.length;
+                for (let i = metrics.length - 1; i >= 0; i--) {
+                    const refs = (String(metrics[i].formula).match(/\[([^\]\/]+)\]/g) || []).map(r => r.slice(1, -1));
+                    const bad = refs.find(r => droppedNames.has(r));
+                    if (bad) {
+                        if (warnings) warnings.push(`⚠ "${metrics[i].name}": references "[${bad}]" which did not translate — dropped to avoid a dangling reference.`);
+                        droppedNames.add(metrics[i].name);
+                        metrics.splice(i, 1);
+                    }
+                }
+                if (metrics.length === before) break;
+            }
+        }
+
         function pbiDaxToSigma(dax, warnings, measureName) {
             // BIM/TMSL serializes multi-line DAX expressions as a string[] (one entry per line)
             if (Array.isArray(dax)) dax = dax.join('\n');
@@ -25208,6 +25257,7 @@ ${cleanedSql}`;
             f = pbiRewriteCombineValues(f);
             f = pbiRewriteSingleValue(f);
             f = pbiRewriteSwitchTrue(f);
+            f = pbiRewriteCountRowsFilter(f);   // COUNTROWS/COUNT(FILTER) -> CountIf (r9oz)
             f = f.replace(/\bDISTINCTCOUNTNOBLANK\s*\(/gi, 'CountDistinct(');
 
             // ── Tier 4: Structural patterns → warnings only ──────────────────
@@ -25219,6 +25269,13 @@ ${cleanedSql}`;
             // Iterator functions (SUMX, AVERAGEX, COUNTROWS+FILTER)
             if (/\b(SUMX|AVERAGEX|MINX|MAXX|COUNTAX|CONCATENATEX)\s*\(/i.test(f)) {
                 if (warnings) warnings.push(`⚠ "${measureName}": uses DAX iterator (${f.match(/\b(SUMX|AVERAGEX|MINX|MAXX|COUNTAX|CONCATENATEX)/i)[1]}). No direct Sigma equivalent — use groupings or calculated columns. See: ${PBI_COMMUNITY_LINKS.groupings}`);
+                return null;
+            }
+            // Ranking — window/scope; no DM-metric equivalent. Emitting RANKX raw
+            // is an invalid Sigma formula that fails the whole DM POST (r9oz/mkm).
+            if (/\b(RANKX|RANK\.EQ|RANK\.AVG|RANK)\s*\(/i.test(f)) {
+                const fn = f.match(/\b(RANKX|RANK\.EQ|RANK\.AVG|RANK)/i)[1];
+                if (warnings) warnings.push(`⚠ "${measureName}": uses DAX ranking (${fn}). No data-model-metric equivalent — add a workbook Rank() in an ordered table, or a grouped element. See: ${PBI_COMMUNITY_LINKS.groupings}`);
                 return null;
             }
             // Time intelligence
@@ -25648,12 +25705,18 @@ ${cleanedSql}`;
                             });
                             const metric = { id: sigmaShortId(), formula: sigmaFormula, name: m.name };
                             if (m.description) metric.description = m.description;
-                            const _pFmt = (m.formatMask ? _excelFormatToSigma(m.formatMask) : null) || _inferSigmaFormat(sigmaFormula, m.name);
+                            const _pMask = m.formatMask || m.formatString;   // .bim uses formatString (4q7k)
+                            const _pFmt = (_pMask ? _excelFormatToSigma(_pMask) : null) || _inferSigmaFormat(sigmaFormula, m.name);
                             if (_pFmt) metric.format = _pFmt;
                             metrics.push(metric);
                         } else if (!warnings.some(w => w.includes(`"${m.name}"`))) {
                             warnings.push(`⛔ "${m.name}": DAX measure could not be auto-converted. Add manually in Sigma.`);
                         }
+                    }
+                    {
+                        const _emitted = new Set(metrics.map(mm => mm.name));
+                        const _dropped = new Set((t.measures || []).map(mm => mm.name).filter(nm => nm && !_emitted.has(nm)));
+                        pbiPruneDanglingMetrics(metrics, _dropped, warnings);
                     }
 
                     // Display folders
