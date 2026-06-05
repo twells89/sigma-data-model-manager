@@ -390,11 +390,11 @@ To include master measures and master dimensions, use the extended format:
 }
 ```
 
-**Expression conversion:** Most Qlik functions share Sigma's syntax directly. Notable mappings: `Only([Field])` → `[Field]`, `Text([Field])` → `ToString([Field])`, `IsNum([Field])` → `IsNumber([Field])`, `Log([x])` → `Ln([x])`, `Fmod(a, b)` → `Mod(a, b)`. Set Analysis expressions generate a warning — use `SumIf` / `CountIf` in Sigma instead.
+**Expression conversion:** Most Qlik functions share Sigma's syntax directly. Notable mappings: `Only([Field])` → `[Field]`, `Text([Field])` → `ToString([Field])`, `IsNum([Field])` → `IsNumber([Field])`, `Log([x])` → `Ln([x])`, `Fmod(a, b)` → `Mod(a, b)`. Simple **Set Analysis** is auto-translated: `Sum({<F={v}>} X)` → `Sum(If([F]=v, [X]))` (plus `{1}`, `-=` exclusion, multi-value, and `Count(…DISTINCT)` forms). Also translated: row-wise `RangeSum/Max/Min/Avg` → arithmetic / `Greatest` / `Least`, `Dual(text,num)` → numeric arg, `Class(x,n)` → `Floor([x]/n)*n`, `Count(DISTINCT x)` → `CountDistinct(x)`.
 
-**Known limitations:**
+**Known limitations (dropped with a warning, not emitted broken):** `$(var)` dollar-expansion (would reject the whole POST), inter-record functions (`Above`/`Below`/`Peek`/`Previous`/`RowNo`), ranking (`Rank`/`HRank`), set-element `P()`/`E()`, `Aggr()`, `FirstSortedValue`, and exotic Set Analysis (search strings, `$()` in the set, set operators). Re-create these in the workbook (window functions, controls) or by hand.
 - Source paths — REST API metadata does not include database or schema; use the Database / Schema override fields
-- Synthetic keys — `%SyntheticKey%` bridge tables are filtered out; review relationships manually for complex many-to-many joins
+- Synthetic keys — `%SyntheticKey%` bridge tables are filtered out. Two facts sharing a conformed dimension key are linked **each to the dimension** (no fact-to-fact join / fan trap); review relationships for complex many-to-many joins
 - Master items — Not returned by `/data/metadata`; use the extended JSON format above
 - Set Analysis — Skipped with a warning; no direct Sigma equivalent
 

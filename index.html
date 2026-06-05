@@ -10265,6 +10265,17 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 // Derived element name must differ from base so [<base>/Field] is unambiguous.
                 var derivedName = (srcEl.name || sigmaDisplayName(srcTableName)) + ' View';
                 var viewCols = [], viewOrder = [];
+                // Dedupe by display name (conformed keys recur on base + every related table)
+                // and pull each related table once (a target reached by two keys would dup).
+                var seenNames = new Set(), seenTargets = new Set();
+                var addCol = function(formula, dispName) {
+                    var key = dispName.toUpperCase();
+                    if (seenNames.has(key)) return;
+                    seenNames.add(key);
+                    var cId = sigmaShortId();
+                    viewCols.push({ id: cId, formula: formula });
+                    viewOrder.push(cId);
+                };
 
                 // Own columns — only copy pure warehouse passthrough formulas, and rewrite
                 // their leading segment from <TABLE> to <baseName>.
@@ -10272,15 +10283,14 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                     if (!col.formula || col.formula.startsWith('/*')) return;
                     var fm = col.formula.match(/^\[([^\]\/]+)\/([^\]]+)\]$/);
                     if (!fm) return; // skip calc cols
-                    var dispName = fm[2];
-                    var cId = sigmaShortId();
-                    viewCols.push({ id: cId, formula: '[' + baseName + '/' + dispName + ']' });
-                    viewOrder.push(cId);
+                    addCol('[' + baseName + '/' + fm[2] + ']', fm[2]);
                 });
 
                 // Dim columns via [<baseName>/REL_NAME/Col] cross-element references
                 srcEl.relationships.forEach(function(rel) {
                     if (!rel.name) return; // name required for formula middle-segment
+                    if (seenTargets.has(rel.targetElementId)) return; // pull each related table once
+                    seenTargets.add(rel.targetElementId);
                     var tgtEl = elements.find(function(e) { return e.id === rel.targetElementId; });
                     if (!tgtEl || !tgtEl.source || tgtEl.source.kind !== 'warehouse-table') return;
                     (tgtEl.columns || []).forEach(function(col) {
@@ -10290,9 +10300,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                         var inner = fm[1];
                         var s = inner.lastIndexOf('/');
                         var dispName = s >= 0 ? inner.slice(s + 1) : inner;
-                        var cId = sigmaShortId();
-                        viewCols.push({ id: cId, formula: '[' + baseName + '/' + rel.name + '/' + dispName + ']' });
-                        viewOrder.push(cId);
+                        addCol('[' + baseName + '/' + rel.name + '/' + dispName + ']', dispName);
                     });
                 });
 
@@ -17877,65 +17885,69 @@ views:
                 }
 
                 const createdRels = new Set(); // prevent duplicate relationships
+                const _distinctRatio = (info, fieldName) => {
+                    const f = info.fields.find(x => x.name === fieldName);
+                    const d = f ? (f.distinctValueCount || f.cardinal || 0) : 0;
+                    return info.rowCount > 0 && d > 0 ? d / info.rowCount : 0;
+                };
+                // How PK-like a table is for a shared key: real cardinality if known,
+                // else heuristic (non-fact tables win; fewer rows as a tiebreak).
+                const _pkScore = (tableName, fieldName) => {
+                    const info = tableElementMap[tableName];
+                    const r = _distinctRatio(info, fieldName);
+                    if (r > 0) return r;
+                    const isFact = /FACT|FACTS|_FCT|TRANSACTIONS?$/i.test(tableName);
+                    return (isFact ? 0 : 1) + 1 / (1 + (info.rowCount || 0));
+                };
+                const _addRel = (fromInfo, toInfo, fieldName) => {
+                    const relKey = [fromInfo.elementId, toInfo.elementId].sort().join('|') + '|' + fieldName;
+                    if (createdRels.has(relKey)) return;
+                    createdRels.add(relKey);
+                    const fromColInfo = fromInfo.colMap[fieldName];
+                    const toColInfo   = toInfo.colMap[fieldName];
+                    if (!fromColInfo || !toColInfo) return;
+                    if (!fromInfo.element.relationships) fromInfo.element.relationships = [];
+                    const tgtPath = toInfo.element.source?.path;
+                    fromInfo.element.relationships.push({
+                        id: sigmaShortId(),
+                        targetElementId: toInfo.elementId,
+                        keys: [{ sourceColumnId: fromColInfo.colId, targetColumnId: toColInfo.colId }],
+                        name: tgtPath ? tgtPath[tgtPath.length - 1].toUpperCase() : fieldName.toUpperCase()
+                    });
+                };
+
                 for (const [fieldName, tableNames] of Object.entries(fieldToTables)) {
                     if (tableNames.length < 2) continue;
 
-                    if (tableNames.length > 2) {
-                        warnings.push(`⚠ Field "${fieldName}" links ${tableNames.length} tables (${tableNames.join(', ')}). Complex association — review relationships in Sigma.`);
+                    if (tableNames.length === 2) {
+                        // Two tables sharing a key → single relationship, directed at the PK side.
+                        const infoA = tableElementMap[tableNames[0]];
+                        const infoB = tableElementMap[tableNames[1]];
+                        if (!infoA || !infoB) continue;
+                        const aRatio = _distinctRatio(infoA, fieldName);
+                        const bRatio = _distinctRatio(infoB, fieldName);
+                        // Skip generic shared names (CITY/REGION/…) that aren't keys, unless we
+                        // have no cardinality info at all (then fall back to creating it).
+                        const hasPkSide = aRatio >= 0.9 || bRatio >= 0.9;
+                        const noInfo    = aRatio === 0 && bRatio === 0;
+                        if (!hasPkSide && !noInfo) continue;
+                        const aIsPk = noInfo
+                            ? _pkScore(tableNames[0], fieldName) >= _pkScore(tableNames[1], fieldName)
+                            : aRatio >= bRatio;
+                        _addRel(aIsPk ? infoB : infoA, aIsPk ? infoA : infoB, fieldName);
+                        continue;
                     }
 
-                    for (let i = 0; i < tableNames.length - 1; i++) {
-                        for (let j = i + 1; j < tableNames.length; j++) {
-                            const infoA = tableElementMap[tableNames[i]];
-                            const infoB = tableElementMap[tableNames[j]];
-                            if (!infoA || !infoB) continue;
-
-                            const relKey = [infoA.elementId, infoB.elementId].sort().join('|') + '|' + fieldName;
-                            if (createdRels.has(relKey)) continue;
-                            createdRels.add(relKey);
-
-                            // Determine direction: one side = PK (high cardinality ratio), many side = FK
-                            const aField = infoA.fields.find(f => f.name === fieldName);
-                            const bField = infoB.fields.find(f => f.name === fieldName);
-                            const aRows = infoA.rowCount || 0;
-                            const bRows = infoB.rowCount || 0;
-                            const aDistinct = aField ? (aField.distinctValueCount || 0) : 0;
-                            const bDistinct = bField ? (bField.distinctValueCount || 0) : 0;
-                            const aRatio = aRows > 0 && aDistinct > 0 ? aDistinct / aRows : 0;
-                            const bRatio = bRows > 0 && bDistinct > 0 ? bDistinct / bRows : 0;
-
-                            // Only create a relationship if at least one side looks like a PK
-                            // (≥90% distinct values). This filters out generic shared names like
-                            // CITY, STATE, REGION, IS_ACTIVE that appear in multiple tables but
-                            // are NOT join keys. When no distinct-count info is available (both
-                            // ratios are 0) we fall back to creating the relationship anyway.
-                            const hasPkSide = aRatio >= 0.9 || bRatio >= 0.9;
-                            const noInfo    = aRatio === 0 && bRatio === 0;
-                            if (!hasPkSide && !noInfo) continue;
-
-                            // toInfo = PK (one) side, fromInfo = FK (many) side
-                            let fromInfo, toInfo;
-                            if (aRatio >= bRatio) {
-                                toInfo   = infoA; // A has higher cardinality = PK side
-                                fromInfo = infoB;
-                            } else {
-                                toInfo   = infoB;
-                                fromInfo = infoA;
-                            }
-
-                            const fromColInfo = fromInfo.colMap[fieldName];
-                            const toColInfo   = toInfo.colMap[fieldName];
-                            if (!fromColInfo || !toColInfo) continue;
-
-                            if (!fromInfo.element.relationships) fromInfo.element.relationships = [];
-                            const qlikAutoPath = toInfo.element.source?.path;
-                            fromInfo.element.relationships.push({
-                                id: sigmaShortId(),
-                                targetElementId: toInfo.elementId,
-                                keys: [{ sourceColumnId: fromColInfo.colId, targetColumnId: toColInfo.colId }],
-                                name: qlikAutoPath ? qlikAutoPath[qlikAutoPath.length - 1].toUpperCase() : fieldName.toUpperCase()
-                            });
-                        }
+                    // ≥3 tables share this key (two facts + a conformed dimension): link each
+                    // to the single inferred key owner (the dim), NEVER fact↔fact (fan trap).
+                    const pkTable = [...tableNames].sort((x, y) => _pkScore(y, fieldName) - _pkScore(x, fieldName))[0];
+                    const pkInfo = tableElementMap[pkTable];
+                    warnings.push(`⚠ Field "${fieldName}" links ${tableNames.length} tables (${tableNames.join(', ')}). Linked each to "${pkTable}" (inferred key owner); no fact-to-fact join created — review in Sigma.`);
+                    if (!pkInfo) continue;
+                    for (const other of tableNames) {
+                        if (other === pkTable) continue;
+                        const otherInfo = tableElementMap[other];
+                        if (otherInfo) _addRel(otherInfo, pkInfo, fieldName);
                     }
                 }
 
