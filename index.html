@@ -15923,14 +15923,20 @@ views:
                     formulaCols.forEach(({ col, formulaExpr }) => {
                         const dispName = col.name || 'Calculated';
                         const sigmaFormula = _tsFormulaToSigma(formulaExpr, elementByTable);
-                        const colId = sigmaShortId();
                         let fmt = _inferSigmaFormat(sigmaFormula, dispName);
                         if (fmt?.formatString === ',.2%') fmt = { kind: 'number', formatString: ',.2f', suffix: '%' };
-                        // ThoughtSpot formula-based fields are always row-level calculated columns,
-                        // even when typed MEASURE — Sigma requires aggregation at top level for metrics[].
-                        const colObj = { id: colId, name: dispName, formula: sigmaFormula };
-                        if (fmt) colObj.format = fmt;
-                        hostEl.columns.push(colObj);
+                        // Aggregate-level TML formulas (sum(x)/sum(y), sqrt(sum(x)), average(x), …)
+                        // must be Sigma METRICS — as row-level calc cols their inner Sum() collapses to
+                        // the row value and ratio-of-sums is lost. Row-level formulas stay calc columns.
+                        if (_tsIsAggregateFormula(formulaExpr)) {
+                            const metric = { id: sigmaShortId(), name: dispName, formula: sigmaFormula };
+                            if (fmt) metric.format = fmt;
+                            (hostEl.metrics ||= []).push(metric);
+                        } else {
+                            const colObj = { id: sigmaShortId(), name: dispName, formula: sigmaFormula };
+                            if (fmt) colObj.format = fmt;
+                            hostEl.columns.push(colObj);
+                        }
                     });
                 }
             }
@@ -16006,6 +16012,12 @@ views:
         }
 
         // Convert a ThoughtSpot formula expression to Sigma formula syntax
+        // Aggregate-level TML formula (applies an aggregate fn to a column) → must be a
+        // Sigma metric, not a row-level calc column.
+        function _tsIsAggregateFormula(expr) {
+            return /\b(sum|count|count_distinct|unique_count|count_not_null|average|avg|max|min|median|std_deviation|stddev|variance|cumulative_sum|running_total)\s*\(/i.test(expr || '');
+        }
+
         function _tsFormulaToSigma(expr, elementByTable) {
             if (!expr) return '';
             let s = expr;
