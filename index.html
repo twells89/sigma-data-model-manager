@@ -15753,6 +15753,16 @@ views:
             (ws.tables || []).forEach(t => {
                 tablesMeta[t.name] = { db: t.db || dbOverride || '', schema: t.schema || schOverride || '', type: t.type || 'TABLE' };
             });
+            // model TML (the exported format) lists tables under model_tables[] (name + fqn)
+            (ws.model_tables || []).forEach(mt => {
+                if (mt && mt.name && !tablesMeta[mt.name]) {
+                    tablesMeta[mt.name] = { db: dbOverride || '', schema: schOverride || '', type: 'TABLE' };
+                }
+            });
+            // Column type/aggregation: worksheet TML puts them on the column (col.type,
+            // col.aggregation); model TML puts them under col.properties.
+            const colType = (c) => (c.type || (c.properties && c.properties.column_type) || '').toUpperCase();
+            const colAgg  = (c) => (c.aggregation || (c.properties && c.properties.aggregation) || 'SUM').toUpperCase();
 
             // table_paths: id is the alias used in column_id (ALIAS::Col)
             const tablePathMap = {}; // alias → tableName
@@ -15805,7 +15815,17 @@ views:
 
             // ── 3. Resolve which table is the "fact" (the one in joins as source, or first)
             // joins[] format: { name, on: "[T1::Col] = [T2::Col]", type, is_one_to_one }
-            const joins = ws.joins || [];
+            // Worksheet TML has a top-level joins[]; model TML (the exported format)
+            // nests them on each table via model_tables[].joins[] = {with, on, type,
+            // cardinality}. The `on` clause is identical, so normalise to one list.
+            let joins = Array.isArray(ws.joins) ? ws.joins : [];
+            if (joins.length === 0 && Array.isArray(ws.model_tables)) {
+                ws.model_tables.forEach(mt => {
+                    (mt.joins || []).forEach(j => {
+                        joins.push({ name: j.name || `${mt.name}_to_${j.with}`, on: j.on, type: j.type });
+                    });
+                });
+            }
 
             // Build element map: tableName → element skeleton
             const allTableNames = Array.from(new Set([
@@ -15834,8 +15854,8 @@ views:
 
                 (colsByTable[tableName] || []).forEach(({ col, physCol }) => {
                     const dispName = col.name || sigmaDisplayName(physCol);
-                    const isMeasure = (col.type || '').toUpperCase() === 'MEASURE';
-                    const isDate    = (col.type || '').toUpperCase() === 'DATE';
+                    const isMeasure = colType(col) === 'MEASURE';
+                    const isDate    = colType(col) === 'DATE';
 
                     let colId, col_obj;
                     if (isDate) {
@@ -15856,7 +15876,7 @@ views:
                     colOrder.push(colId);
 
                     if (isMeasure) {
-                        const agg = (col.aggregation || 'SUM').toUpperCase();
+                        const agg = colAgg(col);
                         const aggMap = {
                             SUM: 'Sum', COUNT: 'Count', COUNT_DISTINCT: 'CountDistinct',
                             AVERAGE: 'Avg', AVG: 'Avg', MAX: 'Max', MIN: 'Min',
@@ -15990,13 +16010,20 @@ views:
             if (!expr) return '';
             let s = expr;
 
+            // Model TML formula refs are [TABLE::COL]; rewrite to bare [Display Name]
+            // so downstream ref handling + element bucketing resolve them. No-op for
+            // worksheet TML (bare identifiers).
+            s = s.replace(/\[([^\]:]+)::([^\]]+)\]/g, (_, _tbl, col) => `[${sigmaDisplayName(col.trim())}]`);
+
             // if (cond) then X else Y  →  If(cond, X, Y)
             s = _tsConvertIfThenElse(s);
 
             // in {val1, val2, …}  →  In([Display Name], v1, v2, …)
-            s = s.replace(/(\w+)\s+in\s*\{([^}]+)\}/gi, (_, col, vals) => {
+            // LHS may be a bracketed display-name ref (from the rewrite above) or bare.
+            s = s.replace(/(\[[^\]]+\]|\w+)\s+in\s*\{([^}]+)\}/gi, (_, col, vals) => {
                 const vlist = vals.split(',').map(v => v.trim()).join(', ');
-                return `In([${sigmaDisplayName(col.trim())}], ${vlist})`;
+                const colRef = col.startsWith('[') ? col : `[${sigmaDisplayName(col.trim())}]`;
+                return `In(${colRef}, ${vlist})`;
             });
 
             // Aggregation functions: sum(col) → Sum([col])
