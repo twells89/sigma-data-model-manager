@@ -3745,7 +3745,8 @@ How it works:
 • shared field names → inferred relationships (Qlik associations)
 • masterMeasures → Sigma metrics with formula conversion
 • masterDimensions → Sigma calculated columns
-• Set analysis, Aggr() → warnings with Sigma guidance"></textarea>
+• simple Set Analysis → Sum(If(...)); Range*/Dual/Class/Count(DISTINCT) translated
+• $(var), Above/Rank/P()/Aggr → dropped with a warning (no broken formulas)"></textarea>
 
                         <div class="dbt-badge-row" id="qlikOutputStats"></div>
 
@@ -15813,6 +15814,25 @@ views:
                 }
             });
 
+            // Auto-include physical columns referenced by a JOIN key or FORMULA but not
+            // explicitly selected — else joins drop ("join key not found") and formulas
+            // referencing an unselected column resolve to `error` in Sigma.
+            (() => {
+                const refRe = /\[([^\]:]+)::([^\]]+)\]/g;
+                const refs = [];
+                const collect = s => { let m; while ((m = refRe.exec(s || ''))) refs.push([m[1], m[2]]); };
+                (ws.joins || []).forEach(j => collect(j.on || ''));
+                (ws.model_tables || []).forEach(mt => (mt.joins || []).forEach(j => collect(j.on || '')));
+                Object.values(formulaMap).forEach(collect);
+                refs.forEach(([alias, physCol]) => {
+                    const tableName = tablePathMap[alias] || alias;
+                    if (!tablesMeta[tableName] && !colsByTable[tableName]) return;
+                    const existing = (colsByTable[tableName] ||= []);
+                    if (!existing.some(e => e.physCol.toUpperCase() === physCol.toUpperCase()))
+                        existing.push({ col: { column_id: `${tableName}::${physCol}`, name: sigmaDisplayName(physCol) }, physCol, tableName });
+                });
+            })();
+
             // ── 3. Resolve which table is the "fact" (the one in joins as source, or first)
             // joins[] format: { name, on: "[T1::Col] = [T2::Col]", type, is_one_to_one }
             // Worksheet TML has a top-level joins[]; model TML (the exported format)
@@ -17516,37 +17536,182 @@ views:
         }
 
         // Translate a Qlik expression to Sigma formula syntax
+        // Split `s` on top-level `sep`, respecting () [] {} and quotes.
+        function _qSplitTop(s, sep) {
+            sep = sep || ',';
+            const out = []; let depth = 0, start = 0, q = '';
+            for (let i = 0; i < s.length; i++) {
+                const c = s[i];
+                if (q) { if (c === q) q = ''; continue; }
+                if (c === '"' || c === "'") { q = c; continue; }
+                else if (c === '(' || c === '[' || c === '{') depth++;
+                else if (c === ')' || c === ']' || c === '}') depth--;
+                else if (c === sep && depth === 0) { out.push(s.slice(start, i)); start = i + 1; }
+            }
+            out.push(s.slice(start));
+            return out.map(x => x.trim());
+        }
+        // Bracket a bare Qlik field token (caller rewrites brackets to display names).
+        function _qMaybeBracket(tok) {
+            const t = (tok || '').trim();
+            if (!t) return t;
+            if (/^\[.*\]$/.test(t)) return t;
+            if (/^-?\d+(\.\d+)?$/.test(t)) return t;
+            if (/^['"].*['"]$/.test(t)) return `"${t.slice(1, -1)}"`;
+            if (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(t)) return `[${t}]`;
+            return t;
+        }
+        // One Qlik set-modifier field clause (FIELD OP {values}) → Sigma condition, or null.
+        function _qSetClauseToCond(clause) {
+            const m = clause.match(/^\s*([A-Za-z_][\w.]*)\s*(-=|\+=|\*=|\/=|=)\s*\{([^}]*)\}\s*$/);
+            if (!m) return null;
+            const field = m[1], op = m[2], valuesRaw = m[3];
+            if (op === '+=' || op === '*=' || op === '/=') return null;
+            if (/[\$]/.test(valuesRaw)) return null;
+            const vals = _qSplitTop(valuesRaw).map(v => v.trim()).filter(Boolean);
+            if (!vals.length) return null;
+            for (const v of vals) if (/[*?<>]/.test(v) && !/^['"]/.test(v)) return null;
+            const eq = op === '-=' ? '<>' : '=';
+            const join = op === '-=' ? ' and ' : ' or ';
+            const parts = vals.map(v => `[${field}]${eq}${_qMaybeBracket(v)}`);
+            return parts.length === 1 ? parts[0] : `(${parts.join(join)})`;
+        }
+        // Simple Qlik Set-Analysis aggregation → Sigma If-wrapped aggregate, or null.
+        function _qTranslateSetAnalysis(f) {
+            const head = f.match(/^(Sum|Count|Avg|Min|Max)\s*\(/i);
+            if (!head) return null;
+            const agg = head[1];
+            let depth = 0, argStart = -1, argEnd = -1;
+            for (let i = head[0].length - 1; i < f.length; i++) {
+                if (f[i] === '(') { if (depth === 0) argStart = i + 1; depth++; }
+                else if (f[i] === ')') { depth--; if (depth === 0) { argEnd = i; break; } }
+            }
+            if (argStart < 0 || argEnd < 0 || f.slice(argEnd + 1).trim()) return null;
+            let inner = f.slice(argStart, argEnd).trim();
+            if (inner[0] !== '{') return null;
+            let bd = 0, setEnd = -1;
+            for (let i = 0; i < inner.length; i++) {
+                if (inner[i] === '{') bd++;
+                else if (inner[i] === '}') { bd--; if (bd === 0) { setEnd = i; break; } }
+            }
+            if (setEnd < 0) return null;
+            const setStr = inner.slice(1, setEnd).trim();
+            let valueStr = inner.slice(setEnd + 1).trim();
+            if (/[\$]/.test(setStr)) return null;
+            let conds = [];
+            let setBody = setStr;
+            const idMatch = setBody.match(/^\s*(1|\$\d*|[A-Za-z_]\w*)\s*(<[\s\S]*>)?\s*$/);
+            if (idMatch && idMatch[1] !== '1' && !setBody.startsWith('<')) return null;
+            setBody = setBody.replace(/^\s*1\s*/, '');
+            if (setBody) {
+                const fm = setBody.match(/^<([\s\S]*)>$/);
+                if (!fm) return null;
+                for (const clause of _qSplitTop(fm[1])) {
+                    if (!clause.trim()) continue;
+                    const c = _qSetClauseToCond(clause);
+                    if (!c) return null;
+                    conds.push(c);
+                }
+            }
+            const cond = conds.join(' and ');
+            let distinct = false;
+            const dm = valueStr.match(/^DISTINCT\s+([\s\S]*)$/i);
+            if (dm) { distinct = true; valueStr = dm[1].trim(); }
+            const value = _qMaybeBracket(valueStr);
+            if (/^Count$/i.test(agg)) {
+                const wrapped = cond ? `If(${cond}, ${value})` : value;
+                return distinct ? `CountDistinct(${wrapped})` : `Count(${wrapped})`;
+            }
+            return cond ? `${agg}(If(${cond}, ${value}))` : `${agg}(${value})`;
+        }
+        // Row-wise (multi-arg) Range* → Sigma arithmetic, or null for inter-record form.
+        function _qTranslateRange(f) {
+            const m = f.match(/^Range(Sum|Avg|Max|Min)\s*\(/i);
+            if (!m) return null;
+            const fn = m[1];
+            let depth = 0, start = -1, end = -1;
+            for (let i = m[0].length - 1; i < f.length; i++) {
+                if (f[i] === '(') { if (depth === 0) start = i + 1; depth++; }
+                else if (f[i] === ')') { depth--; if (depth === 0) { end = i; break; } }
+            }
+            if (start < 0 || end < 0 || f.slice(end + 1).trim()) return null;
+            const args = _qSplitTop(f.slice(start, end));
+            if (args.length < 2) return null;
+            const wrapped = args.map(a => `(${a.trim()})`);
+            if (/^Sum$/i.test(fn)) return wrapped.join(' + ');
+            if (/^Avg$/i.test(fn)) return `(${wrapped.join(' + ')}) / ${args.length}`;
+            if (/^Max$/i.test(fn)) return `Greatest(${args.map(a => a.trim()).join(', ')})`;
+            if (/^Min$/i.test(fn)) return `Least(${args.map(a => a.trim()).join(', ')})`;
+            return null;
+        }
+
         function qlikExprToSigma(expr, warnings, name) {
             if (!expr || !expr.trim()) return null;
             let f = expr.trim();
             // Strip leading = sign (common in Qlik dimension definitions)
             if (f.startsWith('=')) f = f.slice(1).trim();
 
-            // ── Patterns that cannot be converted → warn and skip ──────────
-            if (/\{\s*[\$1][^}]*\}/.test(f)) {
-                if (warnings) warnings.push(`⚠ "${name}": uses Qlik Set Analysis. In Sigma, use SumIf/CountIf with a condition argument instead.`);
+            // ── Variable expansion $(...) — unresolvable; POST-blocks the DM → drop ──
+            if (/\$\s*\(/.test(f)) {
+                if (warnings) warnings.push(`⚠ "${name}": uses a Qlik variable/dollar-expansion $(...) — cannot resolve; measure dropped. Define it explicitly in Sigma.`);
                 return null;
             }
-            if (/\bAggr\s*\(/i.test(f)) {
-                if (warnings) warnings.push(`⚠ "${name}": uses Aggr() — no direct Sigma equivalent. Use grouped metrics or groupings in Sigma instead.`);
+            // ── Inter-record / chart-position / selection-state / ranking → drop+warn ──
+            const UNSUPPORTED = [
+                [/\b(Above|Below|Before|After|Top|Bottom)\s*\(/i, 'an inter-record/chart function (Above/Below/…)'],
+                [/\b(Peek|Previous|Exists|FieldValue|FieldIndex|LookUp)\s*\(/i, 'a script/inter-record lookup function'],
+                [/\b(RowNo|RecNo|NoOfRows|NoOfColumns|FirstSortedValue)\s*\(/i, 'a row-position/sorted-value function'],
+                [/\b(Rank|HRank|VRank)\s*\(/i, 'Rank() (Sigma Rank is a window function with different semantics)'],
+                [/\bAggr\s*\(/i, 'Aggr() — build a grouped/level data-model element instead'],
+                [/(?<![A-Za-z_])[PE]\s*\(/, 'a set-element function P()/E()'],
+                [/\bGet(?:Field)?(?:Selections?|CurrentSelections?|PossibleCount|SelectedCount|AlternativeCount|ExcludedCount)\s*\(/i, 'a selection-state function'],
+            ];
+            for (const [re, label] of UNSUPPORTED) {
+                if (re.test(f)) {
+                    if (warnings) warnings.push(`⚠ "${name}": uses ${label} — no direct Sigma equivalent; measure dropped (see gap-scout).`);
+                    return null;
+                }
+            }
+            // ── Set Analysis: translate simple forms; drop the rest ──
+            if (/\{[\s\S]*\}/.test(f)) {
+                const t = _qTranslateSetAnalysis(f);
+                if (t) { f = t; }
+                else {
+                    if (warnings) warnings.push(`⚠ "${name}": uses Qlik Set Analysis Sigma can't auto-translate (search/$()/set operators) — measure dropped. Use SumIf/CountIf manually.`);
+                    return null;
+                }
+            }
+            // ── Row-wise Range* (multiple args) → arithmetic / Greatest / Least ──
+            if (/^Range(?:Sum|Avg|Max|Min)\s*\(/i.test(f)) {
+                const t = _qTranslateRange(f);
+                if (t) { f = t; }
+                else {
+                    if (warnings) warnings.push(`⚠ "${name}": uses an inter-record Range* aggregation (e.g. running total) — no direct Sigma equivalent; measure dropped.`);
+                    return null;
+                }
+            } else if (/\bRange(?:Count|Stdev|Mode|Skew|Kurtosis|Correl|Fractile)\s*\(/i.test(f)) {
+                if (warnings) warnings.push(`⚠ "${name}": uses a Qlik Range aggregation function — no direct Sigma equivalent; measure dropped.`);
                 return null;
             }
-            if (/\bDual\s*\(/i.test(f)) {
-                if (warnings) warnings.push(`⚠ "${name}": uses Dual() — Qlik-specific function. Simplify to a text or numeric expression in Sigma.`);
-                return null;
+            // ── Dual(text, num) → keep numeric (2nd) argument ──
+            f = f.replace(/\bDual\s*\(/gi, 'DUAL(');
+            while (/DUAL\(/.test(f)) {
+                const i = f.indexOf('DUAL(');
+                const open = i + 4;
+                let depth = 0, end = -1;
+                for (let j = open; j < f.length; j++) { if (f[j] === '(') depth++; else if (f[j] === ')') { depth--; if (depth === 0) { end = j; break; } } }
+                if (end < 0) { f = f.replace(/DUAL\(/g, 'Dual('); break; }
+                const inner = f.slice(open + 1, end);
+                const parts = _qSplitTop(inner);
+                const numArg = parts.length >= 2 ? parts[parts.length - 1] : inner;
+                if (warnings) warnings.push(`⚠ "${name}": Dual() reduced to its numeric argument; the text label was dropped.`);
+                f = f.slice(0, i) + numArg + f.slice(end + 1);
             }
-            if (/\bGet(?:Field)?(?:Selections?|CurrentSelections?|PossibleCount|SelectedCount|AlternativeCount|ExcludedCount)\s*\(/i.test(f)) {
-                if (warnings) warnings.push(`⚠ "${name}": uses a Qlik selection-state function. These have no Sigma equivalent.`);
-                return null;
-            }
-            if (/\bClass\s*\(/i.test(f)) {
-                if (warnings) warnings.push(`⚠ "${name}": uses Class() (Qlik data binning). In Sigma, use If() ranges for bucketing.`);
-                return null;
-            }
-            if (/\bRange(?:Sum|Avg|Min|Max|Count|Stdev|Mode|Skew|Kurtosis|Correl|Fractile)\s*\(/i.test(f)) {
-                if (warnings) warnings.push(`⚠ "${name}": uses a Qlik Range aggregation function. No direct Sigma equivalent.`);
-                return null;
-            }
+            // ── Class(field, n) binning → Floor(field / n) * n (lower bin edge) ──
+            f = f.replace(/\bClass\s*\(\s*([^,()]+?)\s*,\s*([^,()]+?)\s*(?:,[^()]*)?\)/gi,
+                (m, field, size) => `Floor(${_qMaybeBracket(field)} / ${size.trim()}) * ${size.trim()}`);
+            // ── Count(DISTINCT x) → CountDistinct(x) ──
+            f = f.replace(/\bCount\s*\(\s*DISTINCT\s+([\s\S]+?)\s*\)/gi, 'CountDistinct($1)');
 
             // ── Aggregation tweaks ──────────────────────────────────────────
             // Only([Field]) → [Field]  (single-value selector)
@@ -17809,6 +17974,24 @@ views:
                 const measuresByElement = {};
                 elements.forEach(e => { measuresByElement[e.id] = []; });
 
+                // Field name (UPPER) → owning element ids (place measures on the element
+                // that actually owns the referenced fields; matters for multi-fact models).
+                const fieldToEl = {};
+                for (const info of Object.values(tableElementMap)) {
+                    for (const fn of Object.keys(info.colMap)) {
+                        for (const key of [fn.toUpperCase(), info.colMap[fn].displayName.toUpperCase()]) {
+                            (fieldToEl[key] = fieldToEl[key] || new Set()).add(info.elementId);
+                        }
+                    }
+                }
+                // Fact-like elements = relationship targets (dims point at facts).
+                const factLike = new Set();
+                for (const el of elements) for (const rel of (el.relationships || [])) {
+                    if (rel.targetElementId) factLike.add(rel.targetElementId);
+                }
+                const rowCountByEl = {};
+                for (const info of Object.values(tableElementMap)) rowCountByEl[info.elementId] = info.rowCount || 0;
+
                 for (const m of masterMeasures) {
                     const title   = m.title || m.qTitle || 'Metric';
                     const exprRaw = m.expr  || m.qDef   || m.expression || '';
@@ -17823,17 +18006,21 @@ views:
                         qlikColToDisplayName[colName] ? `[${qlikColToDisplayName[colName]}]` : m
                     );
 
-                    // Attach to the element whose fields appear in the expression
+                    // Score each element by referenced fields (bare + bracketed); pick the
+                    // best, tie-breaking toward the fact (relationship target) then row count.
+                    const tokens = new Set();
+                    for (const t of (exprRaw.match(/[A-Za-z_][A-Za-z0-9_]*/g) || [])) tokens.add(t.toUpperCase());
+                    for (const t of (sigmaFormula.match(/\[([^\]\/]+)\]/g) || [])) tokens.add(t.slice(1, -1).toUpperCase());
+                    const hits = {};
+                    for (const tok of tokens) for (const id of (fieldToEl[tok] || [])) hits[id] = (hits[id] || 0) + 1;
                     let bestElementId = elements[0]?.id;
-                    outer:
-                    for (const [tName, info] of Object.entries(tableElementMap)) {
-                        for (const fn of Object.keys(info.colMap)) {
-                            const dn = info.colMap[fn].displayName;
-                            if (sigmaFormula.includes(`[${dn}]`) || sigmaFormula.includes(`[${fn}]`)) {
-                                bestElementId = info.elementId;
-                                break outer;
-                            }
-                        }
+                    const ranked = Object.keys(hits).sort((a, b) =>
+                        (hits[b] - hits[a]) ||
+                        ((factLike.has(b) ? 1 : 0) - (factLike.has(a) ? 1 : 0)) ||
+                        ((rowCountByEl[b] || 0) - (rowCountByEl[a] || 0)));
+                    if (ranked.length) bestElementId = ranked[0];
+                    if (ranked.length > 1) {
+                        warnings.push(`ℹ "${title}": references fields from ${ranked.length} elements — placed on the most-referenced one. If it errors as cross-element, host it on the denormalized element instead.`);
                     }
 
                     if (!measuresByElement[bestElementId]) measuresByElement[bestElementId] = [];
@@ -17856,7 +18043,7 @@ views:
 
                     // Skip plain field references (non-calculated)
                     const isCalc = exprRaw.trim().startsWith('=') ||
-                        /\b(If|Sum|Count|Avg|Concat|Year|Month|Day|Left|Right|Upper|Lower|Trim)\s*\(/i.test(exprRaw);
+                        /\b(If|Sum|Count|Avg|Concat|Year|Month|Day|Left|Right|Upper|Lower|Trim|Class|Dual|Floor|Ceil|Round|Pick|Match)\s*\(/i.test(exprRaw);
                     if (!isCalc) continue;
 
                     let sigmaFormula = qlikExprToSigma(exprRaw, warnings, title);
@@ -28371,18 +28558,23 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <li>String: <code>Upper()</code>, <code>Lower()</code>, <code>Trim()</code>, <code>Left()</code>, <code>Right()</code>, <code>Len()</code>, <code>Replace()</code>, <code>Concat()</code>, <code>Mid()</code> → same</li>
     <li>Date/time: <code>Year()</code>, <code>Month()</code>, <code>Day()</code>, <code>Quarter()</code>, <code>Week()</code>, <code>Hour()</code>, <code>Minute()</code>, <code>Second()</code>, <code>Today()</code>, <code>Now()</code> → same</li>
     <li>Single-quoted strings → double-quoted strings</li>
+    <li><b>Set Analysis (simple)</b> — <code>Sum({&lt;Year={2024}&gt;} [Sales])</code> → <code>Sum(If([Year]=2024, [Sales]))</code>; <code>{1}</code> (ignore selections) → plain aggregate; <code>{&lt;F-={v}&gt;}</code> → <code>&lt;&gt;</code>; multi-value <code>{a,b}</code> → <code>or</code>-chain; <code>Count({&lt;…&gt;} DISTINCT X)</code> → <code>CountDistinct(If(…, [X]))</code></li>
+    <li><b>Range* (multi-arg)</b> — <code>RangeSum(a,b)</code> → <code>(a)+(b)</code>; <code>RangeMax</code> → <code>Greatest</code>; <code>RangeMin</code> → <code>Least</code>; <code>RangeAvg</code> → <code>(a+b)/n</code></li>
+    <li><b>Dual(text, num)</b> → numeric argument; <b>Class(x, n)</b> → <code>Floor([x]/n)*n</code>; <b>Count(DISTINCT x)</b> → <code>CountDistinct(x)</code></li>
 </ul>
 
-<h3>Patterns That Generate Warnings</h3>
+<h3>Patterns That Are Dropped With a Warning</h3>
+<p>These have no scalar Sigma equivalent, so the measure is dropped (not emitted broken). Re-create them in the workbook (window functions, controls) or via SumIf/CountIf by hand.</p>
 <ul>
-    <li><b>Set Analysis</b> — <code>Sum({$&lt;Year={2024}&gt;} [Sales])</code>: Use <code>SumIf([Sales], [Year] = 2024)</code> in Sigma</li>
-    <li><b>Aggr()</b> — Use grouped metrics or groupings in Sigma instead</li>
-    <li><b>Dual()</b> — Qlik-specific; simplify to text or numeric in Sigma</li>
-    <li><b>Class()</b> — Qlik data binning; use <code>If()</code> ranges in Sigma</li>
-    <li><b>Selection-state functions</b> — <code>GetFieldSelections()</code>, <code>GetCurrentSelections()</code> etc. have no Sigma equivalent</li>
-    <li><b>Range functions</b> — <code>RangeSum()</code>, <code>RangeAvg()</code> etc. have no Sigma equivalent</li>
-    <li><b>YearToDate()</b> — Approximated as <code>Year([Field]) = Year(Today())</code></li>
+    <li><b>Variable expansion <code>$(var)</code></b> — cannot resolve; emitting it verbatim would reject the whole data-model POST. Define the value explicitly in Sigma.</li>
+    <li><b>Inter-record functions</b> — <code>Above()</code>, <code>Below()</code>, <code>Peek()</code>, <code>Previous()</code>, <code>RowNo()</code> (running totals / MoM): rebuild as a Sigma window function on a date-grouped element.</li>
+    <li><b>Ranking</b> — <code>Rank()</code>, <code>HRank()</code>: Sigma <code>Rank</code> is a window function with different semantics; build it in a grouping table.</li>
+    <li><b>Aggr()</b> — nested aggregate; build a grouped/level data-model element instead.</li>
+    <li><b>Set-element / selection-state</b> — <code>P()</code>, <code>E()</code>, <code>GetFieldSelections()</code>, <code>GetCurrentSelections()</code> have no Sigma equivalent.</li>
+    <li><b>Exotic Set Analysis</b> — search strings (<code>"*x*"</code>), <code>$()</code> in the set, set operators (<code>+ - *</code>): translate by hand.</li>
+    <li><b>YearToDate()</b> — Approximated as <code>Year([Field]) = Year(Today())</code>.</li>
 </ul>
+<p><b>Cross-element note:</b> a translated measure whose condition field lives on a dimension (e.g. <code>Sum(If([Is Holiday]=1, [Net Revenue]))</code>) is placed on the fact element and flagged with an <code>ℹ references fields from N elements</code> warning — host it on a denormalized element so it doesn't error as a cross-element reference.</p>
 
 <h3>Known Limitations</h3>
 <ul>
