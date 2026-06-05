@@ -376,6 +376,8 @@ qlik app data metadata get --app-id <appId> > metadata.json
 
 **QVD file support:** drop one or more `.qvd` files (QlikView / Qlik Sense data extracts). The converter reads the XML header (table name, fields, types, distinct counts) and skips the binary data — Sigma re-pulls from the warehouse on save. Shared field names across multiple QVDs auto-create relationships. Note: QVDs don't contain the load script, so set the Database/Schema overrides for the warehouse path; master measures/dimensions aren't stored in QVDs (use the REST API path for those).
 
+**QlikView `.qvw` support (legacy desktop, via `-prj` folder):** `.qvw` binaries can't be parsed, but QlikView Desktop can export a `<name>-prj/` project folder ("Create project folder"). Drop that folder's files — `LoadScript.txt` (tables/fields incl. `AS` renames) + `CH*.xml` chart objects (expression measures). Set the Database/Schema overrides. Relationships are inferred from shared field names only (a `-prj` folder carries no row counts) — review join directions. (MCP: `convert_qlikview_prj_to_sigma`.)
+
 To include master measures and master dimensions, use the extended format:
 ```json
 {
