@@ -25292,6 +25292,67 @@ ${cleanedSql}`;
             }
         }
 
+        // Inline a DAX VAR...RETURN block into a single expression (see MCP).
+        function pbiRewriteVarReturn(f) {
+            if (!/^\s*VAR\b/i.test(f) || !/\bRETURN\b/i.test(f)) return f;
+            const marks = [];
+            let depth = 0, inStr = null;
+            for (let i = 0; i < f.length; i++) {
+                const ch = f[i];
+                if (inStr) { if (ch === inStr) inStr = null; continue; }
+                if (ch === '"' || ch === "'") { inStr = ch; continue; }
+                if (ch === '(' || ch === '[') depth++;
+                else if (ch === ')' || ch === ']') depth--;
+                else if (depth === 0) {
+                    const m = f.slice(i).match(/^(VAR|RETURN)\b/i);
+                    if (m) { marks.push({ kw: m[1].toUpperCase(), pos: i, end: i + m[1].length }); i += m[1].length - 1; }
+                }
+            }
+            const ret = marks.find(m => m.kw === 'RETURN');
+            if (!ret || marks[0].kw !== 'VAR') return f;
+            const vars = [];
+            for (let k = 0; k < marks.length; k++) {
+                if (marks[k].kw !== 'VAR') continue;
+                const segEnd = (k + 1 < marks.length) ? marks[k + 1].pos : f.length;
+                const body = f.slice(marks[k].end, segEnd);
+                const eq = body.indexOf('=');
+                if (eq < 0) return f;
+                const name = body.slice(0, eq).trim();
+                let expr = body.slice(eq + 1).trim();
+                if (!/^[A-Za-z_]\w*$/.test(name)) return f;
+                for (const v of vars) expr = expr.replace(new RegExp(`\\b${v.name}\\b`, 'g'), `(${v.expr})`);
+                vars.push({ name, expr });
+            }
+            let out = f.slice(ret.end).trim();
+            for (const v of [...vars].sort((a, b) => b.name.length - a.name.length))
+                out = out.replace(new RegExp(`\\b${v.name}\\b`, 'g'), `(${v.expr})`);
+            if (/\bVAR\b|\bRETURN\b/i.test(out)) return f;
+            return out;
+        }
+
+        // SUMX/AVERAGEX/MINX/MAXX(bareTable, rowExpr) -> Sum/Avg/Min/Max(rowExpr) (see MCP).
+        function pbiRewriteSimpleIterator(f) {
+            const ITER = { SUMX: 'Sum', AVERAGEX: 'Avg', MINX: 'Min', MAXX: 'Max' };
+            const re = /\b(SUMX|AVERAGEX|MINX|MAXX)\s*\(/gi;
+            for (let guard = 0; guard < 50; guard++) {
+                re.lastIndex = 0;
+                const m = re.exec(f);
+                if (!m) break;
+                const fn = m[1].toUpperCase();
+                const { args, endPos } = pbiSplitCallArgs(f, m.index + m[0].length);
+                if (args.length !== 2) break;
+                const tbl = args[0].trim(), body = args[1].trim();
+                const bareTable = /^'[^']+'$/.test(tbl) || /^[A-Za-z_]\w*$/.test(tbl);
+                const bodyHasAgg = /\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTROWS|DISTINCTCOUNT|CALCULATE|SUMX|AVERAGEX|MINX|MAXX|COUNTAX|RANKX)\s*\(/i.test(body);
+                if (!bareTable || bodyHasAgg) break;
+                const bareBody = body
+                    .replace(/'[^']+'\[([^\]]+)\]/g, '[$1]')
+                    .replace(/\b[A-Za-z_]\w*\[([^\]]+)\]/g, '[$1]');
+                f = f.slice(0, m.index) + `${ITER[fn]}(${bareBody})` + f.slice(endPos);
+            }
+            return f;
+        }
+
         function pbiDaxToSigma(dax, warnings, measureName) {
             // BIM/TMSL serializes multi-line DAX expressions as a string[] (one entry per line)
             if (Array.isArray(dax)) dax = dax.join('\n');
@@ -25308,6 +25369,8 @@ ${cleanedSql}`;
             f = pbiRewriteSingleValue(f);
             f = pbiRewriteSwitchTrue(f);
             f = pbiRewriteCountRowsFilter(f);   // COUNTROWS/COUNT(FILTER) -> CountIf (r9oz)
+            f = pbiRewriteVarReturn(f);         // VAR x=.. RETURN f(x) -> inlined
+            f = pbiRewriteSimpleIterator(f);    // SUMX/AVERAGEX/MINX/MAXX(bareTable,rowExpr) -> agg(rowExpr)
             f = f.replace(/\bDISTINCTCOUNTNOBLANK\s*\(/gi, 'CountDistinct(');
 
             // ── Tier 4: Structural patterns → warnings only ──────────────────
