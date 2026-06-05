@@ -120,7 +120,7 @@ Converts LookML projects (multiple `.lkml` files) to Sigma data model JSON. Drop
 - Tier dimensions → Bucketed `If()` calculated columns (e.g. "0 to 99", "100 to 499")
 - Yesno dimensions → Boolean calculated columns with "(T/F)" suffix
 - Measures → Sigma metrics (`sum`, `count`, `count_distinct`, `average`, `min`, `max`, `median`)
-- Explore joins → Sigma relationships + a derived explore element surfacing all base-view and joined-view fields together
+- Explore joins → Sigma relationships + a derived explore element surfacing base-view and directly-joined-view fields together; snowflake joins (FK on another joined view) wire to the correct intermediate element and are reachable via the relationship graph
 - All Explores mode → Batch-converts all explores into one combined data model; shared views are deduplicated
 - Dimension groups (type:time) → One column per timeframe (DateTrunc / DatePart), grouped into a folder
 - Dimension groups (type:duration) → `DateDiff()` columns per interval (day, week, month, etc.), grouped into a folder
@@ -149,6 +149,7 @@ Converts LookML projects (multiple `.lkml` files) to Sigma data model JSON. Drop
 - Fiscal timeframes — Skipped with a warning (require `fiscal_month_offset` from model-level config)
 - Access filters — `access_filter` blocks converted to Sigma RLS using `CurrentUserAttributeText()`; `access_grant` blocks not converted
 - Trailing comma before SQL keywords, incremental PDT leading-comma CTEs, Snowflake `::TYPE` cast shorthand — All automatically corrected with warnings
+- Snowflake (multi-hop) joins — Wired correctly to the intermediate element, but second-hop columns are not surfaced in the single flat derived explore element (reach them via the relationship graph or that element's own derived view)
 
 **Useful resources:** [Groupings & Aggregate Calculations](https://help.sigmacomputing.com) · [Running Total / CumulativeSum](https://help.sigmacomputing.com)
 
