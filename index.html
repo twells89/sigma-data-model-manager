@@ -25353,6 +25353,27 @@ ${cleanedSql}`;
             return f;
         }
 
+        // CALCULATE(<agg>, ALL/REMOVEFILTERS(<wholeTable>)) -> GrandTotal(<agg>)
+        // (see MCP). Powers %-of-total: DIVIDE([m], CALCULATE([m], ALL(T))) ->
+        // [m] / GrandTotal([m]). Whole-table only (no [col]); CALCULATE 2-arg only.
+        function pbiRewriteCalcGrandTotal(f) {
+            const re = /\bCALCULATE\s*\(/gi;
+            for (let guard = 0; guard < 50; guard++) {
+                re.lastIndex = 0;
+                let replaced = false, m;
+                while ((m = re.exec(f)) !== null) {
+                    const { args, endPos } = pbiSplitCallArgs(f, m.index + m[0].length);
+                    if (args.length !== 2) continue;
+                    if (!/^(ALL|REMOVEFILTERS)\s*\(\s*'?[A-Za-z_][\w ]*'?\s*\)$/i.test(args[1].trim())) continue;
+                    f = f.slice(0, m.index) + `GrandTotal(${args[0].trim()})` + f.slice(endPos);
+                    replaced = true;
+                    break;
+                }
+                if (!replaced) break;
+            }
+            return f;
+        }
+
         function pbiDaxToSigma(dax, warnings, measureName) {
             // BIM/TMSL serializes multi-line DAX expressions as a string[] (one entry per line)
             if (Array.isArray(dax)) dax = dax.join('\n');
@@ -25371,6 +25392,7 @@ ${cleanedSql}`;
             f = pbiRewriteCountRowsFilter(f);   // COUNTROWS/COUNT(FILTER) -> CountIf (r9oz)
             f = pbiRewriteVarReturn(f);         // VAR x=.. RETURN f(x) -> inlined
             f = pbiRewriteSimpleIterator(f);    // SUMX/AVERAGEX/MINX/MAXX(bareTable,rowExpr) -> agg(rowExpr)
+            f = pbiRewriteCalcGrandTotal(f);    // CALCULATE(<agg>, ALL(<wholeTable>)) -> GrandTotal(<agg>)
             f = f.replace(/\bDISTINCTCOUNTNOBLANK\s*\(/gi, 'CountDistinct(');
 
             // ── Tier 4: Structural patterns → warnings only ──────────────────
