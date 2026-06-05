@@ -21127,6 +21127,7 @@ ${cleanedSql}`;
             // duplicate-source-column relationships on the same physical element.
             const baseEl = elementMap[baseAlias].element;
             const usedTargetCols = new Set(); // "targetElementId|targetColId" combos already wired
+            const directRelAliases = new Set(); // joins whose relationship lands on the base element
 
             relJoins.forEach(j => {
                 const targetRes = elementMap[j.alias];
@@ -21134,12 +21135,35 @@ ${cleanedSql}`;
                     warnings.push(`⚠ Join "${j.alias}": view "${j.viewName}" not found in uploaded files`);
                     return;
                 }
+                const isTargetView = (name) => name === j.alias || name === j.viewName;
 
                 j.keys.forEach(k => {
-                    const isTarget = (name) => name === j.alias || name === j.viewName;
-                    const srcColId = lookFindColId(elementMap[baseAlias], isBaseView(k.leftView) ? k.leftCol : k.rightCol);
-                    const tgtColId = lookFindColId(targetRes, isTarget(k.leftView) ? k.leftCol : k.rightCol);
+                    // A join's sql_on names the joined ("target") view on one side and
+                    // the FK-owning ("source") view on the other. The source is NOT
+                    // always the base view: in a snowflake schema the FK can live on
+                    // another joined view (e.g. ${inventory_items.product_id} =
+                    // ${products.id} hangs products off the inventory_items element).
+                    let srcView, srcCol, tgtCol;
+                    if (isTargetView(k.rightView)) {
+                        srcView = k.leftView; srcCol = k.leftCol; tgtCol = k.rightCol;
+                    } else if (isTargetView(k.leftView)) {
+                        srcView = k.rightView; srcCol = k.rightCol; tgtCol = k.leftCol;
+                    } else {
+                        warnings.push(`⚠ Relationship "${j.alias}": sql_on does not reference the joined view directly — wired from the base element; verify keys in Sigma.`);
+                        const baseIsLeft = isBaseView(k.leftView);
+                        srcView = baseAlias;
+                        srcCol = baseIsLeft ? k.leftCol : k.rightCol;
+                        tgtCol = baseIsLeft ? k.rightCol : k.leftCol;
+                    }
 
+                    const srcRes = elementMap[srcView];
+                    if (!srcRes) {
+                        warnings.push(`⚠ Relationship "${j.alias}": source view "${srcView}" not found in the explore — skipped`);
+                        return;
+                    }
+
+                    const srcColId = lookFindColId(srcRes, srcCol);
+                    const tgtColId = lookFindColId(targetRes, tgtCol);
                     if (!srcColId || !tgtColId) {
                         warnings.push(`⚠ Relationship "${j.alias}": could not resolve column IDs for keys (${k.leftCol} / ${k.rightCol}) — ensure FK columns are defined as dimensions in the view files`);
                         return;
@@ -21153,8 +21177,11 @@ ${cleanedSql}`;
                     }
                     usedTargetCols.add(pairKey);
 
-                    if (!baseEl.relationships) baseEl.relationships = [];
-                    baseEl.relationships.push({
+                    if (isBaseView(srcView)) directRelAliases.add(j.alias);
+
+                    const srcEl = srcRes.element;
+                    if (!srcEl.relationships) srcEl.relationships = [];
+                    srcEl.relationships.push({
                         id: sigmaShortId(),
                         targetElementId: targetRes.elementId,
                         keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
@@ -21234,10 +21261,20 @@ ${cleanedSql}`;
                     lkViewOrder.push(cId);
                 });
 
-                // Joined element columns via [BASE/alias/Col] cross-element refs
+                // Joined element columns via [BASE/alias/Col] cross-element refs.
+                // Only DIRECT base relationships can be referenced single-hop from
+                // the base. Snowflake joins (FK on another joined view) live off an
+                // intermediate element; their columns are reachable via the
+                // relationship graph / that element's derived view, not this flat
+                // element. (Sigma multi-hop [BASE/mid/leaf/Col] refs are not relied
+                // on — see feedback_sigma_cross_element_ref_form.)
                 relJoins.forEach(j => {
                     const targetRes = elementMap[j.alias];
                     if (!targetRes || targetRes.element.source?.kind !== 'warehouse-table') return;
+                    if (!directRelAliases.has(j.alias)) {
+                        warnings.push(`ℹ Snowflake join "${j.alias}" is not directly related to the base view — its columns are reachable via the relationship graph (or the "${j.viewName}" element's derived view), not the flat explore element.`);
+                        return;
+                    }
                     targetRes.element.columns.forEach(col => {
                         if (!col.formula || col.formula.startsWith('/*')) return;
                         const dispName = _lkDispName(col.formula);
@@ -22009,6 +22046,10 @@ ${cleanedSql}`;
             //   ${brand}              → [Brand]
             const yesnoExprMap   = new Map();
             const fieldDisplayMap = new Map();
+            // dimension name (lowercase) → physical column (UPPER). Resolves
+            // intra-view ${dimension} refs inside measure sql (e.g. measure
+            // total_revenue { sql: ${sale_price} } → SALE_PRICE).
+            const dimPhysColMap = new Map();
             {
                 const allDims = view.dimension ? (Array.isArray(view.dimension) ? view.dimension : [view.dimension]) : [];
                 allDims.forEach(yd => {
@@ -22035,6 +22076,7 @@ ${cleanedSql}`;
                             const stripped = lookStripSql(yd.sql) || yd._name;
                             const physCol = stripped.split('.').pop().replace(/"/g, '').toUpperCase();
                             displayName = sigmaDisplayName(physCol);
+                            dimPhysColMap.set(lname, physCol);
                         } else {
                             displayName = yd.label || sigmaDisplayName(yd._name);
                         }
@@ -22530,7 +22572,15 @@ ${cleanedSql}`;
                     }
                 }
 
-                const sqlCol = lookStripSql(ms.sql) || msName;
+                // Resolve intra-view ${dimension} references to the physical column
+                // before deriving it (e.g. ${sale_price} → SALE_PRICE). Without this,
+                // bare ${field} tokens leak into formulas and fabricate phantom ${...}
+                // columns. (${TABLE}.col and ${view.field} are handled by lookStripSql.)
+                const resolvedSimpleSql = (ms.sql || '').replace(
+                    /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g,
+                    (match, refName) => dimPhysColMap.get(refName.toLowerCase()) ?? match
+                );
+                const sqlCol = lookStripSql(resolvedSimpleSql) || msName;
                 const physicalCol = sqlCol.split('.').pop().toUpperCase() || msName;
 
                 // ── running_total / percent_of_total → calculated columns (window functions)
@@ -27756,7 +27806,7 @@ models:
     <li><b>Tier dimensions</b> → Bucketed <code>If()</code> calculated columns (e.g. "0 to 99", "100 to 499", "500 or Above")</li>
     <li><b>Yesno dimensions</b> → Boolean calculated columns with "(T/F)" suffix</li>
     <li><b>Measures</b> → Sigma metrics (sum, count, count_distinct, average, min, max, median)</li>
-    <li><b>Explore joins</b> → Sigma relationships plus a <b>derived explore element</b> that surfaces all base-view and joined-view fields together. Joined-view fields appear as <code>[BASE_TABLE/join_alias/Col]</code> cross-element formulas, so the full explore is browsable in one flat element without navigating relationships manually. Use <b>Convert Explore</b> for a single explore or <b>All Explores</b> to batch-convert all explores at once into one combined data model — shared views (e.g. <code>date_dim</code>, <code>store_dim</code>) are deduplicated into a single element with relationships wired from each fact table. One-to-many and many-to-many joins are skipped in batch mode (use single-explore mode for those). The derived explore element is only created for warehouse-table base views; SQL-based (derived-table) base views are already flat Custom SQL elements.</li>
+    <li><b>Explore joins</b> → Sigma relationships plus a <b>derived explore element</b> that surfaces all base-view and joined-view fields together. Joined-view fields appear as <code>[BASE_TABLE/join_alias/Col]</code> cross-element formulas, so the full explore is browsable in one flat element without navigating relationships manually. Use <b>Convert Explore</b> for a single explore or <b>All Explores</b> to batch-convert all explores at once into one combined data model — shared views (e.g. <code>date_dim</code>, <code>store_dim</code>) are deduplicated into a single element with relationships wired from each fact table. One-to-many and many-to-many joins are skipped in batch mode (use single-explore mode for those). The derived explore element is only created for warehouse-table base views; SQL-based (derived-table) base views are already flat Custom SQL elements. <b>Snowflake joins</b> — where a join's foreign key lives on another joined view rather than the base (e.g. <code>\${inventory_items.product_id} = \${products.id}</code>) — are wired to the correct intermediate element; their columns are reachable via the relationship graph (or that element's own derived view), not the single flat explore element.</li>
     <li><b>Dimension groups (type:time)</b> → Expanded into individual columns per timeframe (DateTrunc / DatePart), all grouped into a folder named after the group. Supported standard timeframes: raw, date, week, month, quarter, year, hour, minute, day_of_week, day_of_month, week_of_year, month_num, quarter_of_year, hour_of_day. Binned timeframes (e.g. <code>minute15</code>, <code>hour4</code>) use <code>DateAdd + Floor</code> arithmetic. Fiscal timeframes (<code>fiscal_year</code>, <code>fiscal_quarter_of_year</code>, etc.) are skipped with a warning — they require <code>fiscal_month_offset</code> from the model-level config, which is not available in view files.</li>
     <li><b>Dimension groups (type:duration)</b> → <code>DateDiff()</code> columns per interval (day, week, month, quarter, year, hour, minute, second), grouped into a folder named after the group</li>
     <li><b>datatype: epoch</b> → <code>DateFromUnix()</code> wrapper applied automatically to all timeframe and duration formulas</li>
@@ -27796,6 +27846,7 @@ models:
     <li><b>Trailing comma before SQL keywords in derived table SQL</b> — Some LookML derived tables leave a trailing comma at the end of a <code>SELECT</code> list (e.g. <code>expr AS col,\nFROM final</code>). This is tolerated by Looker's templating engine but is invalid standalone SQL that causes a Snowflake compilation error. The converter automatically strips these trailing commas before <code>FROM</code>, <code>WHERE</code>, <code>GROUP BY</code>, <code>ORDER BY</code>, <code>HAVING</code>, <code>LIMIT</code>, and set operators. A warning is shown when this correction is applied.</li>
     <li><b>include: directives</b> — LookML <code>include:</code> statements are parsed and listed in the warnings panel. Cross-file view resolution is based only on the files you upload — if a view referenced by an <code>include:</code> path is not uploaded, its joins will be silently skipped. Glob patterns (e.g. <code>/views/*</code>) are not expanded.</li>
     <li><b>PDT materialization hints</b> — Warehouse-specific PDT properties (<code>distribution</code>, <code>sortkeys</code>, <code>datagroup_trigger</code>, <code>persist_with</code>, <code>cluster_keys</code>, <code>partition_keys</code>) are not converted. A warning is shown in the output panel for each property encountered so you can handle them separately.</li>
+    <li><b>Snowflake (multi-hop) joins in the flat explore element</b> — When a join's FK lives on another joined view rather than the base (a snowflake schema), the relationship is correctly attached to that intermediate element, so the explore's full relationship graph is intact. However, those second-hop columns are <b>not</b> surfaced in the single flat <em>derived explore element</em> (which only carries the base view's direct relationships, to avoid multi-hop cross-element references) — reach them via the relationship graph or the intermediate element's own derived view. A warning is shown for each snowflake join skipped from the flat element.</li>
 </ul>
 
 <div class="help-links">
