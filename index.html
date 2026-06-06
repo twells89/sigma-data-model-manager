@@ -17206,6 +17206,20 @@ views:
                 return { formula: 'Null', description: `QuickSight table-calc (re-author in Sigma): ${expr}` };
             }
 
+            // QuickSight parameter refs ${Param} can't be lowered into a DM calc
+            // column — Sigma controls are workbook-scoped and a DM formula that
+            // references one silently errors (same class as window funcs). The
+            // parameter is still emitted as a Sigma control; degrade the dependent
+            // calc to a valid Null + description so it can be re-authored at the
+            // workbook layer, instead of stranding a dangling `$[...]` that breaks
+            // the POST (beads-sigma-n730). Must run BEFORE the {col} substitution.
+            const paramRe = /\$\{([^{}]+)\}/;
+            if (paramRe.test(s)) {
+                const pname = String(s.match(paramRe)[1]).replace(/\[[^\]]+\]\s*$/, '').trim();
+                warnings.push(`⚠ Formula references QuickSight parameter \${${pname}} — Sigma controls are workbook-scoped and can't be referenced from a data-model calc column. Degraded to a Null calc column with the original expression in its description; the parameter is emitted as a Sigma control, so re-author this calculation at the workbook layer using the "${sigmaDisplayName(pname)}" control.`);
+                return { formula: 'Null', description: `QuickSight parameter-dependent calc (re-author at the Sigma workbook layer using the "${sigmaDisplayName(pname)}" control): ${expr}` };
+            }
+
             s = s.replace(/\{([^{}]+)\}/g, (_, raw) => {
                 const cleaned = String(raw).replace(/\[[^\]]+\]\s*$/, '').trim();
                 return `[${sigmaDisplayName(cleaned)}]`;
@@ -28646,6 +28660,7 @@ models:
 <h3>Known Limitations</h3>
 <ul>
     <li><b>Window / table-calculation functions</b> (<code>sumOver</code>, <code>runningSum</code>, <code>lag</code>, <code>lead</code>, <code>rank</code>, <code>denseRank</code>, <code>percentOfTotal</code>, <code>period*</code>, <code>windowSum</code>, etc.) → degraded to a valid <code>Null</code> calc column with the original QuickSight expression preserved in the column <i>description</i>, plus a warning. Sigma DM calc columns silently error on window functions; re-author in a Custom SQL element or in the workbook layer.</li>
+    <li><b>Parameter references</b> in calc fields (<code>${ParamName}</code>) → the parameter is emitted as a Sigma <i>control</i>, but a data-model calc column referencing it degrades to a valid <code>Null</code> + description with a warning. Sigma controls are workbook-scoped, so re-author the dependent calculation at the workbook layer using the emitted control.</li>
     <li><b>Asset Bundle CloudFormation format</b> (<code>--export-format CLOUDFORMATION_JSON</code>) is NOT supported — use <code>QUICKSIGHT_JSON</code></li>
     <li><b>FilterGroups</b> (analysis-level page filters) are reported as warnings and skipped — re-create as workbook page controls</li>
     <li><b>Dataset-of-datasets</b> (<code>LogicalTable.Source.DataSetArn</code> variant) is not yet expanded recursively — supply the referenced dataset's JSON directly</li>
