@@ -93,9 +93,11 @@ const RAW_DAX_BANNED =
   for (const [name, formula] of [...Object.entries(metrics), ...Object.entries(calcCols)])
     assert.ok(!RAW_DAX_BANNED.test(formula), `raw DAX leaked in "${name}": ${formula}`);
 
-  // 3t9: EARLIER rank -> RankDense
-  assert.equal(calcCols['Salary Rank In Dept'], 'RankDense([Annual Salary], "desc", [Department])',
-    '3t9: EARLIER rank idiom -> RankDense partitioned');
+  // 3t9 + jzd8: the EARLIER row-rank idiom must NOT post as a base-table RankDense
+  // calc column — Sigma's window functions error in a base calc column. It is
+  // lowered to a kind:'sql' helper element (preferred) or dropped-and-warned.
+  assert.ok(!/\bRankDense\b/.test(String(calcCols['Salary Rank In Dept'] || '')),
+    '3t9/jzd8: EARLIER rank must not be emitted as a base-table RankDense calc column');
 
   // w9s: SalaryBands GENERATESERIES -> sql element, not warehouse-table
   const sqlEls = result.pages[0].elements.filter(e => e?.source?.kind === 'sql');

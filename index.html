@@ -27071,7 +27071,8 @@ ${cleanedSql}`;
             return f;
         }
 
-        function pbiDaxToSigma(dax, warnings, measureName) {
+        function pbiDaxToSigma(dax, warnings, measureName, measureDax) {
+            measureDax = measureDax || {};  // bead qx16: measure name → raw DAX
             // BIM/TMSL serializes multi-line DAX expressions as a string[] (one entry per line)
             if (Array.isArray(dax)) dax = dax.join('\n');
             if (typeof dax !== 'string' || !dax.trim()) return null;
@@ -27134,8 +27135,20 @@ ${cleanedSql}`;
                 if (cm) {
                     const { args } = pbiSplitCallArgs(f, cm.index + cm[0].length);
                     if (args.length === 2) {
-                        const aggExpr = args[0];
+                        // bead qx16: resolve a bare measure-ref first arg (CALCULATE([Headcount], …))
+                        // to the measure's own DAX so a simple-aggregate measure flows through.
+                        let aggExpr = args[0].trim();
+                        const aggRef = aggExpr.match(/^\[([^\]]+)\]$/);
+                        if (aggRef && measureDax[aggRef[1]] && String(measureDax[aggRef[1]]).trim()) {
+                            aggExpr = String(measureDax[aggRef[1]]).trim();
+                        }
                         let pred = args[1];
+                        // bead qx16: unwrap KEEPFILTERS(<predicate>) (filter-merge semantics, not the row predicate).
+                        const keepM = pred.match(/^\s*KEEPFILTERS\s*\(/i);
+                        if (keepM) {
+                            const kr = pbiSplitCallArgs(pred, keepM.index + keepM[0].length);
+                            if (kr.args.length >= 1) pred = kr.args.join(', ').trim();
+                        }
                         const aggM = aggExpr.match(/^\s*(SUM|AVERAGE|MIN|MAX|COUNT|COUNTROWS|DISTINCTCOUNT)\s*\(([\s\S]*)\)\s*$/i);
                         if (aggM) {
                             const aggFn = aggM[1].toUpperCase();
@@ -27198,11 +27211,14 @@ ${cleanedSql}`;
                 if (divArgs.length >= 2) {
                     const num = divArgs[0], den = divArgs[1], alt = divArgs[2];
                     const endIdx = startIdx + f.slice(startIdx).indexOf(')' + '') + 1; // find closing paren
+                    // bead hs5h: parenthesize BOTH operands so a numerator like
+                    // "DeptMed - CoMed" (inlined VAR/RETURN DIVIDE(a-b, c)) doesn't
+                    // emit "a - b / c" (= a - (b/c), a wrong number).
                     let replacement;
                     if (alt && alt.trim()) {
-                        replacement = `If(${den} = 0, ${alt.trim()}, ${num} / ${den})`;
+                        replacement = `If((${den}) = 0, ${alt.trim()}, (${num}) / (${den}))`;
                     } else {
-                        replacement = `${num} / ${den}`;
+                        replacement = `(${num}) / (${den})`;
                     }
                     // Find the actual end position (after the closing paren of DIVIDE)
                     let d2 = 1, endPos = startIdx;
@@ -27370,6 +27386,15 @@ ${cleanedSql}`;
                 // elements (SQL OVER clauses) instead of dropping to Null. measureAggMap
                 // resolves a RANKX order-measure ref ([Total Salary]) to its inner SQL agg.
                 const measureAggMap = pbiBuildMeasureAggMap(model);
+                // bead qx16: model-wide measure name → raw DAX, so pbiDaxToSigma can inline
+                // a bare measure ref used as CALCULATE's first arg.
+                const measureDaxMap = {};
+                for (const _t of (model.tables || [])) {
+                    for (const _meas of (_t.measures || [])) {
+                        measureDaxMap[_meas.name] = Array.isArray(_meas.expression)
+                            ? _meas.expression.join('\n') : String(_meas.expression || '');
+                    }
+                }
                 const winCtx = {
                     helpers: new Map(),
                     usedAliases: new Set(),
@@ -27547,7 +27572,15 @@ ${cleanedSql}`;
                                     }
                                 );
                             }
-                            let sigmaFormula = pbiDaxToSigma(_calcExpr, warnings, c.name);
+                            let sigmaFormula = pbiDaxToSigma(_calcExpr, warnings, c.name, measureDaxMap);
+                            // bead jzd8: a base-table calc COLUMN may not carry a window function
+                            // (Rank/RankDense/Lag/Lead/… silently error there). If lowering degraded
+                            // and the generic translator still produced one, DROP-and-warn instead
+                            // of emitting an error column.
+                            if (sigmaFormula && /\b(Rank|RankDense|Lag|Lead|RowNumber|NTile|FirstValue|LastValue)\s*\(/.test(sigmaFormula)) {
+                                warnings.push(`⛔ "${c.name}": window-function calc column cannot live in a base-table calc column (errors in Sigma) — express it as a workbook Rank() in an ordered table or a grouped element. Dropped.`);
+                                sigmaFormula = null;
+                            }
                             if (sigmaFormula) {
                                 // Rewrite PBI column names → Sigma display names
                                 sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m, colName) => {
@@ -27581,7 +27614,7 @@ ${cleanedSql}`;
                         if (_mWin && lowerPBIWindowCalc(_mWin, m.name, srcElProxy, winCtx, warnings)) {
                             continue; // lowered to helper element; no metric on this element
                         }
-                        let sigmaFormula = pbiDaxToSigma(m.expression, warnings, m.name);
+                        let sigmaFormula = pbiDaxToSigma(m.expression, warnings, m.name, measureDaxMap);
                         if (sigmaFormula) {
                             // Rewrite PBI column names → Sigma display names
                             sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m2, colName) => {
@@ -27643,7 +27676,7 @@ ${cleanedSql}`;
                             if (!t) continue;
                             for (const m of (t.measures || [])) {
                                 if (m.name) measureToElementId[m.name] = factEl.id; // m1a cross-table detection
-                                let sigmaFormula = pbiDaxToSigma(m.expression, warnings, m.name);
+                                let sigmaFormula = pbiDaxToSigma(m.expression, warnings, m.name, measureDaxMap);
                                 if (sigmaFormula) {
                                     // Rewrite PBI column names → Sigma display names
                                     sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m2, colName) => {
