@@ -24547,6 +24547,23 @@ ${cleanedSql}`;
                 const fn = partMap[part.toLowerCase()];
                 return fn ? fn + '(' + dateArg.trim() + ')' : m;
             });
+            // DATENAME('month', [Date]) → MonthName([Date]); 'weekday' → WeekdayName([Date]);
+            // numeric units (year/quarter/day) have no name fn in Sigma → Text(<numeric part>).
+            f = f.replace(/\bDATENAME\s*\(\s*'(\w+)'\s*,\s*([^,)]+)(?:,[^)]*)?\)/gi, function(m, part, dateArg) {
+                const arg = dateArg.trim();
+                switch (part.toLowerCase()) {
+                    case 'month':                     return 'MonthName(' + arg + ')';
+                    case 'weekday': case 'dayofweek': return 'WeekdayName(' + arg + ')';
+                    case 'year':    return 'Text(Year(' + arg + '))';
+                    case 'quarter': return 'Text(Quarter(' + arg + '))';
+                    case 'day':     return 'Text(Day(' + arg + '))';
+                    case 'week':    return 'Text(Week(' + arg + '))';
+                    case 'hour':    return 'Text(Hour(' + arg + '))';
+                    case 'minute':  return 'Text(Minute(' + arg + '))';
+                    case 'second':  return 'Text(Second(' + arg + '))';
+                    default:        return m;
+                }
+            });
             // DATETRUNC/DATEADD/DATEDIFF single-quote → double-quote
             f = f.replace(/\bDATETRUNC\s*\(\s*'([^']+)'\s*,/gi, 'DateTrunc("$1",');
             f = f.replace(/\bDATEADD\s*\(\s*'([^']+)'\s*,/gi, 'DateAdd("$1",');
@@ -30352,6 +30369,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <li><code>COUNT([x])</code> → <code>CountIf(IsNotNull([x]))</code>; <code>COUNTD</code> → <code>CountDistinct</code></li>
     <li><code>DATEPART('year', [d])</code> → <code>Year([d])</code> (and similar for month/day/hour/etc.)</li>
     <li><code>DATETRUNC / DATEADD / DATEDIFF</code> → <code>DateTrunc / DateAdd / DateDiff</code></li>
+    <li><code>DATENAME('month', [d])</code> → <code>MonthName([d])</code>; <code>'weekday'</code> → <code>WeekdayName([d])</code>; numeric units (<code>'year'/'quarter'</code>) → <code>Text(Year([d]))</code> / <code>Text(Quarter([d]))</code></li>
     <li><code>'string'</code> → <code>"string"</code></li>
 </ul>
 
