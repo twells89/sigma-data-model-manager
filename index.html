@@ -3745,8 +3745,8 @@ How it works:
 • shared field names → inferred relationships (Qlik associations)
 • masterMeasures → Sigma metrics with formula conversion
 • masterDimensions → Sigma calculated columns
-• simple Set Analysis → Sum(If(...)); Range*/Dual/Class/Count(DISTINCT) translated
-• $(var), Above/Rank/P()/Aggr → dropped with a warning (no broken formulas)"></textarea>
+• multi-clause Set Analysis → Sum(If(...)); single-level Aggr → SQL GROUP-BY helper; Dual→numeric; Range*/Class/Count(DISTINCT) translated
+• $(var), Above/Rank/P()/E()/nested-Aggr/alternate-state → dropped with a warning (no broken formulas)"></textarea>
 
                         <div class="dbt-badge-row" id="qlikOutputStats"></div>
 
@@ -18202,68 +18202,158 @@ views:
             if (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(t)) return `[${t}]`;
             return t;
         }
+        // A single Set-Analysis element value → a Sigma condition for `field`.
+        // op '=' (include) or '<>' (exclude). Handles quoted comparison/search
+        // strings (">=2020") by mapping to operators (De Morgan-negated when excluding).
+        function _qSetValueToCond(field, rawVal, op) {
+            let v = (rawVal || '').trim();
+            const qm = v.match(/^['"]([\s\S]*)['"]$/);
+            if (qm) {
+                const inner = qm[1].trim();
+                const cmp = inner.match(/^(>=|<=|<>|>|<|=)\s*(.+)$/);
+                if (cmp) {
+                    let cop = cmp[1];
+                    if (op === '<>') {
+                        const neg = { '>=': '<', '<=': '>', '>': '<=', '<': '>=', '=': '<>', '<>': '=' };
+                        cop = neg[cop] || cop;
+                    }
+                    const rhs = cmp[2].trim();
+                    const rhsNum = /^-?\d+(\.\d+)?$/.test(rhs);
+                    return `[${field}]${cop}${rhsNum ? rhs : `"${rhs}"`}`;
+                }
+                // Wildcard search ('*foo*') has no clean operator equivalent.
+                if (/[*?]/.test(inner)) return null;
+                return `[${field}]${op}"${inner}"`;
+            }
+            if (/^-?\d+(\.\d+)?$/.test(v)) return `[${field}]${op}${v}`;
+            if (/^[A-Za-z0-9_]+$/.test(v)) return `[${field}]${op}"${v}"`;
+            return null;
+        }
         // One Qlik set-modifier field clause (FIELD OP {values}) → Sigma condition, or null.
+        // Multi-value list: OR-chain for inclusion (=), AND-chain for exclusion (-=, NOT in).
         function _qSetClauseToCond(clause) {
-            const m = clause.match(/^\s*([A-Za-z_][\w.]*)\s*(-=|\+=|\*=|\/=|=)\s*\{([^}]*)\}\s*$/);
+            const m = clause.match(/^\s*\[?([A-Za-z0-9_ .]+?)\]?\s*(-=|\+=|\*=|\/=|=)\s*\{([\s\S]*)\}\s*$/);
             if (!m) return null;
-            const field = m[1], op = m[2], valuesRaw = m[3];
+            const field = m[1].trim(), op = m[2], valuesRaw = m[3].trim();
             if (op === '+=' || op === '*=' || op === '/=') return null;
-            if (/[\$]/.test(valuesRaw)) return null;
+            if (/\$\s*\(/.test(valuesRaw)) return null;
+            // nested set functions / P()/E() / element-set operators → untranslatable
+            if (/\b[PE]\s*\(/.test(valuesRaw)) return null;
+            if (/[+\-*/](?![=\d])/.test(valuesRaw) && /[{}]/.test(valuesRaw)) return null;
             const vals = _qSplitTop(valuesRaw).map(v => v.trim()).filter(Boolean);
             if (!vals.length) return null;
-            for (const v of vals) if (/[*?<>]/.test(v) && !/^['"]/.test(v)) return null;
             const eq = op === '-=' ? '<>' : '=';
+            const parts = [];
+            for (const v of vals) {
+                const c = _qSetValueToCond(field, v, eq);
+                if (!c) return null;
+                parts.push(c);
+            }
             const join = op === '-=' ? ' and ' : ' or ';
-            const parts = vals.map(v => `[${field}]${eq}${_qMaybeBracket(v)}`);
             return parts.length === 1 ? parts[0] : `(${parts.join(join)})`;
         }
-        // Simple Qlik Set-Analysis aggregation → Sigma If-wrapped aggregate, or null.
-        function _qTranslateSetAnalysis(f) {
-            const head = f.match(/^(Sum|Count|Avg|Min|Max)\s*\(/i);
-            if (!head) return null;
-            const agg = head[1];
-            let depth = 0, argStart = -1, argEnd = -1;
-            for (let i = head[0].length - 1; i < f.length; i++) {
-                if (f[i] === '(') { if (depth === 0) argStart = i + 1; depth++; }
-                else if (f[i] === ')') { depth--; if (depth === 0) { argEnd = i; break; } }
-            }
-            if (argStart < 0 || argEnd < 0 || f.slice(argEnd + 1).trim()) return null;
-            let inner = f.slice(argStart, argEnd).trim();
-            if (inner[0] !== '{') return null;
-            let bd = 0, setEnd = -1;
-            for (let i = 0; i < inner.length; i++) {
-                if (inner[i] === '{') bd++;
-                else if (inner[i] === '}') { bd--; if (bd === 0) { setEnd = i; break; } }
-            }
-            if (setEnd < 0) return null;
-            const setStr = inner.slice(1, setEnd).trim();
-            let valueStr = inner.slice(setEnd + 1).trim();
-            if (/[\$]/.test(setStr)) return null;
-            let conds = [];
-            let setBody = setStr;
-            const idMatch = setBody.match(/^\s*(1|\$\d*|[A-Za-z_]\w*)\s*(<[\s\S]*>)?\s*$/);
-            if (idMatch && idMatch[1] !== '1' && !setBody.startsWith('<')) return null;
-            setBody = setBody.replace(/^\s*1\s*/, '');
-            if (setBody) {
-                const fm = setBody.match(/^<([\s\S]*)>$/);
-                if (!fm) return null;
-                for (const clause of _qSplitTop(fm[1])) {
-                    if (!clause.trim()) continue;
-                    const c = _qSetClauseToCond(clause);
-                    if (!c) return null;
+        // Bracket bare Qlik field tokens in a measure expression so the downstream
+        // raw-name → display-name rewrite ([RAW] → [Display Name]) resolves them.
+        // Leaves bracketed refs, quoted strings, numeric literals and function
+        // names (token immediately followed by `(`) alone.
+        function _qBracketBareFields(expr) {
+            const tokens = [];
+            const SENT = '';
+            const stash = (mm) => { tokens.push(mm); return ` ${SENT}${tokens.length - 1}${SENT} `; };
+            let s = expr.replace(/'[^']*'|"[^"]*"|\[[^\]]+\]/g, stash);
+            s = s.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\b(\s*\()?/g, (full, ident, call) => {
+                if (call) return full;                         // function name -> leave
+                if (/^(null|true|false)$/i.test(ident)) return full;
+                return `[${ident}]`;
+            });
+            s = s.replace(new RegExp(SENT + '(\\d+)' + SENT, 'g'), (_m, i) => tokens[+i]);
+            return s.replace(/ {2,}/g, ' ').trim();
+        }
+        // Qlik Set-Analysis aggregation(s) → Sigma If-wrapped aggregate(s), or null.
+        // Translates EVERY `AGG({<set>} EXPR)` occurrence (AND across clauses, OR/AND
+        // across a clause value list). `warnings`/`name` optional — used to flag the
+        // specific degrade reason (alternate state, $()-macro, untranslatable clause).
+        const _Q_SET_AGGS = ['Sum', 'Count', 'Avg', 'Min', 'Max', 'Median', 'Only'];
+        function _qTranslateSetAnalysis(f, warnings, name) {
+            const aggRe = new RegExp(`\\b(${_Q_SET_AGGS.join('|')})\\s*\\(\\s*\\{`, 'i');
+            const flag = (msg) => { if (warnings) warnings.push(`⚠ "${name || ''}": ${msg}`); };
+            let guard = 0;
+            while (aggRe.test(f) && guard++ < 50) {
+                const m = aggRe.exec(f);
+                if (!m) break;
+                const aggFn = m[1];
+                const parenOpen = f.indexOf('(', m.index);
+                // matching close paren for the aggregation
+                let depth = 0, parenClose = -1, q = '';
+                for (let i = parenOpen; i < f.length; i++) {
+                    const c = f[i];
+                    if (q) { if (c === q) q = ''; continue; }
+                    if (c === '"' || c === "'") { q = c; continue; }
+                    if (c === '(') depth++;
+                    else if (c === ')') { depth--; if (depth === 0) { parenClose = i; break; } }
+                }
+                if (parenClose < 0) return null;
+                const argStr = f.slice(parenOpen + 1, parenClose);
+                const braceOpen = argStr.indexOf('{');
+                let bd = 0, braceClose = -1, bq = '';
+                for (let i = braceOpen; i < argStr.length; i++) {
+                    const c = argStr[i];
+                    if (bq) { if (c === bq) bq = ''; continue; }
+                    if (c === '"' || c === "'") { bq = c; continue; }
+                    if (c === '{') bd++;
+                    else if (c === '}') { bd--; if (bd === 0) { braceClose = i; break; } }
+                }
+                if (braceClose < 0) return null;
+                const setSpec = argStr.slice(braceOpen, braceClose + 1);   // {<...>}
+                let expr = argStr.slice(braceClose + 1).trim();           // measure expr
+                let distinct = false;
+                const dm = expr.match(/^DISTINCT\s+([\s\S]*)$/i);
+                if (dm) { distinct = true; expr = dm[1].trim(); }
+
+                const inner = setSpec.replace(/^\{/, '').replace(/\}$/, '').trim();
+                const ltIdx = inner.indexOf('<');
+                const gtIdx = inner.lastIndexOf('>');
+                if (ltIdx < 0 || gtIdx < 0) {
+                    // {$} or {1} with no modifier — full/current set; bare aggregation.
+                    const ident = inner.replace(/[$1\s]/g, '');
+                    if (ident) { flag(`Set Analysis uses alternate state "${ident}" — left untranslated.`); return null; }
+                    const bareExpr = _qBracketBareFields(expr);
+                    const bare = /^Count$/i.test(aggFn) && distinct ? `CountDistinct(${bareExpr})` : `${aggFn}(${bareExpr})`;
+                    f = f.slice(0, m.index) + bare + f.slice(parenClose + 1);
+                    continue;
+                }
+                const setIdent = inner.slice(0, ltIdx).trim();
+                if (setIdent && !/^[$1]$/.test(setIdent)) {
+                    flag(`Set Analysis uses alternate state "${setIdent}" — left untranslated.`); return null;
+                }
+                const modifiers = inner.slice(ltIdx + 1, gtIdx);          // A={1}, B={'x','y'}
+                if (/\$\s*\(/.test(modifiers)) {
+                    flag(`Set Analysis contains a $-expansion macro — left untranslated.`); return null;
+                }
+                const clauses = _qSplitTop(modifiers).map(c => c.trim()).filter(Boolean);
+                const conds = [];
+                for (const cl of clauses) {
+                    const c = _qSetClauseToCond(cl);
+                    if (!c) { flag(`Set Analysis clause "${cl}" could not be translated — left untranslated.`); return null; }
                     conds.push(c);
                 }
+                if (!conds.length || !expr) return null;
+                const condJoined = conds.length === 1 ? conds[0] : conds.join(' and ');
+                const exprBracketed = _qBracketBareFields(expr);
+                let replacement;
+                if (/^Count$/i.test(aggFn)) {
+                    const wrapped = `If(${condJoined}, ${exprBracketed})`;
+                    replacement = distinct ? `CountDistinct(${wrapped})` : `Count(${wrapped})`;
+                } else {
+                    replacement = `${aggFn}(If(${condJoined}, ${exprBracketed}, 0))`;
+                }
+                f = f.slice(0, m.index) + replacement + f.slice(parenClose + 1);
             }
-            const cond = conds.join(' and ');
-            let distinct = false;
-            const dm = valueStr.match(/^DISTINCT\s+([\s\S]*)$/i);
-            if (dm) { distinct = true; valueStr = dm[1].trim(); }
-            const value = _qMaybeBracket(valueStr);
-            if (/^Count$/i.test(agg)) {
-                const wrapped = cond ? `If(${cond}, ${value})` : value;
-                return distinct ? `CountDistinct(${wrapped})` : `Count(${wrapped})`;
+            // any residual set-spec we didn't handle (set operator on the measure) → degrade
+            if (/\{\s*[\$1<][^}]*\}/.test(f) || /\{\s*<[^}]*>\s*\}/.test(f)) {
+                flag(`Set Analysis construct could not be fully translated — left untranslated.`); return null;
             }
-            return cond ? `${agg}(If(${cond}, ${value}))` : `${agg}(${value})`;
+            return f;
         }
         // Row-wise (multi-arg) Range* → Sigma arithmetic, or null for inter-record form.
         function _qTranslateRange(f) {
@@ -18286,6 +18376,101 @@ views:
             return null;
         }
 
+        // Sentinel marker for an Aggr() expression that Pass 3 lowers to a SQL element.
+        const QLIK_AGGR_SENTINEL = '__QLIK_AGGR__';
+        const _Q_AGG_TO_SQL = {
+            SUM: 'SUM', COUNT: 'COUNT', AVG: 'AVG', MIN: 'MIN', MAX: 'MAX',
+            MEDIAN: 'MEDIAN', ONLY: 'MIN', COUNTDISTINCT: 'COUNT(DISTINCT', NODISTINCT: '',
+        };
+        // Lower a single-level Aggr() to a kind:'sql' GROUP-BY helper element.
+        //   Sum(Aggr(Sum(SALES), CUSTOMER))
+        // → SQL element: SELECT "CUSTOMER", SUM("SALES") AS "inner_agg" FROM <db.schema.table> GROUP BY 1
+        //   metric:      Sum([Inner Agg])
+        // Returns { element, metricFormula } or null (degrade — nested Aggr, non-aggregate
+        // outer op, or grain/inner field not resolvable to one warehouse table).
+        function _qLowerAggr(expr, name, tableElementMap, connectionId, warnings) {
+            const flag = (msg) => { if (warnings) warnings.push(`⚠ "${name}": ${msg}`); };
+            const m = expr.match(/^\s*([A-Za-z_]+)\s*\(\s*Aggr\s*\(/i);
+            if (!m) { flag(`Aggr() not wrapped in a single outer aggregation — left untranslated.`); return null; }
+            const outerFn = m[1];
+            const outerSql = _Q_AGG_TO_SQL[outerFn.toUpperCase()];
+            if (!outerSql || outerSql === '' || outerSql.includes('(')) {
+                flag(`Aggr() outer function "${outerFn}" not supported — left untranslated.`); return null;
+            }
+            const aggrOpen = expr.toLowerCase().indexOf('aggr(', m.index || 0);
+            const aggrParen = expr.indexOf('(', aggrOpen);
+            let depth = 0, aggrClose = -1, q = '';
+            for (let i = aggrParen; i < expr.length; i++) {
+                const c = expr[i];
+                if (q) { if (c === q) q = ''; continue; }
+                if (c === '"' || c === "'") { q = c; continue; }
+                if (c === '(') depth++;
+                else if (c === ')') { depth--; if (depth === 0) { aggrClose = i; break; } }
+            }
+            if (aggrClose < 0) return null;
+            const aggrArgs = _qSplitTop(expr.slice(aggrParen + 1, aggrClose)).map(s => s.trim());
+            if (aggrArgs.length < 2) { flag(`Aggr() missing grain dimension — left untranslated.`); return null; }
+            const innerExpr = aggrArgs[0];
+            const dims = aggrArgs.slice(1);
+            if (/\bAggr\s*\(/i.test(innerExpr)) { flag(`nested Aggr() — left untranslated.`); return null; }
+            const im = innerExpr.match(/^\s*([A-Za-z_]+)\s*\(\s*\[?([A-Za-z0-9_ .]+?)\]?\s*\)\s*$/);
+            if (!im) { flag(`Aggr() inner expression "${innerExpr}" too complex — left untranslated.`); return null; }
+            const innerFn = im[1];
+            const innerField = im[2].trim();
+            const innerSql = _Q_AGG_TO_SQL[innerFn.toUpperCase()];
+            if (innerSql === undefined || innerSql === '') {
+                flag(`Aggr() inner function "${innerFn}" not supported — left untranslated.`); return null;
+            }
+            const dimFields = dims.map(d => d.replace(/^\[|\]$/g, '').trim());
+
+            // Resolve a single warehouse table owning the inner field + all dims.
+            let owner = null;
+            for (const info of Object.values(tableElementMap)) {
+                const has = (n) => Object.keys(info.colMap).some(k => k.toUpperCase() === n.toUpperCase());
+                if (has(innerField) && dimFields.every(has)) { owner = info; break; }
+            }
+            if (!owner) { flag(`Aggr() grain spans tables or fields not found in one table — left untranslated.`); return null; }
+            const path = (owner.element.source && owner.element.source.path) || [];
+            if (!path.length) { flag(`Aggr() source table path unknown — left untranslated.`); return null; }
+            const fromSql = path.map(p => `"${p}"`).join('.');
+
+            const realName = (n) => Object.keys(owner.colMap).find(k => k.toUpperCase() === n.toUpperCase()) || n;
+            const dimCols = dimFields.map(realName);
+            const innerCol = realName(innerField);
+            const innerAlias = 'inner_agg';
+            const innerAggSql = innerSql.includes('(')
+                ? `${innerSql} "${innerCol}")`        // COUNT(DISTINCT col)
+                : `${innerSql}("${innerCol}")`;
+            const selectCols = [...dimCols.map(c => `"${c}"`), `${innerAggSql} AS "${innerAlias}"`];
+            const groupBy = dimCols.map((_c, i) => i + 1).join(', ');
+            const statement = `SELECT ${selectCols.join(', ')} FROM ${fromSql} GROUP BY ${groupBy}`;
+
+            // SQL element columns use [Custom SQL/<SQL_ALIAS>] — the exact alias the
+            // SELECT emits (mirrors the QuickSight window helper).
+            const cols = [];
+            const order = [];
+            for (const dc of dimCols) {
+                const id = sigmaShortId();
+                cols.push({ id, name: sigmaDisplayName(dc), formula: `[Custom SQL/${dc}]` });
+                order.push(id);
+            }
+            const innerColId = sigmaShortId();
+            const innerDisplay = sigmaDisplayName(innerAlias);
+            cols.push({ id: innerColId, name: innerDisplay, formula: `[Custom SQL/${innerAlias}]` });
+            order.push(innerColId);
+
+            const element = {
+                id: sigmaShortId(),
+                kind: 'table',
+                name: `${name} (Aggr)`,
+                source: { connectionId, kind: 'sql', statement },
+                columns: cols,
+                order,
+            };
+            const metricFormula = `${outerFn}([${innerDisplay}])`;
+            return { element, metricFormula };
+        }
+
         function qlikExprToSigma(expr, warnings, name) {
             if (!expr || !expr.trim()) return null;
             let f = expr.trim();
@@ -18303,7 +18488,6 @@ views:
                 [/\b(Peek|Previous|Exists|FieldValue|FieldIndex|LookUp)\s*\(/i, 'a script/inter-record lookup function'],
                 [/\b(RowNo|RecNo|NoOfRows|NoOfColumns|FirstSortedValue)\s*\(/i, 'a row-position/sorted-value function'],
                 [/\b(Rank|HRank|VRank)\s*\(/i, 'Rank() (Sigma Rank is a window function with different semantics)'],
-                [/\bAggr\s*\(/i, 'Aggr() — build a grouped/level data-model element instead'],
                 [/(?<![A-Za-z_])[PE]\s*\(/, 'a set-element function P()/E()'],
                 [/\bGet(?:Field)?(?:Selections?|CurrentSelections?|PossibleCount|SelectedCount|AlternativeCount|ExcludedCount)\s*\(/i, 'a selection-state function'],
             ];
@@ -18313,14 +18497,20 @@ views:
                     return null;
                 }
             }
-            // ── Set Analysis: translate simple forms; drop the rest ──
-            if (/\{[\s\S]*\}/.test(f)) {
-                const t = _qTranslateSetAnalysis(f);
-                if (t) { f = t; }
-                else {
-                    if (warnings) warnings.push(`⚠ "${name}": uses Qlik Set Analysis Sigma can't auto-translate (search/$()/set operators) — measure dropped. Use SumIf/CountIf manually.`);
-                    return null;
-                }
+            // ── Set Analysis: translate to conditional aggregation; degrade+flag the rest ──
+            // (AND across clauses, OR/AND across a clause value list, -= → De Morgan,
+            //  quoted comparison search ">=2020" → operators; _qTranslateSetAnalysis
+            //  pushes the specific degrade reason: alternate state / $()-macro / clause.)
+            if (/\{\s*[\$1<][^}]*\}/.test(f) || /\{\s*<[^}]*>\s*\}/.test(f)) {
+                const t = _qTranslateSetAnalysis(f, warnings, name);
+                if (t === null) return null;   // degraded — warning already pushed
+                f = t;
+            }
+            // ── Aggr(): hand off to Pass 3 for kind:'sql' GROUP-BY lowering. Only the
+            //    single-level form Sum(Aggr(<innerAgg>(<expr>), <dim>[, <dim>…])) is
+            //    attempted; nested Aggr / non-aggregate outer ops degrade+flag there. ──
+            if (/\bAggr\s*\(/i.test(f)) {
+                return QLIK_AGGR_SENTINEL + f;
             }
             // ── Row-wise Range* (multiple args) → arithmetic / Greatest / Least ──
             if (/^Range(?:Sum|Avg|Max|Min)\s*\(/i.test(f)) {
@@ -18344,7 +18534,11 @@ views:
                 if (end < 0) { f = f.replace(/DUAL\(/g, 'Dual('); break; }
                 const inner = f.slice(open + 1, end);
                 const parts = _qSplitTop(inner);
-                const numArg = parts.length >= 2 ? parts[parts.length - 1] : inner;
+                let numArg = parts.length >= 2 ? parts[parts.length - 1] : inner;
+                // bracket a bare field identifier so the downstream display-name rewrite resolves it
+                if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(numArg.trim()) && !/^(null|true|false)$/i.test(numArg.trim())) {
+                    numArg = `[${numArg.trim()}]`;
+                }
                 if (warnings) warnings.push(`⚠ "${name}": Dual() reduced to its numeric argument; the text label was dropped.`);
                 f = f.slice(0, i) + numArg + f.slice(end + 1);
             }
@@ -18633,6 +18827,9 @@ views:
                 const rowCountByEl = {};
                 for (const info of Object.values(tableElementMap)) rowCountByEl[info.elementId] = info.rowCount || 0;
 
+                // Aggr() helper SQL elements built during Pass 3 (appended after the loop).
+                const aggrElements = [];
+
                 for (const m of masterMeasures) {
                     const title   = m.title || m.qTitle || 'Metric';
                     const exprRaw = m.expr  || m.qDef   || m.expression || '';
@@ -18640,6 +18837,21 @@ views:
 
                     let sigmaFormula = qlikExprToSigma(exprRaw, warnings, title);
                     if (!sigmaFormula) continue;
+
+                    // Aggr() lowering — qlikExprToSigma tags these with QLIK_AGGR_SENTINEL.
+                    if (sigmaFormula.startsWith(QLIK_AGGR_SENTINEL)) {
+                        const aggrExpr = sigmaFormula.slice(QLIK_AGGR_SENTINEL.length);
+                        const lowered = _qLowerAggr(aggrExpr, title, tableElementMap, connectionId, warnings);
+                        if (!lowered) continue;            // degraded — warning already pushed
+                        aggrElements.push(lowered.element);
+                        const aggrMetric = { id: sigmaShortId(), formula: lowered.metricFormula, name: title };
+                        if (desc) aggrMetric.description = desc;
+                        const aggrFmt = _inferSigmaFormat(lowered.metricFormula, title);
+                        if (aggrFmt) aggrMetric.format = aggrFmt;
+                        if (!lowered.element.metrics) lowered.element.metrics = [];
+                        lowered.element.metrics.push(aggrMetric);
+                        continue;
+                    }
 
                     // Rewrite [WAREHOUSE_NAME] → [Display Name] to match how element
                     // columns were created (same pattern as the PBI converter)
@@ -18676,6 +18888,8 @@ views:
                     const metrics = measuresByElement[el.id];
                     if (metrics && metrics.length) el.metrics = metrics;
                 }
+                // Append Aggr() SQL helper elements (carry their own metric already attached).
+                for (const ae of aggrElements) elements.push(ae);
 
                 // ── Pass 4: Calculated master dimensions → columns ──────────
                 for (const d of masterDimensions) {
@@ -29830,7 +30044,8 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <li>String: <code>Upper()</code>, <code>Lower()</code>, <code>Trim()</code>, <code>Left()</code>, <code>Right()</code>, <code>Len()</code>, <code>Replace()</code>, <code>Concat()</code>, <code>Mid()</code> → same</li>
     <li>Date/time: <code>Year()</code>, <code>Month()</code>, <code>Day()</code>, <code>Quarter()</code>, <code>Week()</code>, <code>Hour()</code>, <code>Minute()</code>, <code>Second()</code>, <code>Today()</code>, <code>Now()</code> → same</li>
     <li>Single-quoted strings → double-quoted strings</li>
-    <li><b>Set Analysis (simple)</b> — <code>Sum({&lt;Year={2024}&gt;} [Sales])</code> → <code>Sum(If([Year]=2024, [Sales]))</code>; <code>{1}</code> (ignore selections) → plain aggregate; <code>{&lt;F-={v}&gt;}</code> → <code>&lt;&gt;</code>; multi-value <code>{a,b}</code> → <code>or</code>-chain; <code>Count({&lt;…&gt;} DISTINCT X)</code> → <code>CountDistinct(If(…, [X]))</code></li>
+    <li><b>Set Analysis (multi-clause)</b> — <code>Sum({&lt;Year={2024}&gt;} [Sales])</code> → <code>Sum(If([Year]=2024, [Sales], 0))</code>; multiple clauses are AND-ed; multi-value <code>{a,b}</code> → <code>or</code>-chain (inclusion) / <code>and</code>-chain (exclusion); <code>{&lt;F-={v}&gt;}</code> → <code>&lt;&gt;</code> (De Morgan-negated for a value list); quoted comparison search <code>{">=2020"}</code> → comparison operator; <code>{1}</code> (ignore selections) → plain aggregate; <code>Count({&lt;…&gt;} DISTINCT X)</code> → <code>CountDistinct(If(…, [X]))</code></li>
+    <li><b>Aggr() (single-level)</b> — <code>Sum(Aggr(Sum(Sales), Customer))</code> → a Custom-SQL helper element <code>SELECT "Customer", SUM("Sales") AS "inner_agg" … GROUP BY 1</code> plus an outer metric <code>Sum([Inner Agg])</code> on that element</li>
     <li><b>Range* (multi-arg)</b> — <code>RangeSum(a,b)</code> → <code>(a)+(b)</code>; <code>RangeMax</code> → <code>Greatest</code>; <code>RangeMin</code> → <code>Least</code>; <code>RangeAvg</code> → <code>(a+b)/n</code></li>
     <li><b>Dual(text, num)</b> → numeric argument; <b>Class(x, n)</b> → <code>Floor([x]/n)*n</code>; <b>Count(DISTINCT x)</b> → <code>CountDistinct(x)</code></li>
 </ul>
@@ -29841,9 +30056,9 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <li><b>Variable expansion <code>$(var)</code></b> — cannot resolve; emitting it verbatim would reject the whole data-model POST. Define the value explicitly in Sigma.</li>
     <li><b>Inter-record functions</b> — <code>Above()</code>, <code>Below()</code>, <code>Peek()</code>, <code>Previous()</code>, <code>RowNo()</code> (running totals / MoM): rebuild as a Sigma window function on a date-grouped element.</li>
     <li><b>Ranking</b> — <code>Rank()</code>, <code>HRank()</code>: Sigma <code>Rank</code> is a window function with different semantics; build it in a grouping table.</li>
-    <li><b>Aggr()</b> — nested aggregate; build a grouped/level data-model element instead.</li>
+    <li><b>Aggr() (nested or non-aggregate outer)</b> — single-level <code>Sum(Aggr(…))</code> is now lowered to a SQL GROUP-BY helper element (see above); genuinely nested <code>Aggr(Aggr(…))</code> or a non-aggregate outer op is dropped.</li>
     <li><b>Set-element / selection-state</b> — <code>P()</code>, <code>E()</code>, <code>GetFieldSelections()</code>, <code>GetCurrentSelections()</code> have no Sigma equivalent.</li>
-    <li><b>Exotic Set Analysis</b> — search strings (<code>"*x*"</code>), <code>$()</code> in the set, set operators (<code>+ - *</code>): translate by hand.</li>
+    <li><b>Exotic Set Analysis</b> — wildcard search strings (<code>"*x*"</code>), alternate states, <code>$()</code> macros in the set, and set operators (<code>+ - *</code>) on the measure are dropped with a specific warning; translate by hand.</li>
     <li><b>YearToDate()</b> — Approximated as <code>Year([Field]) = Year(Today())</code>.</li>
 </ul>
 <p><b>Cross-element note:</b> a translated measure whose condition field lives on a dimension (e.g. <code>Sum(If([Is Holiday]=1, [Net Revenue]))</code>) is placed on the fact element and flagged with an <code>ℹ references fields from N elements</code> warning — host it on a denormalized element so it doesn't error as a cross-element reference.</p>
