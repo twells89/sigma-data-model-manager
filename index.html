@@ -27071,6 +27071,13 @@ ${cleanedSql}`;
             return f;
         }
 
+        // bead jzd8: window fns (Rank/RankDense/Lag/Lead/RowNumber/NTile/FirstValue/
+        // LastValue) error in a base-table calc column or DM metric. Test with string
+        // literals stripped so a label like "Top Rank (1)" doesn't false-trigger.
+        function pbiHasBareWindowFn(formula) {
+            const noStr = String(formula).replace(/"[^"]*"/g, '').replace(/'[^']*'/g, '');
+            return /\b(Rank|RankDense|Lag|Lead|RowNumber|NTile|FirstValue|LastValue)\s*\(/.test(noStr);
+        }
         function pbiDaxToSigma(dax, warnings, measureName, measureDax) {
             measureDax = measureDax || {};  // bead qx16: measure name → raw DAX
             // BIM/TMSL serializes multi-line DAX expressions as a string[] (one entry per line)
@@ -27139,8 +27146,14 @@ ${cleanedSql}`;
                         // to the measure's own DAX so a simple-aggregate measure flows through.
                         let aggExpr = args[0].trim();
                         const aggRef = aggExpr.match(/^\[([^\]]+)\]$/);
-                        if (aggRef && measureDax[aggRef[1]] && String(measureDax[aggRef[1]]).trim()) {
-                            aggExpr = String(measureDax[aggRef[1]]).trim();
+                        if (aggRef && measureDax[aggRef[1]]) {
+                            const refDax = String(measureDax[aggRef[1]]).trim();
+                            // qx16 guard: only inline a SINGLE simple aggregate (one call, no
+                            // nested parens / top-level operators); otherwise the greedy aggM
+                            // below mis-splits a multi-aggregate body into a broken formula.
+                            if (/^(SUM|AVERAGE|MIN|MAX|COUNT|COUNTROWS|DISTINCTCOUNT)\s*\([^()]*\)$/i.test(refDax)) {
+                                aggExpr = refDax;
+                            }
                         }
                         let pred = args[1];
                         // bead qx16: unwrap KEEPFILTERS(<predicate>) (filter-merge semantics, not the row predicate).
@@ -27577,7 +27590,7 @@ ${cleanedSql}`;
                             // (Rank/RankDense/Lag/Lead/… silently error there). If lowering degraded
                             // and the generic translator still produced one, DROP-and-warn instead
                             // of emitting an error column.
-                            if (sigmaFormula && /\b(Rank|RankDense|Lag|Lead|RowNumber|NTile|FirstValue|LastValue)\s*\(/.test(sigmaFormula)) {
+                            if (sigmaFormula && pbiHasBareWindowFn(sigmaFormula)) {
                                 warnings.push(`⛔ "${c.name}": window-function calc column cannot live in a base-table calc column (errors in Sigma) — express it as a workbook Rank() in an ordered table or a grouped element. Dropped.`);
                                 sigmaFormula = null;
                             }
@@ -27615,6 +27628,10 @@ ${cleanedSql}`;
                             continue; // lowered to helper element; no metric on this element
                         }
                         let sigmaFormula = pbiDaxToSigma(m.expression, warnings, m.name, measureDaxMap);
+                        if (sigmaFormula && pbiHasBareWindowFn(sigmaFormula)) {  // bead jzd8 (measure path)
+                            warnings.push(`⛔ "${m.name}": window-function measure has no Sigma DM-metric equivalent — use a workbook Rank()/ordered table or a grouped element. Dropped.`);
+                            sigmaFormula = null;
+                        }
                         if (sigmaFormula) {
                             // Rewrite PBI column names → Sigma display names
                             sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m2, colName) => {
@@ -27677,6 +27694,10 @@ ${cleanedSql}`;
                             for (const m of (t.measures || [])) {
                                 if (m.name) measureToElementId[m.name] = factEl.id; // m1a cross-table detection
                                 let sigmaFormula = pbiDaxToSigma(m.expression, warnings, m.name, measureDaxMap);
+                                if (sigmaFormula && pbiHasBareWindowFn(sigmaFormula)) {  // bead jzd8 (measure path)
+                                    warnings.push(`⛔ "${m.name}": window-function measure has no Sigma DM-metric equivalent — use a workbook Rank()/ordered table or a grouped element. Dropped.`);
+                                    sigmaFormula = null;
+                                }
                                 if (sigmaFormula) {
                                     // Rewrite PBI column names → Sigma display names
                                     sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m2, colName) => {
