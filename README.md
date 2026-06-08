@@ -448,6 +448,47 @@ Converts Oracle Analytics Cloud semantic models exported from the Semantic Model
 
 ---
 
+### SAP BusinessObjects Universe
+
+Converts a SAP BusinessObjects **universe** (the semantic layer) to Sigma data model JSON. Input is the universe metadata from the BI RESTful Web Service (RWS) — `GET /biprws/sl/v1/universes/{id}` on an on-prem BO 4.x server. The ingest is tolerant of the common RWS shape variants (nested outline/items folders, class/objects, or a flat `objects[]` array).
+
+**How to export from BusinessObjects:**
+1. Authenticate: `POST /biprws/logon/long` → logon token
+2. List universes: `GET /biprws/sl/v1/universes`
+3. Fetch one universe's metadata: `GET /biprws/sl/v1/universes/{id}` (with `Accept: application/json`)
+4. Drop the resulting `.json` into the converter (or paste it)
+
+**What gets converted:**
+- Physical tables → Sigma elements (one per table); warehouse path from the table name, with optional Database / Schema overrides
+- Dimensions / details → Sigma columns; the universe business name is preserved via `name` while the formula references the physical column
+- Measures → Sigma metrics (Sum / Count / Count Distinct / Avg / Min / Max / StdDev / Variance) of the underlying column
+- Object expressions (functions, CASE, concatenation) → Sigma calculated columns
+- Joins → Sigma relationships; FK/PK keys parsed from the join `Table.col = Table.col` SQL; tables with outgoing joins also get a denormalized **View** element exposing own + joined columns
+
+**Expression conversion:**
+
+| BusinessObjects | Sigma formula |
+|---|---|
+| `Table.Column` / `"Table"."Column"` | `[Column Name]` |
+| `SUBSTR` / `SUBSTRING` | `Mid()` |
+| `NVL` / `IFNULL` | `Coalesce()` |
+| `INSTR` / `LENGTH` | `Search()` / `Len()` |
+| `TO_CHAR` / `TO_DATE` / `TO_NUMBER` | `Text()` / `Date()` / `Number()` |
+| `CURRENT_DATE` / `SYSDATE` | `Today()` |
+| `\|\|` (concat) | `&` |
+| `CASE WHEN … END` | `If(…, …, …)` |
+
+**Known limitations:**
+- Predefined filters / conditions — emitted as warnings only (report-time WHERE clauses, no data-model equivalent); re-create as Sigma filters/controls
+- Universe `@`-functions (`@Prompt`, `@Select`, `@Variable`, `@Aggregate_Aware`, `@Where`) — flagged with a warning; `@Aggregate_Aware` keeps its first branch, the rest need a manual control or inlined SELECT
+- Contexts & derived tables — RWS metadata is light here; a full Semantic-Layer-SDK XML export is needed for that fidelity (planned Phase 2, same converter core)
+- Multi-table object SELECTs — placed on the first table with a warning; verify cross-table references
+- Crystal Reports / Web Intelligence — this converter handles the universe (semantic layer) only, not the report/document layer
+
+**Useful resources:** [SAP — RESTful Web Service SDK](https://help.sap.com/docs/SAP_BUSINESSOBJECTS_BUSINESS_INTELLIGENCE_PLATFORM)
+
+---
+
 ### Cube.dev
 
 Converts [Cube.dev](https://cube.dev) schemas to Sigma data model JSON. Accepts both YAML (`.yml` / `.yaml`) and JavaScript (`.js`) schema files in the same drop — drop your `cubes/` and `views/` directories together.

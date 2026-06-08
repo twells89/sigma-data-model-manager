@@ -2684,6 +2684,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                             <option value="quicksight">☁️ AWS QuickSight</option>
                             <option value="qlik">🔮 Qlik Sense</option>
                             <option value="oac">☁️ Oracle Analytics Cloud</option>
+                            <option value="bobj">🏛️ SAP BusinessObjects Universe</option>
                             <option value="cube">🟦 Cube.dev</option>
                             <option value="prep">🔧 Tableau Prep (.tfl/.tflx)</option>
                             <option value="sql">🗄️ Custom SQL</option>
@@ -3758,6 +3759,103 @@ How it works:
                     </div>
                 </div>
                 <!-- ── End Qlik Sense Panel ───────────────────────────────────────── -->
+
+                <!-- SAP BusinessObjects Universe Converter Panel -->
+                <div class="converter-panel" id="subPanelBobj">
+
+                    <!-- Left: Input + Config -->
+                    <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">BusinessObjects Universe</span>
+                            <button class="btn-example" onclick="loadBobjExample()">Load example</button>
+                        </div>
+
+                        <div id="bobjDropZone" class="lookml-drop-zone"
+                             onclick="document.getElementById('bobjFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleBobjDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">🏛️</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop a universe JSON file here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">RWS /sl/v1/universes/{id} export · or paste below</div>
+                        </div>
+                        <input type="file" id="bobjFileInput" accept=".json" multiple style="display:none" onchange="handleBobjFileInput(event)">
+
+                        <div id="bobjFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Connection</label>
+                            <select id="bobjConnectionId" class="form-input" style="font-size: 12px;">
+                                <option value="">— Connect to Sigma to load —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="bobjDatabase" placeholder="e.g. ANALYTICS" style="font-size: 12px;">
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Schema override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="bobjSchema" placeholder="e.g. PUBLIC" style="font-size: 12px;">
+                        </div>
+
+                        <div class="dbt-badge-row" id="bobjInputStats"></div>
+
+                        <textarea id="bobjJsonInput" style="flex: 1; min-height: 80px; font-size: 11px; resize: none;"
+                                  placeholder="Or paste BusinessObjects universe JSON here...
+
+Supported shapes (RWS /sl/v1/universes/{id}):
+• { universe: { classes: [ { name, objects: [...] } ], joins, filters } }
+• nested outline/items folders
+• flat { objects: [...], tables, joins }"></textarea>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" id="bobjConvertBtn" onclick="runBobjConversion()">
+                                🏛️ Convert to Sigma JSON
+                            </button>
+                        </div>
+
+                        <div style="font-size: 10px; color: var(--text-muted); padding: 0 4px; line-height: 1.4;">
+                            <strong>How to get the universe JSON:</strong><br>
+                            • <b>RWS</b>: <code style="font-size:9px;">POST /biprws/logon/long</code> → token<br>
+                            • <code style="font-size:9px;">GET /biprws/sl/v1/universes</code> → list<br>
+                            • <code style="font-size:9px;">GET /biprws/sl/v1/universes/{id}</code> → metadata
+                        </div>
+                    </div>
+
+                    <!-- Right: Sigma JSON Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copyBobjOutput()" id="bobjCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadBobjOutputToEditor()" id="bobjLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="bobjWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="bobjJsonOutput" readonly placeholder="Convert a BusinessObjects universe to see the Sigma JSON here...
+
+How it works:
+• physical tables → Sigma elements (one per table)
+• dimensions / details → columns (business name preserved)
+• measures → metrics (Sum/Count/Avg/… of the underlying column)
+• object expressions → calculated columns
+• joins → relationships (FK keys parsed from the join SQL)
+• predefined filters &amp; @Prompt/@Select/@Variable/@Aggregate_Aware → warnings"></textarea>
+
+                        <div class="dbt-badge-row" id="bobjOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="bobjLoadAndSave()" id="bobjSaveBtn" disabled>
+                                💾 Load &amp; Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <!-- ── End BusinessObjects Panel ──────────────────────────────────── -->
 
                 <!-- Oracle Analytics Cloud SMML Converter Panel -->
                 <div class="converter-panel" id="subPanelOac">
@@ -7202,7 +7300,7 @@ ${JSON.stringify(failedJson, null, 2)}`;
         async function populateConverterConnections() {
             if (!state.accessToken) return;
             const connections = await fetchConnectionsList();
-            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'tsConnectionId', 'qsConnectionId', 'qlikConnectionId', 'oacConnectionId', 'ssasConnectionId', 'sqlConnectionId'];
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'tsConnectionId', 'qsConnectionId', 'qlikConnectionId', 'oacConnectionId', 'bobjConnectionId', 'ssasConnectionId', 'sqlConnectionId'];
             targetIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (!sel) return;
@@ -10055,7 +10153,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
 
             // Reset the per-converter connection dropdowns to placeholder so a
             // stale connection from the prior org isn't pre-selected.
-            const dropdownIds = ['dbtConnectionId','snowConnectionId','bulkUploadConnectionId','lookConnectionId','tableauConnectionId','pbiConnectionId','alteryxConnectionId','contractConnectionId','omniConnectionId','tsConnectionId','qlikConnectionId','oacConnectionId','ssasConnectionId','sqlConnectionId'];
+            const dropdownIds = ['dbtConnectionId','snowConnectionId','bulkUploadConnectionId','lookConnectionId','tableauConnectionId','pbiConnectionId','alteryxConnectionId','contractConnectionId','omniConnectionId','tsConnectionId','qlikConnectionId','oacConnectionId','bobjConnectionId','ssasConnectionId','sqlConnectionId'];
             dropdownIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (sel) sel.innerHTML = '<option value="">— Connect to Sigma to load —</option>';
@@ -10152,10 +10250,10 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         }
 
         function switchConverter(format) {
-            const _convNames = { dbt: 'dbt', snow: 'snowflake', look: 'lookml', tableau: 'tableau', pbi: 'power_bi', alteryx: 'alteryx', contract: 'atlan', omni: 'omni', thoughtspot: 'thoughtspot', quicksight: 'quicksight', qlik: 'qlik', oac: 'oac', cube: 'cube', prep: 'tableau_prep', ssas: 'ssas', sql: 'sql' };
+            const _convNames = { dbt: 'dbt', snow: 'snowflake', look: 'lookml', tableau: 'tableau', pbi: 'power_bi', alteryx: 'alteryx', contract: 'atlan', omni: 'omni', thoughtspot: 'thoughtspot', quicksight: 'quicksight', qlik: 'qlik', oac: 'oac', bobj: 'bobj', cube: 'cube', prep: 'tableau_prep', ssas: 'ssas', sql: 'sql' };
             phTrack('converter_selected', { converter: _convNames[format] || format });
-            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Thoughtspot', 'Quicksight', 'Qlik', 'Oac', 'Cube', 'Prep', 'Ssas', 'Sql'];
-            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', thoughtspot: 'Thoughtspot', quicksight: 'Quicksight', qlik: 'Qlik', oac: 'Oac', cube: 'Cube', prep: 'Prep', ssas: 'Ssas', sql: 'Sql' };
+            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Thoughtspot', 'Quicksight', 'Qlik', 'Oac', 'Bobj', 'Cube', 'Prep', 'Ssas', 'Sql'];
+            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', thoughtspot: 'Thoughtspot', quicksight: 'Quicksight', qlik: 'Qlik', oac: 'Oac', bobj: 'Bobj', cube: 'Cube', prep: 'Prep', ssas: 'Ssas', sql: 'Sql' };
             const target = map[format] || 'Dbt';
             panels.forEach(p => {
                 const el = document.getElementById('subPanel' + p);
@@ -19133,6 +19231,416 @@ views:
                 showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning');
                 return;
             }
+            openSaveLocationModal();
+        }
+
+        // ── SAP BusinessObjects Universe Converter ──────────────────────────
+        // Inline mirror of sigma-data-model-mcp/src/bobj.ts. Keep in lockstep.
+
+        function handleBobjFileInput(event) {
+            const files = [...event.target.files];
+            if (files.length) _bobjReadFile(files[0]);
+            event.target.value = '';
+        }
+        function handleBobjDrop(event) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('drag-over');
+            const files = [...(event.dataTransfer?.files || [])];
+            if (files.length) _bobjReadFile(files[0]);
+        }
+        function _bobjReadFile(file) {
+            const reader = new FileReader();
+            reader.onload = e => {
+                document.getElementById('bobjJsonInput').value = e.target.result;
+                document.getElementById('bobjInputStats').innerHTML =
+                    `<span class="dbt-stat-badge">${file.name}</span>`;
+            };
+            reader.readAsText(file);
+        }
+
+        function loadBobjExample() {
+            const example = {
+                universe: {
+                    name: 'Retail Universe',
+                    classes: [
+                        { name: 'Orders', objects: [
+                            { name: 'Order Channel', type: 'Dimension', select: 'ORDER_FACT.ORDER_CHANNEL' },
+                            { name: 'Order Status',  type: 'Dimension', select: 'ORDER_FACT.ORDER_STATUS' },
+                            { name: 'Net Revenue',   type: 'Measure', aggregation: 'Sum', select: 'ORDER_FACT.NET_REVENUE' },
+                            { name: 'Order Count',   type: 'Measure', select: 'count(ORDER_FACT.ORDER_ID)' }
+                        ] },
+                        { name: 'Customer', objects: [
+                            { name: 'Customer Region',  type: 'Dimension', select: 'CUSTOMER_DIM.REGION' },
+                            { name: 'Customer Segment', type: 'Dimension', select: 'CUSTOMER_DIM.CUSTOMER_SEGMENT' }
+                        ] }
+                    ],
+                    joins: [ { expression: 'ORDER_FACT.CUSTOMER_KEY = CUSTOMER_DIM.CUSTOMER_KEY', cardinality: 'many-to-one' } ],
+                    filters: [ { name: 'Recent Orders', where: 'ORDER_FACT.ORDER_DATE_KEY >= 20240101' } ]
+                }
+            };
+            document.getElementById('bobjJsonInput').value = JSON.stringify(example, null, 2);
+            document.getElementById('bobjConvertBtn').disabled = false;
+        }
+
+        // Helpers (mirror bobj.ts)
+        function _bobjDisplayName(s) {
+            if (!s) return '';
+            if (/[ ]/.test(s)) return s.replace(/\b\w/g, c => c.toUpperCase());
+            return sigmaDisplayName(s);
+        }
+        function _bobjTableKey(raw) {
+            if (!raw) return '';
+            return raw.replace(/["'`\[\]]/g, '').split('.').pop().trim().toUpperCase();
+        }
+        function _bobjTokens(sql) {
+            if (!sql) return [];
+            const out = []; const re = /"?([A-Za-z_][\w ]*?)"?\s*\.\s*"?([A-Za-z_]\w*)"?/g; let m;
+            while ((m = re.exec(sql))) out.push({ table: m[1].trim(), col: m[2].trim() });
+            return out;
+        }
+        function _bobjSimpleCol(sql) {
+            return /^"?[A-Za-z_][\w ]*?"?\s*\.\s*"?[A-Za-z_]\w*"?$/.test((sql || '').trim());
+        }
+        const _BOBJ_AGG_RE = /^\s*(count\s+distinct|distinct\s+count|sum|count|avg|average|min|minimum|max|maximum|stddev|variance)\s*\(\s*([\s\S]*)\)\s*$/i;
+        function _bobjDetectAgg(sql) { const m = (sql || '').match(_BOBJ_AGG_RE); return m ? m[1] : null; }
+        function _bobjSplitAgg(sql, hint) {
+            const m = (sql || '').match(_BOBJ_AGG_RE);
+            if (m) return { agg: m[1].toLowerCase().replace(/\s+/g, ' '), inner: m[2].trim() };
+            return { agg: (hint || 'sum').toLowerCase(), inner: (sql || '').trim() };
+        }
+        function _bobjAggFormula(agg, inner) {
+            switch ((agg || '').toLowerCase().replace(/\s+/g, ' ')) {
+                case 'sum': return `Sum(${inner})`;
+                case 'count': return `Count(${inner})`;
+                case 'count distinct': case 'distinct count': return `CountDistinct(${inner})`;
+                case 'avg': case 'average': return `Avg(${inner})`;
+                case 'min': case 'minimum': return `Min(${inner})`;
+                case 'max': case 'maximum': return `Max(${inner})`;
+                case 'stddev': return `StdDev(${inner})`;
+                case 'variance': return `Variance(${inner})`;
+                default: return `Sum(${inner})`;
+            }
+        }
+        function _bobjParseJoin(join) {
+            const expr = join.expression || '';
+            const m = expr.match(/"?([A-Za-z_][\w ]*?)"?\s*\.\s*"?([A-Za-z_]\w*)"?\s*=\s*"?([A-Za-z_][\w ]*?)"?\s*\.\s*"?([A-Za-z_]\w*)"?/);
+            if (m) return { leftTable: m[1].trim(), leftCol: m[2].trim(), rightTable: m[3].trim(), rightCol: m[4].trim() };
+            return null;
+        }
+        function _bobjTranslateExpr(expr, warnings) {
+            let f = (expr || '').trim();
+            const at = f.match(/@(\w+)\s*\(/);
+            if (at) {
+                const fn = at[1].toLowerCase();
+                if (fn === 'select') warnings.push('⚠ uses @Select() (reference to another object) — inline the target SELECT manually');
+                else if (fn === 'prompt') warnings.push('⚠ uses @Prompt() (runtime prompt) — model it as a Sigma control/parameter');
+                else if (fn === 'variable') warnings.push('⚠ uses @Variable() (session variable) — substitute a literal or control');
+                else if (fn === 'aggregate_aware') warnings.push('⚠ uses @Aggregate_Aware() — kept the first aggregate branch; verify table routing');
+                else if (fn === 'where') warnings.push('⚠ uses @Where() (embedded condition) — re-express as an If()/filter');
+                else warnings.push(`⚠ uses @${at[1]}() — no Sigma equivalent; review manually`);
+                f = f.replace(/@Aggregate_Aware\s*\(\s*([^,()]+)[\s\S]*?\)/gi, '$1');
+            }
+            f = f.replace(/"?([A-Za-z_][\w ]*?)"?\s*\.\s*"?([A-Za-z_]\w*)"?/g, (_full, _tbl, col) => `[${sigmaDisplayName(col)}]`);
+            f = f.replace(/\bsubstr(?:ing)?\s*\(/gi, 'Mid(');
+            f = f.replace(/\bnvl\s*\(/gi, 'Coalesce(');
+            f = f.replace(/\bifnull\s*\(/gi, 'Coalesce(');
+            f = f.replace(/\binstr\s*\(/gi, 'Search(');
+            f = f.replace(/\b(?:char_)?length\s*\(/gi, 'Len(');
+            f = f.replace(/\bupper\s*\(/gi, 'Upper(');
+            f = f.replace(/\blower\s*\(/gi, 'Lower(');
+            f = f.replace(/\btrim\s*\(/gi, 'Trim(');
+            f = f.replace(/\bto_char\s*\(/gi, 'Text(');
+            f = f.replace(/\bto_date\s*\(/gi, 'Date(');
+            f = f.replace(/\bto_number\s*\(/gi, 'Number(');
+            f = f.replace(/\bcurrent_date\b/gi, 'Today()');
+            f = f.replace(/\bsysdate\b/gi, 'Today()');
+            f = f.replace(/\|\|/g, '&');
+            f = f.replace(/'([^']*)'/g, '"$1"');
+            if (/\bcase\b/i.test(f)) f = _sqlCaseToIf(f);
+            return f;
+        }
+
+        function _bobjNormalize(input) {
+            const root = (input && input.universe) || input || {};
+            const name = root.name || root.universeName || (input && input.name) || 'BusinessObjects Universe';
+            const objects = [];
+            const _pushObj = (o, className) => {
+                const select = o.select || o.sql || o.definition || o.expression || '';
+                if (!select && !o.name) return;
+                const rawKind = (o.qualification || o.type || o.kind || o.objectType || '').toString().toLowerCase();
+                let kind = 'dimension';
+                if (/measure/.test(rawKind)) kind = 'measure';
+                else if (/detail|attribute/.test(rawKind)) kind = 'detail';
+                objects.push({ name: o.name || o.objectName || 'Object', className, kind,
+                    select, aggregation: o.aggregation || o.aggregationFunction || o.projectionFunction || o.function,
+                    description: o.description || o.help });
+            };
+            const _walk = (nodes, parentClass) => {
+                for (const node of nodes) {
+                    const className = node.name || node.className || parentClass;
+                    const items = node.objects || (node.items && node.items.item) || node.items || node.children;
+                    if (Array.isArray(items)) for (const it of items) {
+                        const subItems = it.objects || (it.items && it.items.item) || it.items;
+                        const isFolder = (it.type || it.kind || '').toString().toLowerCase() === 'folder' ||
+                                         (Array.isArray(subItems) && !(it.select || it.sql || it.definition));
+                        if (isFolder) _walk([it], className); else _pushObj(it, className);
+                    }
+                    const sub = node.classes || node.subClasses;
+                    if (Array.isArray(sub)) _walk(sub, className);
+                }
+            };
+            const flat = root.objects || (input && input.objects);
+            if (Array.isArray(flat)) for (const o of flat) _pushObj(o, o.className || o.class);
+            const classRoots = root.classes || (root.businessLayer && root.businessLayer.classes) ||
+                (root.outlines && root.outlines.outline) || root.outline || (input && input.classes);
+            if (Array.isArray(classRoots)) _walk(classRoots, undefined);
+
+            const tableMap = new Map();
+            const declared = root.tables || (root.dataFoundation && root.dataFoundation.tables) || (input && input.tables);
+            if (Array.isArray(declared)) for (const t of declared) {
+                const raw = typeof t === 'string' ? t : (t.name || t.tableName || '');
+                if (!raw) continue;
+                const key = _bobjTableKey(raw);
+                tableMap.set(key, { name: key,
+                    database: typeof t === 'object' ? (t.database || t.catalog) : undefined,
+                    schema: typeof t === 'object' ? (t.schema || t.owner) : undefined });
+            }
+            for (const o of objects) for (const { table } of _bobjTokens(o.select)) {
+                const key = _bobjTableKey(table);
+                if (!tableMap.has(key)) tableMap.set(key, { name: key });
+            }
+
+            const joins = [];
+            const rawJoins = root.joins || (root.dataFoundation && root.dataFoundation.joins) || (input && input.joins);
+            if (Array.isArray(rawJoins)) for (const j of rawJoins) {
+                if (typeof j === 'string') { joins.push({ expression: j }); continue; }
+                joins.push({ left: j.left || j.leftTable || j.table1, right: j.right || j.rightTable || j.table2,
+                    expression: j.expression || j.statement || j.sql || j.definition, cardinality: j.cardinality });
+            }
+            const filters = [];
+            const rawFilters = root.filters || root.conditions || root.predefinedFilters || (input && input.filters);
+            if (Array.isArray(rawFilters)) for (const f of rawFilters)
+                filters.push({ name: f.name || 'Filter', where: f.where || f.expression || f.sql || f.definition, className: f.className || f.class });
+
+            return { name, objects, tables: [...tableMap.values()], joins, filters };
+        }
+
+        function _bobjBuildDerived(elements) {
+            const derived = [];
+            for (const srcEl of elements) {
+                if (!srcEl.relationships || !srcEl.relationships.length) continue;
+                if (!srcEl.source || srcEl.source.kind !== 'warehouse-table') continue;
+                const baseName = srcEl.name || (srcEl.source.path || []).slice(-1)[0] || '';
+                const viewCols = [], viewOrder = [];
+                // Name View cols by business display so the denormalized element is
+                // referencable by clean names (the single bindable element for a workbook).
+                const pushView = (disp, ref) => { if (disp.includes('/')) return; const id = sigmaShortId(); viewCols.push({ id, name: disp, formula: ref }); viewOrder.push(id); };
+                for (const col of (srcEl.columns || [])) {
+                    if (col.hidden) continue;
+                    const fm = col.formula && col.formula.match(/^\[([^\/\]]+)\/([^\]]+)\]$/);
+                    if (!fm) continue;
+                    const disp = col.name || fm[2];
+                    pushView(disp, `[${baseName}/${disp}]`);
+                }
+                for (const rel of srcEl.relationships) {
+                    if (!rel.name) continue;
+                    const tgt = elements.find(e => e.id === rel.targetElementId);
+                    if (!tgt || !tgt.source || tgt.source.kind !== 'warehouse-table') continue;
+                    for (const col of (tgt.columns || [])) {
+                        if (col.hidden) continue;
+                        const fm = col.formula && col.formula.match(/^\[([^\]]+)\]$/);
+                        if (!fm) continue;
+                        const inner = fm[1]; const s = inner.indexOf('/');
+                        const disp = col.name || (s >= 0 ? inner.slice(s + 1) : inner);
+                        pushView(disp, `[${baseName}/${rel.name}/${disp}]`);
+                    }
+                }
+                if (viewCols.length) derived.push({ id: sigmaShortId(), kind: 'table', name: `${baseName} View`,
+                    source: { kind: 'table', elementId: srcEl.id }, columns: viewCols, order: viewOrder });
+            }
+            return derived;
+        }
+
+        function runBobjConversion() {
+            phTrack('conversion_run', { converter: 'bobj' });
+            const raw = document.getElementById('bobjJsonInput').value.trim();
+            if (!raw) { showToast('Paste or drop a BusinessObjects universe JSON first', 'warning'); return; }
+            const btn = document.getElementById('bobjConvertBtn');
+            btn.disabled = true; btn.textContent = '⏳ Converting…';
+            try {
+                let input;
+                try { input = JSON.parse(raw); } catch (e) { showToast('Invalid JSON: ' + e.message, 'error'); return; }
+                _usedIds.clear();
+                const connectionId = document.getElementById('bobjConnectionId').value.trim() || '<CONNECTION_ID>';
+                state.useFriendlyNames = isConnectionFriendly(connectionId);
+                const dbOverride  = document.getElementById('bobjDatabase').value.trim().toUpperCase();
+                const schOverride = document.getElementById('bobjSchema').value.trim().toUpperCase();
+                const warnings = [];
+                { const fnWarn = friendlyNameWarning(); if (fnWarn) warnings.push(fnWarn); }
+
+                const uni = _bobjNormalize(input);
+
+                // Pass 1 — one element per physical table
+                const ctxByKey = new Map();
+                for (const t of uni.tables) {
+                    const key = _bobjTableKey(t.name);
+                    const path = [];
+                    const db = dbOverride || t.database || '';
+                    const sch = schOverride || t.schema || '';
+                    if (db) path.push(db);
+                    if (sch) path.push(sch);
+                    path.push(key);
+                    const element = { id: sigmaShortId(), kind: 'table', name: sigmaDisplayName(key),
+                        source: { connectionId, kind: 'warehouse-table', path }, columns: [], order: [] };
+                    ctxByKey.set(key, { element, columns: [], metrics: [], order: [], physColIds: new Map() });
+                }
+                const ensureRawCol = (ctx, tableKey, physColRaw, hidden) => {
+                    const disp = sigmaDisplayName(physColRaw);
+                    const ex = ctx.physColIds.get(disp);
+                    if (ex) return ex;
+                    const id = sigmaShortId();
+                    const col = { id, formula: `[${tableKey}/${disp}]` };
+                    if (hidden) col.hidden = true;
+                    ctx.columns.push(col); ctx.order.push(id); ctx.physColIds.set(disp, id);
+                    return id;
+                };
+                const qual = o => o.className ? `${o.className}\\${o.name}` : o.name;
+
+                // Pass 2 — place objects
+                for (const obj of uni.objects) {
+                    const tokens = _bobjTokens(obj.select);
+                    const tableKeys = [...new Set(tokens.map(t => _bobjTableKey(t.table)))];
+                    const homeKey = tableKeys[0] || (uni.tables[0] ? _bobjTableKey(uni.tables[0].name) : '');
+                    if (!homeKey) { warnings.push(`⚠ "${qual(obj)}": no table reference in SELECT — skipped.`); continue; }
+                    const ctx = ctxByKey.get(homeKey);
+                    if (!ctx) { warnings.push(`⚠ "${qual(obj)}": table "${homeKey}" not in universe — skipped.`); continue; }
+                    const dispName = _bobjDisplayName(obj.name);
+                    const isMeasure = obj.kind === 'measure' || !!obj.aggregation || !!_bobjDetectAgg(obj.select);
+                    if (tableKeys.length > 1) warnings.push(`⚠ "${qual(obj)}": SELECT spans ${tableKeys.join(', ')} — placed on ${homeKey}; verify cross-table refs.`);
+
+                    if (isMeasure) {
+                        const { agg, inner } = _bobjSplitAgg(obj.select, obj.aggregation);
+                        const innerTokens = _bobjTokens(inner);
+                        let formulaInner;
+                        if (innerTokens.length === 1 && _bobjSimpleCol(inner)) {
+                            ensureRawCol(ctx, homeKey, innerTokens[0].col);
+                            formulaInner = `[${sigmaDisplayName(innerTokens[0].col)}]`;
+                        } else {
+                            formulaInner = _bobjTranslateExpr(inner, warnings);
+                            for (const tk of innerTokens) if (_bobjTableKey(tk.table) === homeKey) ensureRawCol(ctx, homeKey, tk.col);
+                        }
+                        const fn = _bobjAggFormula(agg, formulaInner);
+                        const metricId = sigmaShortId();
+                        const m = { id: metricId, name: dispName, formula: fn };
+                        const fmt = _inferSigmaFormat(fn, dispName);
+                        if (fmt) m.format = fmt;
+                        ctx.metrics.push(m);
+                    } else if (_bobjSimpleCol(obj.select)) {
+                        const tok = tokens[0];
+                        const physDisp = sigmaDisplayName(tok.col);
+                        const ex = ctx.physColIds.get(physDisp);
+                        if (!ex) {
+                            const colId = sigmaShortId();
+                            const col = { id: colId, formula: `[${homeKey}/${physDisp}]` };
+                            if (dispName !== physDisp) col.name = dispName;
+                            if (obj.description) col.description = obj.description;
+                            ctx.columns.push(col); ctx.order.push(colId); ctx.physColIds.set(physDisp, colId);
+                        }
+                    } else {
+                        const formula = _bobjTranslateExpr(obj.select, warnings);
+                        for (const tk of tokens) if (_bobjTableKey(tk.table) === homeKey) ensureRawCol(ctx, homeKey, tk.col);
+                        const colId = sigmaShortId();
+                        const col = { id: colId, name: dispName, formula };
+                        if (obj.description) col.description = obj.description;
+                        ctx.columns.push(col); ctx.order.push(colId);
+                    }
+                }
+
+                // Pass 3 — relationships
+                for (const join of uni.joins) {
+                    const parsed = _bobjParseJoin(join);
+                    if (!parsed) { warnings.push(`⚠ Join "${join.expression || (join.left + '~' + join.right)}" not a simple equi-join — add manually.`); continue; }
+                    let { leftTable, leftCol, rightTable, rightCol } = parsed;
+                    if (join.cardinality && /one-to-many|1-n|onetomany/i.test(join.cardinality)) {
+                        [leftTable, leftCol, rightTable, rightCol] = [rightTable, rightCol, leftTable, leftCol];
+                    }
+                    const srcKey = _bobjTableKey(leftTable), tgtKey = _bobjTableKey(rightTable);
+                    const srcCtx = ctxByKey.get(srcKey), tgtCtx = ctxByKey.get(tgtKey);
+                    if (!srcCtx || !tgtCtx) { warnings.push(`⚠ Join ${srcKey}→${tgtKey}: a table is missing — relationship skipped.`); continue; }
+                    const srcColId = ensureRawCol(srcCtx, srcKey, leftCol, true);
+                    const tgtColId = ensureRawCol(tgtCtx, tgtKey, rightCol, true);
+                    if (!srcCtx.element.relationships) srcCtx.element.relationships = [];
+                    srcCtx.element.relationships.push({ id: sigmaShortId(), targetElementId: tgtCtx.element.id,
+                        keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }], name: tgtKey });
+                }
+                for (const f of uni.filters) {
+                    const w = (f.where || '').length > 120 ? f.where.slice(0, 117) + '...' : (f.where || '(none)');
+                    warnings.push(`⚠ Predefined filter "${f.name}" not migrated (report-time condition). WHERE: ${w}`);
+                }
+
+                const elements = [];
+                for (const ctx of ctxByKey.values()) {
+                    ctx.element.columns = ctx.columns;
+                    ctx.element.order = ctx.order;
+                    if (ctx.metrics.length) ctx.element.metrics = ctx.metrics;
+                    elements.push(ctx.element);
+                }
+                for (const de of _bobjBuildDerived(elements)) elements.push(de);
+
+                const sigma = { name: sigmaDisplayName(uni.name), schemaVersion: 1,
+                    pages: [{ id: sigmaShortId(), name: 'Page 1', elements }] };
+                document.getElementById('bobjJsonOutput').value = JSON.stringify(sigma, null, 2);
+
+                const warnBox = document.getElementById('bobjWarningBox');
+                if (warnings.length) {
+                    warnBox.style.display = '';
+                    warnBox.innerHTML = warnings.map(x => '<div>' + x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>').join('');
+                } else warnBox.style.display = 'none';
+
+                const ec = elements.length;
+                const cc = elements.reduce((n, e) => n + (e.columns || []).length, 0);
+                const mc = elements.reduce((n, e) => n + (e.metrics || []).length, 0);
+                const rc = elements.reduce((n, e) => n + (e.relationships || []).length, 0);
+                const wc = warnings.length;
+                document.getElementById('bobjOutputStats').innerHTML = [
+                    `<span class="dbt-stat-badge">${ec} element${ec !== 1 ? 's' : ''}</span>`,
+                    cc ? `<span class="dbt-stat-badge">${cc} column${cc !== 1 ? 's' : ''}</span>` : '',
+                    mc ? `<span class="dbt-stat-badge measures">${mc} metric${mc !== 1 ? 's' : ''}</span>` : '',
+                    rc ? `<span class="dbt-stat-badge entities">${rc} relationship${rc !== 1 ? 's' : ''}</span>` : '',
+                    wc ? `<span class="dbt-stat-badge" style="color:var(--warning);">${wc} warning${wc !== 1 ? 's' : ''}</span>` : ''
+                ].filter(Boolean).join('');
+
+                ['bobjCopyBtn', 'bobjLoadBtn', 'bobjSaveBtn'].forEach(id => { document.getElementById(id).disabled = false; });
+                showToast(`Converted "${sigmaDisplayName(uni.name)}" → ${ec} element${ec !== 1 ? 's' : ''}${mc ? ', ' + mc + ' metric' + (mc !== 1 ? 's' : '') : ''}`, 'success');
+            } catch (e) {
+                showToast('Conversion error: ' + e.message, 'error');
+                if (_isDevMode()) console.error(e);
+            } finally {
+                btn.disabled = false; btn.textContent = '🏛️ Convert to Sigma JSON';
+            }
+        }
+
+        function copyBobjOutput() {
+            const val = document.getElementById('bobjJsonOutput').value;
+            if (!val) return;
+            navigator.clipboard.writeText(val).then(() => showToast('Copied to clipboard', 'success'));
+        }
+        function loadBobjOutputToEditor() {
+            const val = document.getElementById('bobjJsonOutput').value;
+            if (!val) return;
+            try { const obj = JSON.parse(val); editorMode = 'json'; _updateModeToggleUI(); setEditorContent(obj); }
+            catch (e) { setEditorRaw(val); }
+            state.isNewModel = true; state.selectedModel = null;
+            document.getElementById('editorTitle').textContent = 'Converted from BusinessObjects (unsaved)';
+            ['findBtn', 'treeViewBtn', 'formatBtn', 'diffBtn', 'copyBtn', 'saveBtn', 'aiBtn'].forEach(id => {
+                const el = document.getElementById(id); if (el) el.disabled = false;
+            });
+            enableEditorModeToggle(); switchEditorTab('json');
+            showToast('Loaded into editor — review and click "Save to Sigma"', 'success');
+        }
+        async function bobjLoadAndSave() {
+            loadBobjOutputToEditor();
+            if (!state.accessToken) { showToast('Loaded into editor. Connect to Sigma in the sidebar, then click "Save to Sigma".', 'warning'); return; }
             openSaveLocationModal();
         }
 
@@ -30162,7 +30670,7 @@ models:
 <h3>Known Limitations</h3>
 <ul>
     <li><b>Window / table-calculation functions</b> (<code>runningSum</code>/<code>runningAvg</code>/…, <code>percentOfTotal</code>, <code>rank</code>/<code>denseRank</code>, <code>lag</code>/<code>lead</code>, <code>firstValue</code>/<code>lastValue</code>, <code>difference</code>/<code>percentDifference</code>, <code>periodOverPeriod*</code>, <code>windowSum</code>/…, <code>sumOver</code>/<code>avgOver</code>/…) → <b>translated</b> to a Custom SQL helper element with explicit <code>OVER (PARTITION BY … ORDER BY …)</code> clauses (the partition/order axes are parsed out of the QuickSight expression). The inner aggregate is evaluated at the visual's grouping grain via a <code>WITH base AS (SELECT … GROUP BY …)</code> CTE so rank/percent-of-total don't collapse to 1 / 100%. Sigma DM calc columns silently error on window functions, so this lowering keeps them queryable. <b>Still degraded to a valid <code>Null</code> calc column + description + warning</b> (re-author in SQL or the workbook layer): statistical windows (<code>stdevOver</code>/<code>varOver</code>/<code>percentileOver</code>), <code>percentileRank</code>, and <code>periodToDate*OverTime</code>; also any window whose partition/order can't be resolved.</li>
-    <li><b>Parameter references</b> in calc fields (<code>${ParamName}</code>) → the parameter is emitted as a Sigma <i>control</i>, but a data-model calc column referencing it degrades to a valid <code>Null</code> + description with a warning. Sigma controls are workbook-scoped, so re-author the dependent calculation at the workbook layer using the emitted control.</li>
+    <li><b>Parameter references</b> in calc fields (<code>\${ParamName}</code>) → the parameter is emitted as a Sigma <i>control</i>, but a data-model calc column referencing it degrades to a valid <code>Null</code> + description with a warning. Sigma controls are workbook-scoped, so re-author the dependent calculation at the workbook layer using the emitted control.</li>
     <li><b>Asset Bundle CloudFormation format</b> (<code>--export-format CLOUDFORMATION_JSON</code>) is NOT supported — use <code>QUICKSIGHT_JSON</code></li>
     <li><b>FilterGroups</b> (analysis-level page filters) are reported as warnings and skipped — re-create as workbook page controls</li>
     <li><b>Dataset-of-datasets</b> (<code>LogicalTable.Source.DataSetArn</code> variant) is not yet expanded recursively — supply the referenced dataset's JSON directly</li>
@@ -30335,6 +30843,51 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <a href="https://docs.oracle.com/en/cloud/paas/analytics-cloud/acmdg/what-is-smml.html" target="_blank">Oracle — What is SMML?</a>
     <a href="https://docs.oracle.com/en/cloud/paas/analytics-cloud/acsmm/smml-schema-files-and-folders.html" target="_blank">Oracle — SMML Schema Files and Folders</a>
     <a href="https://docs.oracle.com/en/cloud/paas/analytics-cloud/acsmm/smml-elements-logical-table.html" target="_blank">Oracle — SMML Logical Table Reference</a>
+</div>`,
+
+            bobj: `
+<h3>SAP BusinessObjects Universe Converter</h3>
+<p>Converts a SAP BusinessObjects <b>universe</b> (the semantic layer) to Sigma data model JSON. The expected input is the universe metadata returned by the BI <b>RESTful Web Service</b> (RWS) — <code>GET /biprws/sl/v1/universes/{id}</code> — running on your on-prem BO 4.x server. The ingest is tolerant of the common RWS shape variants (nested outline/items folders, class/objects, or a flat <code>objects[]</code> array).</p>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>Physical tables</b> → Sigma elements (one element per table); the warehouse path is the last segment of the table name, with optional Database / Schema overrides applied</li>
+    <li><b>Dimensions / details</b> → Sigma columns; the universe <b>business name</b> is preserved via the column <code>name</code> while the formula references the underlying physical column</li>
+    <li><b>Measures</b> → Sigma <b>metrics</b> (Sum / Count / Count Distinct / Avg / Min / Max / StdDev / Variance) of the underlying column; the backing physical column is also kept so the metric resolves</li>
+    <li><b>Object expressions</b> (functions, CASE, concatenation) → Sigma calculated columns</li>
+    <li><b>Joins</b> → Sigma relationships; FK/PK keys are parsed directly from the join's <code>Table.col = Table.col</code> SQL, and join-key columns are surfaced (hidden) so the relationship resolves. Tables with outgoing joins also get a derived <b>View</b> element exposing own + joined columns via <code>[SRC/TARGET/Col]</code> cross-element formulas</li>
+</ul>
+
+<h3>How to Export from BusinessObjects</h3>
+<ol>
+    <li>Authenticate: <code>POST /biprws/logon/long</code> → returns a logon token</li>
+    <li>List universes: <code>GET /biprws/sl/v1/universes</code></li>
+    <li>Fetch one universe's metadata: <code>GET /biprws/sl/v1/universes/{id}</code> (request JSON via the <code>Accept: application/json</code> header)</li>
+    <li>Drop the resulting <code>.json</code> into the converter, or paste it</li>
+</ol>
+
+<h3>Expression Conversion</h3>
+<ul>
+    <li><code>Table.Column</code> / <code>"Table"."Column"</code> references → <code>[Column Name]</code></li>
+    <li><code>SUBSTR / SUBSTRING</code> → <code>Mid()</code>; <code>NVL / IFNULL</code> → <code>Coalesce()</code>; <code>INSTR</code> → <code>Search()</code>; <code>LENGTH</code> → <code>Len()</code></li>
+    <li><code>UPPER / LOWER / TRIM / TO_CHAR / TO_DATE / TO_NUMBER</code> → <code>Upper / Lower / Trim / Text / Date / Number</code></li>
+    <li><code>CURRENT_DATE / SYSDATE</code> → <code>Today()</code>; <code>||</code> (concat) → <code>&amp;</code></li>
+    <li>Single-quoted literals <code>'Value'</code> → <code>"Value"</code>; <code>CASE … END</code> → <code>If(…)</code></li>
+</ul>
+
+<h3>Known Limitations</h3>
+<ul>
+    <li><b>Predefined filters / conditions</b> — emitted as warnings only. These are report-time WHERE clauses with no data-model equivalent; re-create them as Sigma filters or controls.</li>
+    <li><b>Universe @-functions</b> — <code>@Prompt()</code>, <code>@Select()</code>, <code>@Variable()</code>, <code>@Aggregate_Aware()</code>, <code>@Where()</code> are flagged with a warning. <code>@Aggregate_Aware</code> keeps its first aggregate branch; the others need a manual control/parameter or inlined SELECT.</li>
+    <li><b>Contexts &amp; derived tables</b> — RWS metadata is light on join contexts and derived-table SQL. A full Semantic-Layer-SDK XML export is needed for that fidelity (planned Phase 2 — same converter core).</li>
+    <li><b>Multi-table object SELECTs</b> — an object whose SELECT spans more than one table is placed on its first table with a warning; verify the cross-table references.</li>
+    <li><b>Crystal Reports / Web Intelligence</b> — this converter handles the universe (semantic layer) only, not the report/document layer.</li>
+</ul>
+
+<div class="help-links">
+    <div class="help-links-title">📚 Resources</div>
+    <a href="https://help.sap.com/docs/SAP_BUSINESSOBJECTS_BUSINESS_INTELLIGENCE_PLATFORM" target="_blank">SAP — BI Platform Documentation</a>
+    <a href="https://help.sap.com/docs/SAP_BUSINESSOBJECTS_BUSINESS_INTELLIGENCE_PLATFORM/db1bdf6b6cee4ffd9266c5d599fc97a5/45aff70f6e041014910aba7db0e91070.html" target="_blank">SAP — RESTful Web Service SDK</a>
 </div>`,
 
             cube: `
@@ -30536,7 +31089,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
 
         function switchHelpTab(tab) {
             document.querySelectorAll('#helpTabs .help-tab').forEach((t, i) => {
-                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'thoughtspot', 'qlik', 'oac', 'cube', 'prep', 'ai', 'api', 'mcp', 'sql'];
+                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'thoughtspot', 'quicksight', 'qlik', 'oac', 'bobj', 'cube', 'prep', 'ai', 'api', 'mcp', 'sql'];
                 t.classList.toggle('active', tabs[i] === tab);
             });
             document.getElementById('helpContent').innerHTML = HELP_CONTENT[tab] || '';
@@ -30548,7 +31101,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
             const hash = location.hash;
             if (hash && hash.startsWith('#help-')) {
                 const tab = hash.replace('#help-', '');
-                const validTabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'thoughtspot', 'qlik', 'oac', 'cube', 'prep', 'sql', 'ai', 'api', 'mcp'];
+                const validTabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'thoughtspot', 'quicksight', 'qlik', 'oac', 'bobj', 'cube', 'prep', 'sql', 'ai', 'api', 'mcp'];
                 if (validTabs.includes(tab)) {
                     toggleHelpModal();
                     switchHelpTab(tab);
@@ -31344,6 +31897,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
                 <button class="help-tab" onclick="switchHelpTab('quicksight')">☁️ QuickSight</button>
                 <button class="help-tab" onclick="switchHelpTab('qlik')">🔮 Qlik</button>
                 <button class="help-tab" onclick="switchHelpTab('oac')">☁️ Oracle</button>
+                <button class="help-tab" onclick="switchHelpTab('bobj')">🏛️ BusinessObjects</button>
                 <button class="help-tab" onclick="switchHelpTab('cube')">🟦 Cube.dev</button>
                 <button class="help-tab" onclick="switchHelpTab('prep')">🔧 Tableau Prep</button>
                 <button class="help-tab" onclick="switchHelpTab('ai')">🤖 AI Assistant</button>
