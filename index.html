@@ -22039,7 +22039,9 @@ views:
             // Keys where the syntax is:  key: name { ... }  (named sub-block)
             const NAMED_BLOCK_KEYS = new Set([
                 'dimension','measure','dimension_group','filter','parameter',
-                'join','set','link','action','form_param','option'
+                'join','set','link','action','form_param','option',
+                // Native Derived Table (NDT): `explore_source: <explore> { column ... }`
+                'explore_source','column','derived_column'
             ]);
 
             // Keys where the value runs until a ;; terminator
@@ -22204,6 +22206,103 @@ views:
             // Resolve any ${other_view.SQL_TABLE_NAME} references before splitting
             if (views) raw = lookResolveTableRef(raw, views, new Set([view.name || '']));
             return raw.split('.').map(p => p.trim().toUpperCase()).filter(Boolean);
+        }
+
+        // ── Native Derived Table (NDT) → aggregating SELECT (best-effort) ─────
+        // A derived_table whose `explore_source` aggregates an existing explore
+        // rather than supplying raw sql:. We resolve the referenced explore's
+        // base view to its warehouse table and translate the listed
+        // column/derived_column into a single-table SELECT (SUM/COUNT + GROUP BY).
+        // Conservative: only emits SQL when every selected column resolves to a
+        // physical field on the base view; otherwise returns null so the caller
+        // falls back to a clear "rebuild as a Sigma data element" warning. Never
+        // produces dangling refs. Mirrors resolveNdtToSql in the MCP src/lookml.ts.
+        function resolveLookNdtToSql(ndtViewName, explSource, warnings) {
+            const views = lookProject.views;
+            const explores = lookProject.explores;
+            const exploreName = (explSource && explSource._name) || '';
+            const explore = explores[exploreName];
+            if (!explore) {
+                warnings.push(`⚠ View "${ndtViewName}" is a Native Derived Table on explore "${exploreName}", which was not found in the provided files. Rebuild it as a Sigma data element (aggregate the source element) after import.`);
+                return null;
+            }
+            const baseViewName = explore.from || exploreName;
+            const baseView = views[baseViewName];
+            if (!baseView || baseView.derived_table) {
+                warnings.push(`⚠ View "${ndtViewName}" (NDT on explore "${exploreName}"): base view "${baseViewName}" is not a simple warehouse table — cannot auto-generate SQL. Rebuild as a Sigma data element after import.`);
+                return null;
+            }
+            const basePath = lookExtractPath(baseView, views);
+            if (!basePath.length) {
+                warnings.push(`⚠ View "${ndtViewName}" (NDT on explore "${exploreName}"): could not resolve base table for view "${baseViewName}". Rebuild as a Sigma data element after import.`);
+                return null;
+            }
+            const fromTable = basePath.join('.');
+
+            const dimMap = new Map(); // field name (lower) → physical SQL expr
+            const dims = baseView.dimension ? (Array.isArray(baseView.dimension) ? baseView.dimension : [baseView.dimension]) : [];
+            for (const d of dims) {
+                if (!d._name || !d.sql) continue;
+                const expr = d.sql.replace(/\$\{TABLE\}\s*\.\s*/gi, '').replace(/;;\s*$/, '').trim();
+                if (/\$\{/.test(expr)) continue; // cross-field/cross-view ref — not tractable
+                dimMap.set(d._name.toLowerCase(), expr);
+            }
+            const measureMap = new Map(); // field name (lower) → { agg, col }
+            const measures = baseView.measure ? (Array.isArray(baseView.measure) ? baseView.measure : [baseView.measure]) : [];
+            const aggFn = { sum: 'SUM', average: 'AVG', avg: 'AVG', min: 'MIN', max: 'MAX', count: 'COUNT', count_distinct: 'COUNT', median: 'MEDIAN' };
+            for (const ms of measures) {
+                if (!ms._name) continue;
+                const t = (ms.type || '').toLowerCase();
+                if (!aggFn[t]) continue;
+                let col = '*';
+                if (ms.sql) {
+                    const e = ms.sql.replace(/\$\{TABLE\}\s*\.\s*/gi, '').replace(/;;\s*$/, '').trim();
+                    const refMatch = e.match(/\$\{(\w+)\}/);
+                    if (refMatch) {
+                        col = dimMap.get(refMatch[1].toLowerCase()) || '*';
+                        if (col === '*') continue;
+                    } else col = e;
+                } else if (t !== 'count') continue;
+                const distinct = t === 'count_distinct' ? 'DISTINCT ' : '';
+                measureMap.set(ms._name.toLowerCase(), { agg: aggFn[t], col: distinct + col });
+            }
+
+            const cols = explSource.column ? (Array.isArray(explSource.column) ? explSource.column : [explSource.column]) : [];
+            const selectParts = [];
+            const groupByExprs = [];
+            let hasMeasure = false;
+            let unresolved = false;
+
+            for (const c of cols) {
+                const outName = c._name || '';
+                const fieldRef = (c.field || c._name || '').trim();
+                const fieldName = (fieldRef.includes('.') ? fieldRef.split('.').pop() : fieldRef).toLowerCase();
+                // Uppercase the alias to match the warehouse-folded identifier the
+                // NDT view's dimensions reference (${TABLE}.order_status → ORDER_STATUS).
+                const alias = outName ? ` AS "${outName.toUpperCase()}"` : '';
+                if (measureMap.has(fieldName)) {
+                    const m = measureMap.get(fieldName);
+                    selectParts.push(`${m.agg}(${m.col})${alias}`);
+                    hasMeasure = true;
+                } else if (dimMap.has(fieldName)) {
+                    const expr = dimMap.get(fieldName);
+                    selectParts.push(`${expr}${alias}`);
+                    groupByExprs.push(expr);
+                } else {
+                    unresolved = true;
+                    break;
+                }
+            }
+
+            if (unresolved || selectParts.length === 0) {
+                warnings.push(`⚠ View "${ndtViewName}" (NDT on explore "${exploreName}"): one or more selected columns reference fields that could not be resolved on the base view (joined/derived fields are not supported here). Rebuild this NDT as a Sigma data element that aggregates the source element after import.`);
+                return null;
+            }
+
+            let sql = `SELECT\n  ${selectParts.join(',\n  ')}\nFROM ${fromTable}`;
+            if (hasMeasure && groupByExprs.length) sql += `\nGROUP BY ${groupByExprs.join(', ')}`;
+            warnings.push(`ℹ View "${ndtViewName}" → Native Derived Table on explore "${exploreName}" was translated to a Custom SQL element (aggregation pushed to ${fromTable}). Review the generated SQL and consider rebuilding it as a native Sigma data element for full editability.`);
+            return sql;
         }
 
         // ── Strip ${TABLE}. / ${view.field} from a sql: expression ────────────
@@ -22909,7 +23008,12 @@ ${cleanedSql}`;
             const needsPhysical = (j) => {
                 if (usePhysical) return true;
                 if (strategy === 'relationships') return false;
-                if (j.rel === 'one_to_many' || j.rel === 'many_to_many') return true;
+                // many_to_many is intentionally NOT forced to a physical join. Sigma
+                // has no native M:N relationship, but we keep it on the relationship
+                // path mapped to the closest type (N:1) with a bridge-table warning
+                // (see relationship wiring) rather than dropping it. Matches the MCP
+                // converter (src/lookml.ts).
+                if (j.rel === 'one_to_many') return true;
                 if (j.joinType === 'full_outer') return true;
                 return false;
             };
@@ -23006,13 +23110,24 @@ ${cleanedSql}`;
 
                     if (isBaseView(srcView)) directRelAliases.add(j.alias);
 
+                    // Map the LookML relationship cardinality to the closest Sigma
+                    // type. Sigma supports N:1 / 1:1 / 1:N — there is no native
+                    // many_to_many, so M:N is approximated as N:1 with a warning.
+                    let relType = 'N:1';
+                    if (j.rel === 'one_to_one') relType = '1:1';
+                    else if (j.rel === 'many_to_many') {
+                        relType = 'N:1';
+                        warnings.push(`⚠ Relationship "${j.alias}": LookML relationship is many_to_many, which Sigma does not support natively. Mapped to the closest type (N:1) — verify cardinality and introduce a bridge/junction table if the join can fan out on both sides (otherwise aggregates may double-count).`);
+                    }
+
                     const srcEl = srcRes.element;
                     if (!srcEl.relationships) srcEl.relationships = [];
                     srcEl.relationships.push({
                         id: sigmaShortId(),
                         targetElementId: targetRes.elementId,
                         keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
-                        name: j.alias
+                        name: j.alias,
+                        relationshipType: relType
                     });
                 });
             });
@@ -23657,8 +23772,19 @@ ${cleanedSql}`;
             let tableName, element;
 
             if (view.derived_table !== undefined) {
-                // Warn about PDT materialization properties not supported in Sigma
-                const PDT_SKIP_PROPS = ['distribution', 'sortkeys', 'datagroup_trigger', 'persist_with', 'cluster_keys', 'partition_keys'];
+                // PDT persistence hints → Sigma scheduled materialization (informational).
+                // datagroup_trigger / persist_for / sql_trigger_value control when Looker
+                // rebuilds a Persistent Derived Table; the Sigma equivalent is scheduled
+                // materialization on the data model (Materialization tab in the DM UI / API).
+                const PERSIST_HINTS = ['datagroup_trigger', 'persist_for', 'sql_trigger_value'];
+                for (const prop of PERSIST_HINTS) {
+                    if (view.derived_table[prop] !== undefined) {
+                        const pv = typeof view.derived_table[prop] === 'string' ? view.derived_table[prop] : '';
+                        warnings.push(`ℹ View "${viewName}": PDT persistence hint "${prop}"${pv ? ` (${pv})` : ''} maps to Sigma scheduled materialization. Configure a materialization schedule on this data model (Materialization tab in the Sigma UI, or via the API) to get the equivalent refresh cadence.`);
+                    }
+                }
+                // Other warehouse-specific PDT properties with no Sigma equivalent.
+                const PDT_SKIP_PROPS = ['distribution', 'sortkeys', 'persist_with', 'cluster_keys', 'partition_keys'];
                 for (const prop of PDT_SKIP_PROPS) {
                     if (view.derived_table[prop] !== undefined) {
                         warnings.push(`ℹ "${viewName}": PDT property "${prop}" is a warehouse-specific materialization hint and is not converted — remove or handle separately in Sigma.`);
@@ -23669,6 +23795,14 @@ ${cleanedSql}`;
                 let rawSql = (view.derived_table.sql || '')
                     .replace(/;;\s*$/, '')
                     .trim();
+
+                // ── Native Derived Table (NDT): no raw sql:, aggregates an explore_source ──
+                if (!rawSql && view.derived_table.explore_source !== undefined) {
+                    const es = Array.isArray(view.derived_table.explore_source)
+                        ? view.derived_table.explore_source[0]
+                        : view.derived_table.explore_source;
+                    rawSql = resolveLookNdtToSql(viewName, es, warnings) || '';
+                }
 
                 // ── Pre-process derived table SQL ────────────────────────────
                 // 1. Strip Liquid incrementcondition blocks (incremental PDT syntax)
@@ -23819,9 +23953,11 @@ ${cleanedSql}`;
                 }
 
                 tableName = 'Custom SQL'; // signals isCustomSql → column formulas use bare [COL] refs
+                // Spec rule #3: Custom SQL elements (source.kind === 'sql') MUST omit
+                // the element-level `name` — a present name breaks bare [COL]
+                // self-reference resolution against the SQL aliases (Unknown name).
                 element = {
                     id: elementId,
-                    name: sigmaDisplayName(displayAlias),
                     kind: 'table',
                     source: {
                         connectionId: connectionId || '<CONNECTION_ID>',
@@ -23948,11 +24084,20 @@ ${cleanedSql}`;
             // For Custom SQL elements Sigma matches against the literal SQL alias (e.g. ORDER_ID),
             // not a display name. For warehouse-table elements it uses the display name.
             const isCustomSql = (tableName === 'Custom SQL');
+            // For Native Derived Tables we generate the SQL ourselves and emit
+            // literally-matching double-quoted aliases (AS "ORDER_STATUS"), so the
+            // qualified [Custom SQL/COL] ref resolves reliably (mirrors the MCP).
+            // Hand-written derived_table sql: rarely emits matching quoted aliases,
+            // so those keep the bare [COL] form (Sigma fuzzy-matches self-refs).
+            const isNdt = isCustomSql && view.derived_table && view.derived_table.explore_source !== undefined && !(view.derived_table.sql || '').trim();
             const colLabel = (physCol) => isCustomSql ? physCol : sigmaDisplayName(physCol);
             // colRef: build a column formula reference.
-            // SQL elements → bare [ColAlias] (relative ref within the element).
-            // Warehouse-table elements → [TableName/Display Name] (qualified source ref).
-            const colRef = (col) => isCustomSql ? `[${colLabel(col)}]` : `[${tableName}/${colLabel(col)}]`;
+            // NDT SQL elements      → qualified [Custom SQL/ColAlias].
+            // Other SQL elements    → bare [ColAlias] (relative ref within the element).
+            // Warehouse-table elems → [TableName/Display Name] (qualified source ref).
+            const colRef = (col) => isCustomSql
+                ? (isNdt ? `[Custom SQL/${colLabel(col)}]` : `[${colLabel(col)}]`)
+                : `[${tableName}/${colLabel(col)}]`;
 
             // ── Dimensions ──────────────────────────────────────────────────
             const dims = view.dimension
@@ -30531,7 +30676,9 @@ models:
     <li><b>Incremental PDT leading-comma CTEs</b> — Looker incremental PDT SQL bodies are designed to be appended to a trigger CTE, so they begin with <code>,cte_name AS (</code> rather than a full <code>WITH</code> statement. The converter automatically corrects this to <code>WITH cte_name AS (</code> so the SQL is valid standalone. A warning is shown in the output panel when this correction is applied.</li>
     <li><b>Trailing comma before SQL keywords in derived table SQL</b> — Some LookML derived tables leave a trailing comma at the end of a <code>SELECT</code> list (e.g. <code>expr AS col,\nFROM final</code>). This is tolerated by Looker's templating engine but is invalid standalone SQL that causes a Snowflake compilation error. The converter automatically strips these trailing commas before <code>FROM</code>, <code>WHERE</code>, <code>GROUP BY</code>, <code>ORDER BY</code>, <code>HAVING</code>, <code>LIMIT</code>, and set operators. A warning is shown when this correction is applied.</li>
     <li><b>include: directives</b> — LookML <code>include:</code> statements are parsed and listed in the warnings panel. Cross-file view resolution is based only on the files you upload — if a view referenced by an <code>include:</code> path is not uploaded, its joins will be silently skipped. Glob patterns (e.g. <code>/views/*</code>) are not expanded.</li>
-    <li><b>PDT materialization hints</b> — Warehouse-specific PDT properties (<code>distribution</code>, <code>sortkeys</code>, <code>datagroup_trigger</code>, <code>persist_with</code>, <code>cluster_keys</code>, <code>partition_keys</code>) are not converted. A warning is shown in the output panel for each property encountered so you can handle them separately.</li>
+    <li><b>PDT persistence hints → Sigma materialization</b> — <code>datagroup_trigger</code>, <code>persist_for</code>, and <code>sql_trigger_value</code> control when Looker rebuilds a Persistent Derived Table. These now emit a specific informational note mapping them to <b>Sigma scheduled materialization</b> (set a materialization schedule on the data model via the Materialization tab in the UI or the API) so you can reproduce the refresh cadence. Other warehouse-specific PDT properties (<code>distribution</code>, <code>sortkeys</code>, <code>persist_with</code>, <code>cluster_keys</code>, <code>partition_keys</code>) have no Sigma equivalent and are noted with a warning so you can handle them separately.</li>
+    <li><b>Native Derived Tables (NDT)</b> — A <code>derived_table</code> that aggregates another explore via <code>explore_source</code> (instead of raw <code>sql:</code>) is translated best-effort to a Custom SQL element: the referenced explore's base table is resolved and the listed <code>column</code> blocks become an aggregating <code>SELECT … GROUP BY</code> (measures → <code>SUM/COUNT/AVG/…</code>, dimensions → grouped). If a selected column references a joined or derived field that can't be resolved on the base view, no SQL is fabricated — a warning instead recommends rebuilding the NDT as a native Sigma data element that aggregates the source element (never produces dangling references).</li>
+    <li><b>many_to_many relationships</b> — Sigma has no native many-to-many relationship. A join with <code>relationship: many_to_many</code> is mapped to the closest type (<code>N:1</code>) and the relationship plus its joined dimension columns are kept, with a warning to verify cardinality and add a bridge/junction table where the join can fan out on both sides (otherwise aggregates may double-count).</li>
     <li><b>Snowflake (multi-hop) joins in the flat explore element</b> — When a join's FK lives on another joined view rather than the base (a snowflake schema), the relationship is correctly attached to that intermediate element, so the explore's full relationship graph is intact. However, those second-hop columns are <b>not</b> surfaced in the single flat <em>derived explore element</em> (which only carries the base view's direct relationships, to avoid multi-hop cross-element references) — reach them via the relationship graph or the intermediate element's own derived view. A warning is shown for each snowflake join skipped from the flat element.</li>
 </ul>
 
