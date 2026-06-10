@@ -10385,14 +10385,23 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                     if (!tgtEl || !tgtEl.source || tgtEl.source.kind !== 'warehouse-table') return;
                     (tgtEl.columns || []).forEach(function(col) {
                         if (!col.formula || col.formula.startsWith('/*')) return;
-                        var fm = col.formula.match(/^\[([^\]]+)\]$/);
-                        if (!fm) return;
-                        var inner = fm[1];
-                        // The display name is everything after the FIRST slash (the table/element
-                        // prefix). Use indexOf, not lastIndexOf — a display name may itself contain
-                        // a slash (e.g. Tableau caption "Product Key/Name").
-                        var s = inner.indexOf('/');
-                        var dispName = s >= 0 ? inner.slice(s + 1) : inner;
+                        // Named/computed columns (e.g. dimension_group DateTrunc timeframes
+                        // like "Order Month", CASE dims) are referenced cross-element by
+                        // their display name, not by parsing a [TABLE/Col] passthrough
+                        // formula — otherwise trend-by-month dashboard tiles dangle.
+                        var dispName;
+                        if (col.name) {
+                            dispName = col.name;
+                        } else {
+                            var fm = col.formula.match(/^\[([^\]]+)\]$/);
+                            if (!fm) return;
+                            var inner = fm[1];
+                            // The display name is everything after the FIRST slash (the table/element
+                            // prefix). Use indexOf, not lastIndexOf — a display name may itself contain
+                            // a slash (e.g. Tableau caption "Product Key/Name").
+                            var s = inner.indexOf('/');
+                            dispName = s >= 0 ? inner.slice(s + 1) : inner;
+                        }
                         // A display name containing a "/" cannot be referenced via Sigma's
                         // slash-delimited bracket syntax ([Base/Rel/Field] would over-segment). Such
                         // a column stays accessible on its own dimension element; just don't surface
@@ -22010,7 +22019,7 @@ views:
             // sql_start/sql_end are also SQL expressions but were previously left to the
             // tokenizer, which splits "${TABLE}.COL" into two tokens joined with a space,
             // breaking column-name extraction for duration dimension_groups.
-            text = text.replace(/\b(sql(?:_start|_end)?)\s*:([\s\S]*?);;/g, (match, keyName, sqlContent) => {
+            text = text.replace(/\b(sql_trigger_value|sql_table_name|sql_where|sql_start|sql_end|sql_on|html|sql)\s*:([\s\S]*?);;/g, (match, keyName, sqlContent) => {
                 const key = `__SQLPH${phIdx++}__`;
                 sqlPlaceholders[key] = sqlContent.trim();
                 return `${keyName}: "${key}" ;;`;
@@ -23095,8 +23104,13 @@ ${cleanedSql}`;
                     }
                     targetRes.element.columns.forEach(col => {
                         if (!col.formula || col.formula.startsWith('/*')) return;
-                        const dispName = _lkDispName(col.formula);
-                        if (!dispName) return;
+                        // Named/computed joined columns (dimension_group DateTrunc
+                        // timeframes, CASE dims, and physical cols carrying an explicit
+                        // name like "Promo Start Raw") are referenced cross-element by
+                        // their DISPLAY NAME, not by the name parsed out of a [TABLE/Col]
+                        // passthrough formula — otherwise the ref dangles ("Ref Missing").
+                        const dispName = col.name || _lkDispName(col.formula);
+                        if (!dispName || dispName.indexOf('/') !== -1) return;
                         const cId = sigmaShortId();
                         lkViewCols.push({ id: cId, formula: `[${lkBaseName}/${j.alias}/${dispName}]` });
                         lkViewOrder.push(cId);
@@ -23949,6 +23963,29 @@ ${cleanedSql}`;
                 if (!d._name) continue;
                 const colName = d._name.toUpperCase();
 
+                // ── legacy `case: { when: {sql,label}... else }` → nested If() ──
+                // A dimension with a legacy case block is a calculated column, NOT a
+                // passthrough to a (nonexistent) physical column named after the dim.
+                if (d.case && typeof d.case === 'object') {
+                    const whens = Array.isArray(d.case.when) ? d.case.when : (d.case.when ? [d.case.when] : []);
+                    const toCond = (sql) => lookConvertExpression(
+                        (sql || '').replace(/\$\{TABLE\}\./gi, '')
+                            .replace(/\$\{[^.}]+\.([^}]+)\}/g, '$1')
+                            .replace(/[\r\n]+\s*/g, ' ').trim());
+                    let formula = d.case.else != null ? `"${String(d.case.else)}"` : 'Null';
+                    for (let i = whens.length - 1; i >= 0; i--) {
+                        const w = whens[i];
+                        if (typeof w !== 'object' || !w.sql) continue;
+                        formula = `If(${toCond(w.sql)}, "${String(w.label ?? w._name ?? '')}", ${formula})`;
+                    }
+                    const caseColId = sigmaShortId();
+                    colIdMap[colName] = caseColId;
+                    element.columns.push({ id: caseColId, formula, name: d.label || sigmaDisplayName(d._name) });
+                    element.order.push(caseColId);
+                    warnings.push(`✅ "${d._name}" (case) → ${formula.slice(0, 70)}`);
+                    continue;
+                }
+
                 // Detect ${identifier} refs — distinguish same-view field refs from LookML parameters
                 {
                     const bareRefs = [...(d.sql || '').matchAll(/\$\{([^.}]+)\}/g)]
@@ -24234,6 +24271,16 @@ ${cleanedSql}`;
                                       || lookStripSql(dg.sql_start).split('.').pop().replace(/"/g, '').toUpperCase();
                     const endCol    = (normEnd.match(/^([A-Za-z_][A-Za-z0-9_]*)/) || ['',''])[1].toUpperCase()
                                       || lookStripSql(dg.sql_end).split('.').pop().replace(/"/g, '').toUpperCase();
+                    // ensure the start/end physical columns exist on the element (the
+                    // DateDiff references them) — otherwise the duration columns dangle.
+                    for (const pc of [startCol, endCol]) {
+                        if (pc && !colIdMap[pc]) {
+                            const cid = sigmaShortId();
+                            colIdMap[pc] = cid;
+                            element.columns.push({ id: cid, formula: colRef(pc) });
+                            element.order.push(cid);
+                        }
+                    }
                     const startRef  = colRef(startCol);
                     const endRef    = colRef(endCol);
                     const intervals = Array.isArray(dg.intervals)
@@ -24358,11 +24405,94 @@ ${cleanedSql}`;
             // Measure types that map to simple aggregates (all others with complex SQL → calc col)
             const SIMPLE_AGG_TYPES = new Set(['sum','count','count_distinct','average','max','min','median']);
 
+            // Pre-pass: resolve each non-computed measure's Sigma aggregate formula so that
+            // ratio/number measures referencing other measures (e.g. ${total_revenue} /
+            // ${order_count}) can substitute them. Avoids leaking ${...} tokens / fabricating
+            // phantom columns from arithmetic expressions (e.g. splitting "1.0" into "0").
+            const measurePhysCol = (ms) => {
+                const resolved = (ms.sql || '').replace(
+                    /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g,
+                    (m, r) => dimPhysColMap.get(r.toLowerCase()) ?? m);
+                const sc = lookStripSql(resolved) || (ms._name || '').toUpperCase();
+                return sc.split('.').pop().replace(/"/g, '').toUpperCase();
+            };
+            const measureFilterCondition = (ms) => {
+                const fl = Array.isArray(ms.filters) ? ms.filters : (ms.filters ? [ms.filters] : []);
+                const conds = [];
+                for (const f of fl) {
+                    if (typeof f !== 'object' || !f) continue;
+                    const ff = f.field || f._name, fv = f.value;
+                    if (!ff || fv == null) continue;
+                    const dn = colLabel(ff.replace(/^.*\./, '').toUpperCase());
+                    if (fv === 'yes' || fv === 'true') conds.push(`[${dn}] = True`);
+                    else if (fv === 'no' || fv === 'false') conds.push(`[${dn}] = False`);
+                    else conds.push(`[${dn}] = "${fv}"`);
+                }
+                if (!conds.length) return null;
+                return conds.length === 1 ? conds[0] : conds.map(c => `(${c})`).join(' And ');
+            };
+            const simpleMeasureFormula = (ms) => {
+                const t = (ms.type || 'count').toLowerCase();
+                const dn = colLabel(measurePhysCol(ms));
+                const cond = measureFilterCondition(ms);
+                if (cond) {
+                    const m = {
+                        sum: `SumIf([${dn}], ${cond})`, count: `CountIf(${cond})`,
+                        count_distinct: `CountDistinctIf([${dn}], ${cond})`, average: `AvgIf([${dn}], ${cond})`,
+                        max: `MaxIf([${dn}], ${cond})`, min: `MinIf([${dn}], ${cond})`,
+                    };
+                    return m[t] || `SumIf([${dn}], ${cond})`;
+                }
+                if (t === 'count') return 'Count()';
+                if (t === 'count_distinct') return `CountDistinct([${dn}])`;
+                if (t === 'percentile') return `Percentile([${dn}], ${(Number(ms.percentile) || 50) / 100})`;
+                if (['sum', 'average', 'median', 'min', 'max', 'average_distinct', 'sum_distinct', 'list'].includes(t))
+                    return lookSigmaMetric(t, measurePhysCol(ms));
+                return null; // number/computed/ratio — resolved in the main pass
+            };
+            const measureSigmaFormula = new Map();
+            measures.forEach((ms) => {
+                if (!ms._name) return;
+                const f = simpleMeasureFormula(ms);
+                if (f) measureSigmaFormula.set(ms._name.toLowerCase(), f);
+            });
+
             for (const ms of measures) {
                 if (!ms._name) continue;
                 const msName = ms._name.toUpperCase();
                 const msType = (ms.type || 'count').toLowerCase();
                 const msLabel = ms.label || sigmaDisplayName(msName);
+
+                // ── Computed / ratio measures → metric (NOT a calc column) ────
+                // sql references OTHER measures (${measure}) or is a complex arithmetic
+                // expression (type:number). Substitute each ${measure} with its Sigma
+                // aggregate formula and map SQL funcs → Sigma; emit as a metric. Must run
+                // BEFORE the complex-SQL→calc-column block (a ratio is "complex SQL") and
+                // before lookStripSql phys-col derivation (which would turn "1.0" into "0").
+                {
+                    const measureRefs = [...((ms.sql || '')).matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)]
+                        .map(mm => mm[1].toLowerCase());
+                    const refsOtherMeasure = measureRefs.some(r => measureSigmaFormula.has(r));
+                    const isComputed = !ms.filters && (refsOtherMeasure ||
+                        (msType === 'number' && ms.sql && lookIsComplexSql(ms.sql)));
+                    if (isComputed) {
+                        let expr = (ms.sql || '');
+                        expr = expr.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (m, r) => {
+                            const mf = measureSigmaFormula.get(r.toLowerCase());
+                            if (mf) return `(${mf})`;
+                            const phys = dimPhysColMap.get(r.toLowerCase());
+                            return phys ? `[${colLabel(phys.toUpperCase())}]` : m;
+                        });
+                        // map common SQL funcs to Sigma (decimals/operators pass through untouched)
+                        expr = expr.replace(/\bNULLIF\s*\(/gi, 'NullIf(')
+                                   .replace(/\b(COALESCE|NVL|IFNULL)\s*\(/gi, 'Coalesce(')
+                                   .replace(/\b(IFF|IIF)\s*\(/gi, 'If(')
+                                   .replace(/;;\s*$/, '');
+                        element.metrics.push({ id: sigmaShortId(), formula: expr.trim(), name: msLabel });
+                        warnings.push(`✅ "${ms._name}" (computed) → ${expr.trim().slice(0, 70)}`);
+                        continue;
+                    }
+                }
 
                 // ── Complex measure SQL → calculated column ───────────────────
                 // Measures with CASE, functions, or cross-field refs that can't
@@ -24461,7 +24591,10 @@ ${cleanedSql}`;
 
                     if (conditions.length > 0) {
                         const condition = conditions.length === 1 ? conditions[0] : conditions.map(c => `(${c})`).join(' And ');
-                        if (!colIdMap[physicalCol]) {
+                        // A filtered `count` (CountIf) references only the condition columns,
+                        // not a value column — don't fabricate a physical column from the
+                        // measure name.
+                        if (msType !== 'count' && !colIdMap[physicalCol]) {
                             const colId = sigmaInodeId(physicalCol);
                             colIdMap[physicalCol] = colId;
                             element.columns.push({ id: colId, formula: colRef(physicalCol) });
@@ -24513,7 +24646,10 @@ ${cleanedSql}`;
                         element.columns.push({ id: colId, formula: colRef(physicalCol) });
                         element.order.push(colId);
                     }
-                    const _lkFormula4 = lookSigmaMetric(msType, colLabel(physicalCol));
+                    const _dn4 = colLabel(physicalCol);
+                    const _lkFormula4 = msType === 'percentile'
+                        ? `Percentile([${_dn4}], ${(Number(ms.percentile) || 50) / 100})`
+                        : lookSigmaMetric(msType, _dn4);
                     const _lkFmt4 = (ms.value_format_name ? _lookFormatNameToSigma(ms.value_format_name) : null) || (ms.value_format ? _excelFormatToSigma(ms.value_format) : null) || _inferSigmaFormat(_lkFormula4, msLabel);
                     const _lkM4 = { id: sigmaShortId(), formula: _lkFormula4, name: msLabel };
                     if (_lkFmt4) _lkM4.format = _lkFmt4;
@@ -30353,14 +30489,16 @@ models:
     <li><b>Dimensions</b> → Sigma columns with formula conversion; complex <code>sql</code> expressions auto-converted to Sigma syntax (see Expression Conversion below); duplicate physical columns are auto-deduplicated</li>
     <li><b>Tier dimensions</b> → Bucketed <code>If()</code> calculated columns (e.g. "0 to 99", "100 to 499", "500 or Above")</li>
     <li><b>Yesno dimensions</b> → Boolean calculated columns with "(T/F)" suffix</li>
-    <li><b>Measures</b> → Sigma metrics (sum, count, count_distinct, average, min, max, median)</li>
+    <li><b>Measures</b> → Sigma metrics (sum, count, count_distinct, average, min, max, median, percentile). <code>type:percentile</code> → <code>Percentile([Col], p/100)</code> using the measure's <code>percentile:</code> param</li>
+    <li><b>Ratio / computed measures</b> → A <code>type:number</code> measure whose <code>sql:</code> references other measures (e.g. AOV = <code>1.0 * \${total_revenue} / NULLIF(\${order_count}, 0)</code>) is emitted as a <b>metric</b>: each <code>\${measure}</code> is substituted with that measure's Sigma aggregate formula and SQL funcs are mapped (<code>NULLIF→NullIf</code>, <code>COALESCE/NVL/IFNULL→Coalesce</code>, <code>IFF/IIF→If</code>). It is no longer split into a phantom physical column (which turned decimals like <code>1.0</code> into <code>0</code>)</li>
+    <li><b>Legacy <code>case: { when … else }</code> dimensions</b> → Nested <code>If(cond, "label", If(…))</code> calculated columns (previously a passthrough to a nonexistent physical column)</li>
     <li><b>Explore joins</b> → Sigma relationships plus a <b>derived explore element</b> that surfaces all base-view and joined-view fields together. Joined-view fields appear as <code>[BASE_TABLE/join_alias/Col]</code> cross-element formulas, so the full explore is browsable in one flat element without navigating relationships manually. Use <b>Convert Explore</b> for a single explore or <b>All Explores</b> to batch-convert all explores at once into one combined data model — shared views (e.g. <code>date_dim</code>, <code>store_dim</code>) are deduplicated into a single element with relationships wired from each fact table. One-to-many and many-to-many joins are skipped in batch mode (use single-explore mode for those). The derived explore element is only created for warehouse-table base views; SQL-based (derived-table) base views are already flat Custom SQL elements. <b>Snowflake joins</b> — where a join's foreign key lives on another joined view rather than the base (e.g. <code>\${inventory_items.product_id} = \${products.id}</code>) — are wired to the correct intermediate element; their columns are reachable via the relationship graph (or that element's own derived view), not the single flat explore element.</li>
     <li><b>Dimension groups (type:time)</b> → Expanded into individual columns per timeframe (DateTrunc / DatePart), all grouped into a folder named after the group. Supported standard timeframes: raw, date, week, month, quarter, year, hour, minute, day_of_week, day_of_month, week_of_year, month_num, quarter_of_year, hour_of_day. Binned timeframes (e.g. <code>minute15</code>, <code>hour4</code>) use <code>DateAdd + Floor</code> arithmetic. Fiscal timeframes (<code>fiscal_year</code>, <code>fiscal_quarter_of_year</code>, etc.) are skipped with a warning — they require <code>fiscal_month_offset</code> from the model-level config, which is not available in view files.</li>
     <li><b>Dimension groups (type:duration)</b> → <code>DateDiff()</code> columns per interval (day, week, month, quarter, year, hour, minute, second), grouped into a folder named after the group</li>
     <li><b>datatype: epoch</b> → <code>DateFromUnix()</code> wrapper applied automatically to all timeframe and duration formulas</li>
     <li><b>percent_of_total</b> → <code>Sum([Col]) / GrandTotal(Sum([Col]))</code></li>
     <li><b>running_total</b> → <code>CumulativeSum([Col])</code></li>
-    <li><b>Filtered measures</b> → Conditional aggregates: <code>SumIf([Col], [Filter] = "value")</code></li>
+    <li><b>Filtered measures</b> → Conditional aggregates: <code>SumIf([Col], [Filter] = "value")</code>. A filtered <code>type:count</code> → <code>CountIf(condition)</code> referencing only the filter columns (no fabricated value column from the measure name)</li>
     <li><b>extends</b> → Base view fields inherited automatically when both files are uploaded</li>
     <li><b>refinements</b> → Merged automatically into the original view when both files are uploaded</li>
 </ul>
@@ -30381,7 +30519,7 @@ models:
 
 <h3>Known Limitations</h3>
 <ul>
-    <li><b>Liquid templating</b> — <code>{% %}</code> and <code>{{ }}</code> blocks are <b>stripped entirely</b> with warnings. Any dimension or measure that depends on Liquid conditionals (e.g. <code>{% if _user_attributes['region'] %}</code>) will produce incorrect formulas. Review all Liquid warnings carefully after conversion.</li>
+    <li><b>Liquid templating</b> — <code>{% %}</code> and <code>{{ }}</code> blocks are <b>stripped entirely</b> with warnings. Any dimension or measure that depends on Liquid conditionals (e.g. <code>{% if _user_attributes['region'] %}</code>) will produce incorrect formulas. Review all Liquid warnings carefully after conversion. Note: <code>html:</code>, <code>sql_on:</code>, <code>sql_where:</code>, <code>sql_table_name:</code>, and <code>sql_trigger_value:</code> blocks are now pre-extracted alongside <code>sql:</code> before tokenizing, so Liquid <code>%}</code> inside an <code>html:</code> block no longer desyncs the parser and silently drops subsequent fields.</li>
     <li><b>Cross-view refs (<code>\${view_name.field}</code>)</b> — Dimensions whose <code>sql:</code> references fields from another view (e.g. <code>\${orders.customer_id}</code>) are automatically converted to <code>Lookup()</code> formulas using the explore's relationship keys. If a relationship exists and FK/PK columns are resolved, the full Lookup is emitted and a <code>✅</code> confirmation appears in the warnings panel. If the relationship can't be resolved, a partial <code>[TABLE/Col]</code> reference is emitted with a <code>⚠</code> warning to update it manually.</li>
     <li><b>PDT materializations</b> — Persistent Derived Tables are recognized and converted to Custom SQL elements. The materialization strategy (trigger, datagroup, sql_trigger_value) does not carry over. When a derived table's SQL references another PDT via <code>${'{'}view.SQL_TABLE_NAME{'}'}</code>, the referenced PDT is auto-converted to its own Custom SQL element and referenced via <code>sigma_element('Name')</code>; upload all referenced view files at once to enable full auto-resolution.</li>
     <li><b>Access filters / row-level access</b> — LookML <code>access_filter</code> blocks are converted to Sigma RLS calculated columns using <code>CurrentUserAttributeText()</code>. You must ensure the matching user attribute exists in Sigma and add a <code>True</code> filter on the generated column. <code>access_grant</code> blocks (permission-based access) are not converted.</li>

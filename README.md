@@ -121,15 +121,17 @@ Converts LookML projects (multiple `.lkml` files) to Sigma data model JSON. Drop
 - Dimensions → Sigma columns with formula conversion; complex SQL expressions auto-converted
 - Tier dimensions → Bucketed `If()` calculated columns (e.g. "0 to 99", "100 to 499")
 - Yesno dimensions → Boolean calculated columns with "(T/F)" suffix
-- Measures → Sigma metrics (`sum`, `count`, `count_distinct`, `average`, `min`, `max`, `median`)
-- Explore joins → Sigma relationships + a derived explore element surfacing base-view and directly-joined-view fields together; snowflake joins (FK on another joined view) wire to the correct intermediate element and are reachable via the relationship graph
+- Measures → Sigma metrics (`sum`, `count`, `count_distinct`, `average`, `min`, `max`, `median`, `percentile`); `type:percentile` → `Percentile([Col], p/100)` using the measure's `percentile:` param
+- Ratio / computed measures → A `type:number` measure whose `sql:` references other measures (e.g. `1.0 * ${total_revenue} / NULLIF(${order_count}, 0)`) is emitted as a metric: each `${measure}` is substituted with that measure's Sigma aggregate formula and SQL funcs are mapped (`NULLIF→NullIf`, `COALESCE/NVL/IFNULL→Coalesce`, `IFF/IIF→If`) — no longer split into a phantom physical column (which turned `1.0` into `0`)
+- Legacy `case: { when … else }` dimensions → Nested `If(cond, "label", If(…))` calculated columns (previously a passthrough to a nonexistent physical column)
+- Explore joins → Sigma relationships + a derived explore element surfacing base-view and directly-joined-view fields together (including named/computed joined columns such as dimension_group DateTrunc timeframes and CASE dims, referenced by display name); snowflake joins (FK on another joined view) wire to the correct intermediate element and are reachable via the relationship graph
 - All Explores mode → Batch-converts all explores into one combined data model; shared views are deduplicated
 - Dimension groups (type:time) → One column per timeframe (DateTrunc / DatePart), grouped into a folder
 - Dimension groups (type:duration) → `DateDiff()` columns per interval (day, week, month, etc.), grouped into a folder
 - `datatype: epoch` → `DateFromUnix()` wrapper applied automatically
 - `percent_of_total` → `Sum([Col]) / GrandTotal(Sum([Col]))`
 - `running_total` → `CumulativeSum([Col])`
-- Filtered measures → Conditional aggregates: `SumIf([Col], [Filter] = "value")`
+- Filtered measures → Conditional aggregates: `SumIf([Col], [Filter] = "value")`; a filtered `type:count` → `CountIf(condition)` referencing only the filter columns (no fabricated value column from the measure name)
 - `extends` / `refinements` → Merged automatically when both files are uploaded
 
 **Expression conversion:**
@@ -146,7 +148,7 @@ Converts LookML projects (multiple `.lkml` files) to Sigma data model JSON. Drop
 | `${TABLE}.col_name` | `[Col Name]` |
 
 **Known limitations:**
-- Liquid templating — `{% %}` and `{{ }}` blocks are stripped with warnings
+- Liquid templating — `{% %}` and `{{ }}` blocks are stripped with warnings. `html:`, `sql_on:`, `sql_where:`, `sql_table_name:`, and `sql_trigger_value:` blocks are pre-extracted alongside `sql:` before tokenizing, so Liquid `%}` inside an `html:` block no longer desyncs the parser and silently drops subsequent fields
 - Cross-element columns — Calculated columns referencing joined view columns are automatically moved to the derived explore element; metrics with cross-element refs must be added manually in Sigma UI
 - Fiscal timeframes — Skipped with a warning (require `fiscal_month_offset` from model-level config)
 - Access filters — `access_filter` blocks converted to Sigma RLS using `CurrentUserAttributeText()`; `access_grant` blocks not converted
