@@ -2681,6 +2681,7 @@ This is the standalone version - changes are saved directly to Sigma."></textare
                             <option value="contract">📝 Atlan Data Contract</option>
                             <option value="omni">🌐 Omni Analytics</option>
                             <option value="thoughtspot">🔷 ThoughtSpot</option>
+                            <option value="cognos">🟦 IBM Cognos</option>
                             <option value="quicksight">☁️ AWS QuickSight</option>
                             <option value="qlik">🔮 Qlik Sense</option>
                             <option value="oac">☁️ Oracle Analytics Cloud</option>
@@ -3564,6 +3565,98 @@ How it works:
                     </div>
                 </div>
                 <!-- ── End ThoughtSpot TML Panel ─────────────────────────────────── -->
+
+                <!-- IBM Cognos Data Module Converter Panel -->
+                <div class="converter-panel" id="subPanelCognos">
+
+                    <!-- Left: File Upload + Config -->
+                    <div class="dbt-pane" style="max-width: 360px; min-width: 300px; flex: 0 0 340px;">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">IBM Cognos Data Module</span>
+                            <button class="btn-example" onclick="loadCognosExample()">Load example</button>
+                        </div>
+
+                        <div id="cognosDropZone" class="lookml-drop-zone"
+                             onclick="document.getElementById('cognosFileInput').click()"
+                             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                             ondragleave="this.classList.remove('drag-over')"
+                             ondrop="handleCognosFileDrop(event)">
+                            <div style="font-size: 28px; margin-bottom: 8px;">🟦</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop Cognos Data Module JSON here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">.json</div>
+                        </div>
+                        <input type="file" id="cognosFileInput" accept=".json" multiple style="display:none" onchange="handleCognosFileSelect(event)">
+
+                        <div id="cognosFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Connection</label>
+                            <select id="cognosConnectionId" class="form-input" style="font-size: 12px;"
+                                    onchange="if(document.getElementById('cognosJsonInput').value.trim()) runCognosConversion();">
+                                <option value="">— Connect to Sigma to load —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Database override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="cognosDatabase" placeholder="e.g. ANALYTICS" style="font-size: 12px;" oninput="this.style.cssText='font-size:12px'">
+                        </div>
+
+                        <div class="form-group" style="flex-shrink: 0; margin-bottom: 0;">
+                            <label style="font-size: 11px;">Schema override <span style="color:var(--text-muted);font-size:10px;">(optional)</span></label>
+                            <input type="text" class="form-input" id="cognosSchema" placeholder="e.g. PUBLIC" style="font-size: 12px;" oninput="this.style.cssText='font-size:12px'">
+                        </div>
+
+                        <div class="dbt-badge-row" id="cognosInputStats"></div>
+
+                        <textarea id="cognosJsonInput" style="flex: 1; min-height: 80px; font-size: 11px; resize: none;" placeholder="Or paste Cognos Data Module JSON directly here..."></textarea>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-primary" style="flex: 1;" onclick="runCognosConversion()">
+                                🟦 Convert to Sigma JSON
+                            </button>
+                        </div>
+
+                        <div style="font-size: 10px; color: var(--text-muted); padding: 0 4px; line-height: 1.4;">
+                            <strong>How to get files:</strong><br>
+                            • <b>REST</b>: <code>GET /api/v1/objects/{moduleId}?fields=specification</code><br>
+                            • <b>Cognos UI</b>: Data module → ⋯ → Export specification (JSON)<br>
+                            • <b>Paste</b>: Paste the Data Module JSON directly into the textarea above
+                        </div>
+                    </div>
+
+                    <!-- Right: Sigma JSON Output -->
+                    <div class="dbt-pane">
+                        <div class="dbt-pane-header">
+                            <span class="dbt-pane-title">Sigma Data Model JSON</span>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary btn-small" onclick="copyCognosOutput()" id="cognosCopyBtn" disabled>📋 Copy</button>
+                                <button class="btn btn-secondary btn-small" onclick="loadCognosOutputToEditor()" id="cognosLoadBtn" disabled>→ Load into Editor</button>
+                            </div>
+                        </div>
+
+                        <div id="cognosWarningBox" class="dbt-warning-box" style="display:none;"></div>
+
+                        <textarea id="cognosJsonOutput" readonly placeholder="Convert a Cognos Data Module to see the Sigma JSON here...
+
+How it works:
+• querySubject[] → Sigma warehouse-table elements (table = ref tail)
+• queryItem (attribute) → Sigma column
+• queryItem (fact + regularAggregate) → Sigma metric (Sum/Avg/...)
+• calculation → calculated column (or metric if it aggregates)
+• relationship[] → Sigma relationships (source = the many side)
+• Cognos total([X] for [A]), if/then/else, _add_days, substring → Sigma formulas"></textarea>
+
+                        <div class="dbt-badge-row" id="cognosOutputStats"></div>
+
+                        <div class="dbt-convert-row">
+                            <button class="btn btn-success" style="flex: 1;" onclick="cognosLoadAndSave()" id="cognosSaveBtn" disabled>
+                                💾 Load &amp; Save to Sigma
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <!-- ── End IBM Cognos Data Module Panel ───────────────────────────── -->
 
                 <!-- AWS QuickSight Converter Panel -->
                 <div class="converter-panel" id="subPanelQuicksight">
@@ -7300,7 +7393,7 @@ ${JSON.stringify(failedJson, null, 2)}`;
         async function populateConverterConnections() {
             if (!state.accessToken) return;
             const connections = await fetchConnectionsList();
-            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'tsConnectionId', 'qsConnectionId', 'qlikConnectionId', 'oacConnectionId', 'bobjConnectionId', 'ssasConnectionId', 'sqlConnectionId'];
+            const targetIds = ['dbtConnectionId', 'snowConnectionId', 'bulkUploadConnectionId', 'lookConnectionId', 'tableauConnectionId', 'pbiConnectionId', 'alteryxConnectionId', 'contractConnectionId', 'omniConnectionId', 'tsConnectionId', 'cognosConnectionId', 'qsConnectionId', 'qlikConnectionId', 'oacConnectionId', 'bobjConnectionId', 'ssasConnectionId', 'sqlConnectionId'];
             targetIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (!sel) return;
@@ -10153,7 +10246,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
 
             // Reset the per-converter connection dropdowns to placeholder so a
             // stale connection from the prior org isn't pre-selected.
-            const dropdownIds = ['dbtConnectionId','snowConnectionId','bulkUploadConnectionId','lookConnectionId','tableauConnectionId','pbiConnectionId','alteryxConnectionId','contractConnectionId','omniConnectionId','tsConnectionId','qlikConnectionId','oacConnectionId','bobjConnectionId','ssasConnectionId','sqlConnectionId'];
+            const dropdownIds = ['dbtConnectionId','snowConnectionId','bulkUploadConnectionId','lookConnectionId','tableauConnectionId','pbiConnectionId','alteryxConnectionId','contractConnectionId','omniConnectionId','tsConnectionId','cognosConnectionId','qlikConnectionId','oacConnectionId','bobjConnectionId','ssasConnectionId','sqlConnectionId'];
             dropdownIds.forEach(id => {
                 const sel = document.getElementById(id);
                 if (sel) sel.innerHTML = '<option value="">— Connect to Sigma to load —</option>';
@@ -10250,10 +10343,10 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         }
 
         function switchConverter(format) {
-            const _convNames = { dbt: 'dbt', snow: 'snowflake', look: 'lookml', tableau: 'tableau', pbi: 'power_bi', alteryx: 'alteryx', contract: 'atlan', omni: 'omni', thoughtspot: 'thoughtspot', quicksight: 'quicksight', qlik: 'qlik', oac: 'oac', bobj: 'bobj', cube: 'cube', prep: 'tableau_prep', ssas: 'ssas', sql: 'sql' };
+            const _convNames = { dbt: 'dbt', snow: 'snowflake', look: 'lookml', tableau: 'tableau', pbi: 'power_bi', alteryx: 'alteryx', contract: 'atlan', omni: 'omni', thoughtspot: 'thoughtspot', cognos: 'cognos', quicksight: 'quicksight', qlik: 'qlik', oac: 'oac', bobj: 'bobj', cube: 'cube', prep: 'tableau_prep', ssas: 'ssas', sql: 'sql' };
             phTrack('converter_selected', { converter: _convNames[format] || format });
-            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Thoughtspot', 'Quicksight', 'Qlik', 'Oac', 'Bobj', 'Cube', 'Prep', 'Ssas', 'Sql'];
-            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', thoughtspot: 'Thoughtspot', quicksight: 'Quicksight', qlik: 'Qlik', oac: 'Oac', bobj: 'Bobj', cube: 'Cube', prep: 'Prep', ssas: 'Ssas', sql: 'Sql' };
+            const panels = ['Dbt', 'Snow', 'Look', 'Tableau', 'Pbi', 'Alteryx', 'Contract', 'Omni', 'Thoughtspot', 'Cognos', 'Quicksight', 'Qlik', 'Oac', 'Bobj', 'Cube', 'Prep', 'Ssas', 'Sql'];
+            const map = { dbt: 'Dbt', snow: 'Snow', look: 'Look', tableau: 'Tableau', pbi: 'Pbi', alteryx: 'Alteryx', contract: 'Contract', omni: 'Omni', thoughtspot: 'Thoughtspot', cognos: 'Cognos', quicksight: 'Quicksight', qlik: 'Qlik', oac: 'Oac', bobj: 'Bobj', cube: 'Cube', prep: 'Prep', ssas: 'Ssas', sql: 'Sql' };
             const target = map[format] || 'Dbt';
             panels.forEach(p => {
                 const el = document.getElementById('subPanel' + p);
@@ -16647,6 +16740,477 @@ views:
             document.getElementById('tsFileList').innerHTML = '<div class="file-chip">🔷 example.tml</div>';
             document.getElementById('tsInputStats').innerHTML = '<span class="dbt-badge">example loaded</span>';
             runThoughtSpotConversion();
+        }
+
+        // ── IBM Cognos Data Module Converter ────────────────────────────────
+        // Source-of-truth: ../sigma-data-model-mcp/src/cognos.ts.
+        // Keep this inline JS port in sync with the TypeScript module — both
+        // ship together per ~/.claude memory feedback_mcp_sync.md.
+
+        let _cognosRawFiles = []; // { name, content } array
+
+        function handleCognosFileDrop(event) {
+            event.preventDefault();
+            document.getElementById('cognosDropZone').classList.remove('drag-over');
+            const files = Array.from(event.dataTransfer.files).filter(f => /\.json$/i.test(f.name));
+            if (!files.length) { showToast('Drop .json files', 'warning'); return; }
+            loadCognosFiles(files);
+        }
+
+        function handleCognosFileSelect(event) {
+            const files = Array.from(event.target.files);
+            if (!files.length) return;
+            loadCognosFiles(files);
+            event.target.value = '';
+        }
+
+        function loadCognosFiles(files) {
+            _cognosRawFiles = [];
+            const listEl = document.getElementById('cognosFileList');
+            listEl.innerHTML = '';
+            let loaded = 0;
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = e => {
+                    _cognosRawFiles.push({ name: file.name, content: e.target.result });
+                    loaded++;
+                    if (loaded === files.length) {
+                        // A Data Module is a single JSON document — use the first file.
+                        document.getElementById('cognosJsonInput').value = _cognosRawFiles[0].content;
+                        runCognosConversion();
+                    }
+                };
+                reader.readAsText(file);
+                const chip = document.createElement('div');
+                chip.className = 'file-chip';
+                chip.textContent = '🟦 ' + file.name;
+                listEl.appendChild(chip);
+            });
+        }
+
+        function runCognosConversion() {
+            const text = document.getElementById('cognosJsonInput').value.trim();
+            if (!text) return;
+            const connectionId = document.getElementById('cognosConnectionId').value.trim() || '<CONNECTION_ID>';
+            const dbOverride   = document.getElementById('cognosDatabase').value.trim();
+            const schOverride  = document.getElementById('cognosSchema').value.trim();
+
+            let result;
+            try {
+                result = convertCognosToSigma(text, { connectionId, dbOverride, schOverride });
+            } catch(err) {
+                document.getElementById('cognosJsonOutput').value = '// Error: ' + err.message;
+                return;
+            }
+
+            const spec = result.model;
+            const warnings = result.warnings || [];
+            const jsonStr = JSON.stringify(spec, null, 2);
+            document.getElementById('cognosJsonOutput').value = jsonStr;
+
+            const warnEl = document.getElementById('cognosWarningBox');
+            if (warnings.length) {
+                warnEl.style.display = 'block';
+                warnEl.innerHTML = '<b>⚠ Conversion notes:</b><br>' + warnings.map(w => `• ${w}`).join('<br>');
+            } else {
+                warnEl.style.display = 'none';
+            }
+
+            const elCount = spec.pages?.[0]?.elements?.length || 0;
+            document.getElementById('cognosOutputStats').innerHTML =
+                `<span class="dbt-badge">${elCount} elements</span>`;
+            document.getElementById('cognosInputStats').innerHTML =
+                `<span class="dbt-badge">✓ loaded</span>`;
+
+            ['cognosCopyBtn','cognosLoadBtn','cognosSaveBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+        }
+
+        // ── Cognos Data Module JSON → Sigma data model spec ─────────────────
+        // Direct port of convertCognosToSigma in ../sigma-data-model-mcp/src/cognos.ts.
+
+        const _cognosArr = (x) => (Array.isArray(x) ? x : x == null ? [] : [x]);
+        const _cognosLc = (s) => String(s ?? '').toLowerCase();
+
+        const _COGNOS_AGG_MAP = {
+            total: 'Sum', sum: 'Sum', average: 'Avg', avg: 'Avg',
+            count: 'Count', 'count distinct': 'CountDistinct',
+            maximum: 'Max', max: 'Max', minimum: 'Min', min: 'Min',
+        };
+        const _COGNOS_OVER_MAP = { total: 'SumOver', sum: 'SumOver', average: 'AvgOver', count: 'CountOver', maximum: 'MaxOver', minimum: 'MinOver' };
+
+        function _cognosAggFn(agg, inner) {
+            const fn = _COGNOS_AGG_MAP[agg] || 'Sum';
+            return `${fn}(${inner})`;
+        }
+
+        // A query-subject ref may arrive as "NS.SALES_FACT" or "[NS].[SALES_FACT]" — take the tail.
+        function _cognosQsKey(ref) {
+            const parts = String(ref).replace(/[[\]]/g, '').split('.');
+            return parts[parts.length - 1].trim();
+        }
+        // A plain column = a bare identifier expression ("Quantity") — real CA shape — OR a
+        // bracketed self-subject ref ("[Sales].[Quantity]") — authored-fixture shape.
+        function _cognosIsPlainColumn(expr, subjectId) {
+            const e = (expr || '').trim();
+            if (/^[A-Za-z_][\w ]*$/.test(e)) return true;                  // bare identifier
+            const m = e.replace(/[[\]\s]/g, '').match(/^([\w]+)\.([\w]+)$/);
+            return !!m && m[1].toUpperCase() === String(subjectId).toUpperCase();
+        }
+
+        function _cognosParseJoinExpr(expr) {
+            if (!expr) return null;
+            const e = expr.replace(/[[\]]/g, '');
+            // SALES_FACT.PRODUCT_KEY = PRODUCT_DIM.PRODUCT_KEY (single equi-join only for MVP)
+            const m = e.match(/([\w]+)\.([\w]+)\s*=\s*([\w]+)\.([\w]+)/);
+            if (!m) return null;
+            if (/\band\b|\bor\b/i.test(e)) return null; // composite/condition joins → manual
+            return { leftTable: m[1].trim(), leftCol: m[2].trim(), rightTable: m[3].trim(), rightCol: m[4].trim() };
+        }
+        const _cognosTrunc = (s, n = 80) => (s && s.length > n ? s.slice(0, n) + '…' : (s || ''));
+
+        // Data Module JSON → IR (tolerant of the common shape variants)
+        function normalizeCognosDataModule(input) {
+            const root = typeof input === 'string' ? JSON.parse(input) : input;
+            const name = root.label || root.identifier || root.name || 'Cognos Data Module';
+
+            const querySubjects = [];
+            const qsList = _cognosArr(root.querySubject || root.querySubjects || root.module?.querySubject);
+
+            for (const qs of qsList) {
+                const identifier = qs.identifier || qs.idForExpression || qs.label || 'QUERY_SUBJECT';
+                let table = identifier, database, schema;
+                const ref0 = _cognosArr(qs.ref)[0];
+                if (typeof ref0 === 'string' && ref0.includes('.')) {
+                    table = ref0.split('.').slice(1).join('.');         // "M1.Sales" → "Sales"
+                } else {
+                    const tableRef = _cognosArr(qs.definition?.dbQuery?.tableRef)[0] || qs.sourceTable || qs.table;
+                    const src = (tableRef && tableRef.sourceTable) || tableRef || {};
+                    table = src.name || (typeof tableRef === 'string' ? tableRef : identifier);
+                    database = src.catalog || src.database || qs.catalog;
+                    schema = src.schema || qs.schema;
+                }
+
+                const items = [];
+                for (const raw of _cognosArr(qs.item || qs.items)) {
+                    const qi = raw.queryItem || raw.calculation || raw.measure;
+                    if (!qi || !(qi.identifier || qi.label)) continue;   // skip folders / nested groups
+                    const ident = qi.identifier || qi.label;
+                    const expr = qi.expression;
+                    const isCalc = !!raw.calculation || (expr != null && !_cognosIsPlainColumn(expr, identifier));
+                    items.push({
+                        identifier: ident,
+                        label: qi.label,
+                        expression: expr,
+                        datatype: qi.datatype || qi.highlevelDatatype,
+                        usage: _cognosLc(qi.usage),
+                        aggregate: _cognosLc(qi.regularAggregate || qi.aggregate || qi.aggregateFunction),
+                        isCalculation: isCalc,
+                    });
+                }
+                querySubjects.push({ identifier, label: qs.label, database, schema, table, items });
+            }
+
+            const relationships = [];
+            for (const rel of _cognosArr(root.relationship || root.relationships)) {
+                const links = _cognosArr(rel.link);
+                const left = _cognosQsKey((rel.left && rel.left.ref) || (links[0] && links[0].ref) || rel.left);
+                const right = _cognosQsKey((rel.right && rel.right.ref) || (links[1] && links[1].ref) || rel.right);
+                if (!left || !right) continue;
+                const colLink = links.find((l) => l && (l.leftRef || l.rightRef));
+                relationships.push({
+                    left, right,
+                    leftKey: colLink && colLink.leftRef, rightKey: colLink && colLink.rightRef,
+                    leftCard: _cognosLc(rel.left && rel.left.maxcard), rightCard: _cognosLc(rel.right && rel.right.maxcard),
+                    expression: rel.expression || rel.linkExpression,
+                    cardinality: rel.cardinality,
+                });
+            }
+
+            return { name, querySubjects, relationships };
+        }
+
+        // Cognos expression DSL → Sigma formula.
+        function translateCognosExpr(expr, qs, ensureRawCol, ctx) {
+            const warnings = [];
+            let f = (expr || '').trim();
+
+            // Flag unsupported window/running constructs up front (pass through, warn).
+            for (const bad of ['running-total', 'running-count', 'running-average', 'running-difference', 'moving-total', 'moving-average', 'rank', 'percentile', 'quantile', 'tertile']) {
+                if (new RegExp(`\\b${bad}\\b`, 'i').test(f)) warnings.push(`uses Cognos "${bad}" (window/running calc) — no clean single-column Sigma analog; needs manual authoring (window function).`);
+            }
+
+            // Column references: [NS].[QS].[Item] | [QS].[Item] | [Item] → [Display Name]
+            f = f.replace(/\[[^\]]+\](?:\.\[[^\]]+\])*/g, (ref) => {
+                const segs = ref.split('.').map(s => s.replace(/[[\]]/g, '').trim());
+                const item = segs[segs.length - 1];
+                return `[${sigmaDisplayName(item)}]`;
+            });
+
+            // Aggregations with optional "for" scope: total([X] for [A],[B])
+            f = f.replace(/\b(total|sum|average|count|maximum|minimum)\s*\(\s*([^()]*?)\s+for\s+([^()]*)\)/gi,
+                (_m, fn, inner, scope) => {
+                    const over = _COGNOS_OVER_MAP[_cognosLc(fn)] || 'SumOver';
+                    const dims = scope.split(',').map((s) => s.trim()).join(', ');
+                    return `${over}(${inner.trim()}, ${dims})`;
+                });
+            // Plain aggregations: total([X]) → Sum([X])
+            f = f.replace(/\b(total|sum|average|count|maximum|minimum)\s*\(/gi, (_m, fn) => `${_COGNOS_AGG_MAP[_cognosLc(fn)] || 'Sum'}(`);
+
+            // if (..) then (..) else (..) → If(.., .., ..) (handles nested else-if chains)
+            let guard = 0;
+            while (/\bif\s*\(/i.test(f) && guard++ < 25) {
+                f = f.replace(/\bif\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*then\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*else\s*/i,
+                    (_m, cond, thenv) => `If(${cond.trim()}, ${thenv.trim()}, `);
+                if (!/\bif\s*\(/i.test(f)) break;
+            }
+            // balance the If( we opened (rough: append closing parens for each unmatched If()
+            const opens = (f.match(/If\(/g) || []).length;
+            const closes = (f.match(/\)/g) || []).length - (f.match(/\(/g) || []).length + opens;
+            if (opens > 0 && closes < opens) f = f + ')'.repeat(opens - Math.max(0, closes));
+
+            // Date helpers
+            f = f.replace(/_add_days\s*\(([^,]+),\s*([^)]+)\)/gi, (_m, d, n) => `DateAdd("day", ${n.trim()}, ${d.trim()})`);
+            f = f.replace(/_add_months\s*\(([^,]+),\s*([^)]+)\)/gi, (_m, d, n) => `DateAdd("month", ${n.trim()}, ${d.trim()})`);
+            f = f.replace(/_add_years\s*\(([^,]+),\s*([^)]+)\)/gi, (_m, d, n) => `DateAdd("year", ${n.trim()}, ${d.trim()})`);
+            f = f.replace(/_days_between\s*\(([^,]+),\s*([^)]+)\)/gi, (_m, a, b) => `DateDiff("day", ${b.trim()}, ${a.trim()})`);
+            f = f.replace(/\bextract\s*\(\s*(year|month|day)\s*,\s*([^)]+)\)/gi, (_m, part, d) => `DatePart("${_cognosLc(part)}", ${d.trim()})`);
+
+            // String functions + operators
+            f = f.replace(/\bsubstring\s*\(/gi, 'Mid(').replace(/\bsubstr\s*\(/gi, 'Mid(')
+                 .replace(/\bupper\s*\(/gi, 'Upper(').replace(/\blower\s*\(/gi, 'Lower(').replace(/\btrim\s*\(/gi, 'Trim(');
+            // substitute(pattern, replacement, source) → RegexpReplace(source, pattern, replacement)
+            f = f.replace(/\bsubstitute\s*\(\s*([^,]+?)\s*,\s*([^,]+?)\s*,\s*([^)]+?)\s*\)/gi,
+                (_m, p, r, s) => `RegexpReplace(${s.trim()}, ${p.trim()}, ${r.trim()})`);
+            // cast(expr AS type) / cast(expr, type) → Text() for char types, numeric passthrough otherwise
+            const castRepl = (_m, x, ty) => (/char|text|string|varchar/i.test(ty) ? `Text(${x.trim()})` : x.trim());
+            f = f.replace(/\bcast\s*\(\s*([^,()]+?)\s+as\s+(\w+)[^)]*\)/gi, castRepl);
+            f = f.replace(/\bcast\s*\(\s*([^,()]+?)\s*,\s*(\w+)[^)]*\)/gi, castRepl);
+            // standalone type-coercion fns: varchar()/char()/nvarchar() → Text(); decimal()/double() → passthrough
+            f = f.replace(/\b(?:n?varchar|char)\s*\(\s*([^,)]+?)(?:\s*,\s*\d+)?\s*\)/gi, (_m, x) => `Text(${x.trim()})`);
+            f = f.replace(/\b(?:decimal|double|float|number)\s*\(\s*([^,)]+?)(?:\s*,[^)]*)?\)/gi, (_m, x) => x.trim());
+            f = f.replace(/\|\|/g, '&');          // Cognos concat → Sigma concat
+            f = f.replace(/\bcoalesce\s*\(/gi, 'Coalesce(');
+            f = f.replace(/'([^']*)'/g, '"$1"');  // Cognos single-quoted strings → Sigma double-quoted
+
+            // Unknown bareword(...) functions → warn (kept as-is for manual review)
+            const known = /\b(If|Sum|Avg|Count|CountDistinct|Min|Max|SumOver|AvgOver|CountOver|MinOver|MaxOver|DateAdd|DateDiff|DatePart|Mid|Upper|Lower|Trim|Coalesce|Text|RegexpReplace|Replace)\b/;
+            for (const m of f.matchAll(/\b([a-z][a-z0-9_-]*)\s*\(/gi)) {
+                if (!known.test(m[1]) && !/^(and|or|not|in|like|between|then|else|end|case|when)$/i.test(m[1])) {
+                    warnings.push(`function "${m[1]}()" has no confirmed Sigma mapping — review/translate manually.`);
+                }
+            }
+            return { formula: f, warnings };
+        }
+
+        // Convert IR → Sigma data model.
+        function convertCognosIR(model, options = {}) {
+            _usedIds.clear(); // reset ID registry for this conversion run (mirrors MCP resetIds())
+            const { connectionId = '<CONNECTION_ID>', dbOverride = '', schOverride = '', modelName } = options;
+            const warnings = [];
+            const ctxByKey = new Map();
+
+            // Pass 1 — one Sigma element per query subject (physical table).
+            for (const qs of model.querySubjects) {
+                const key = qs.identifier.toUpperCase();
+                const path = [];
+                const db = dbOverride || qs.database || '';
+                const sch = schOverride || qs.schema || '';
+                if (db) path.push(db);
+                if (sch) path.push(sch);
+                const tableTail = (qs.table || qs.identifier).toUpperCase();
+                path.push(tableTail);
+                const element = {
+                    id: sigmaShortId(), kind: 'table', name: sigmaDisplayName(qs.identifier),
+                    source: { connectionId, kind: 'warehouse-table', path },
+                    columns: [], order: [],
+                };
+                ctxByKey.set(key, { element, columns: [], metrics: [], order: [], colIdByName: new Map(), tableTail });
+            }
+
+            const ensureRawCol = (ctx, _tableKey, ident, hidden = false) => {
+                const disp = sigmaDisplayName(ident);
+                const existing = ctx.colIdByName.get(disp);
+                if (existing) return existing;
+                const id = sigmaShortId();
+                // warehouse-table self-ref: prefix is the raw table tail (Sigma fuzzy-matches the column)
+                const col = { id, formula: `[${ctx.tableTail}/${disp}]` };
+                if (hidden) col.hidden = true;
+                ctx.columns.push(col); ctx.order.push(id); ctx.colIdByName.set(disp, id);
+                return id;
+            };
+
+            // Pass 2 — place each query item as a column or metric on its subject.
+            for (const qs of model.querySubjects) {
+                const key = qs.identifier.toUpperCase();
+                const ctx = ctxByKey.get(key);
+                for (const item of qs.items) {
+                    const dispName = sigmaDisplayName(item.label || item.identifier);
+                    const isMeasure = !item.isCalculation && (item.usage === 'fact' || item.usage === 'measure')
+                        && item.aggregate && item.aggregate !== 'none';
+
+                    if (item.isCalculation && item.expression) {
+                        const { formula, warnings: w } = translateCognosExpr(item.expression, qs, ensureRawCol, ctx);
+                        w.forEach(x => warnings.push(`"${qs.identifier}.${item.identifier}": ${x}`));
+                        // a calc that aggregates → metric, else calculated column
+                        if (/\b(Sum|Avg|Count|Min|Max|.*Over)\(/.test(formula)) {
+                            const m = { id: sigmaShortId(), name: dispName, formula };
+                            const fmt = _inferSigmaFormat(formula, dispName); if (fmt) m.format = fmt;
+                            ctx.metrics.push(m);
+                        } else {
+                            const id = sigmaShortId();
+                            ctx.columns.push({ id, name: dispName, formula }); ctx.order.push(id);
+                        }
+                    } else if (isMeasure) {
+                        ensureRawCol(ctx, key, item.identifier);
+                        const agg = _cognosAggFn(item.aggregate, `[${sigmaDisplayName(item.identifier)}]`);
+                        const m = { id: sigmaShortId(), name: dispName, formula: agg };
+                        const fmt = _inferSigmaFormat(agg, dispName); if (fmt) m.format = fmt;
+                        ctx.metrics.push(m);
+                    } else {
+                        // plain attribute → column (preserve business label)
+                        const physDisp = sigmaDisplayName(item.identifier);
+                        const existing = ctx.colIdByName.get(physDisp);
+                        if (existing) { continue; }
+                        const id = sigmaShortId();
+                        const col = { id, formula: `[${ctx.tableTail}/${physDisp}]` };
+                        if (dispName !== physDisp) col.name = dispName;
+                        ctx.columns.push(col); ctx.order.push(id); ctx.colIdByName.set(physDisp, id);
+                    }
+                }
+            }
+
+            // Pass 3 — relationships from joins.
+            for (const rel of model.relationships) {
+                let leftTable = rel.left, rightTable = rel.right, leftCol = rel.leftKey, rightCol = rel.rightKey;
+                if (!leftCol || !rightCol) {
+                    const parsed = _cognosParseJoinExpr(rel.expression);
+                    if (!parsed) { warnings.push(`Relationship ${rel.left}→${rel.right}: no join columns and expression "${_cognosTrunc(rel.expression)}" not a simple equi-join — add manually in Sigma.`); continue; }
+                    ({ leftTable, leftCol, rightTable, rightCol } = parsed);
+                }
+                // Sigma relationship source = the "many" side. Flip if the RIGHT side is many.
+                const rightIsMany = /many|\bn\b|\*/.test(rel.rightCard || '');
+                const leftIsMany = /many|\bn\b|\*/.test(rel.leftCard || '');
+                if (rightIsMany && !leftIsMany) {
+                    [leftTable, leftCol, rightTable, rightCol] = [rightTable, rightCol, leftTable, leftCol];
+                }
+                const srcKey = leftTable.toUpperCase(), tgtKey = rightTable.toUpperCase();
+                const srcCtx = ctxByKey.get(srcKey), tgtCtx = ctxByKey.get(tgtKey);
+                if (!srcCtx || !tgtCtx) { warnings.push(`Relationship ${srcKey}→${tgtKey}: a query subject is missing — relationship skipped.`); continue; }
+                const srcColId = ensureRawCol(srcCtx, srcKey, leftCol, true);
+                const tgtColId = ensureRawCol(tgtCtx, tgtKey, rightCol, true);
+                (srcCtx.element.relationships || (srcCtx.element.relationships = [])).push({
+                    id: sigmaShortId(), targetElementId: tgtCtx.element.id,
+                    keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }], name: tgtKey,
+                });
+            }
+
+            // Finalize.
+            const elements = [];
+            for (const ctx of ctxByKey.values()) {
+                ctx.element.columns = ctx.columns; ctx.element.order = ctx.order;
+                if (ctx.metrics.length) ctx.element.metrics = ctx.metrics;
+                elements.push(ctx.element);
+            }
+            for (const de of buildDerivedElements(elements)) elements.push(de);
+
+            const stats = {
+                querySubjects: model.querySubjects.length,
+                elements: elements.length,
+                columns: elements.reduce((n, e) => n + (e.columns?.length || 0), 0),
+                metrics: elements.reduce((n, e) => n + (e.metrics?.length || 0), 0),
+                relationships: elements.reduce((n, e) => n + (e.relationships?.length || 0), 0),
+            };
+            return {
+                model: { name: modelName || model.name, schemaVersion: 1, pages: [{ id: sigmaShortId(), name: 'Page 1', elements }] },
+                warnings, stats,
+            };
+        }
+
+        // Top-level entry: Data Module JSON (string or object) → Sigma data model.
+        function convertCognosToSigma(input, options = {}) {
+            return convertCognosIR(normalizeCognosDataModule(input), options);
+        }
+
+        // ── Cognos UI helpers ───────────────────────────────────────────────
+        function copyCognosOutput() {
+            const txt = document.getElementById('cognosJsonOutput').value;
+            if (!txt) return;
+            navigator.clipboard.writeText(txt).then(() => showToast('Copied!', 'success'));
+        }
+
+        function loadCognosOutputToEditor() {
+            const txt = document.getElementById('cognosJsonOutput').value;
+            if (!txt) return;
+            try {
+                const parsed = JSON.parse(txt);
+                state.originalJson = txt;
+                editor.setValue(txt);
+                state.currentDataModelId = null;
+                state.currentModelName = parsed.name || 'Untitled Cognos Model';
+                document.querySelector('.tab-btn[data-tab="json"]')?.click?.();
+                switchTab('json');
+                document.getElementById('editorTitle').textContent = 'Converted from Cognos Data Module (unsaved)';
+                showToast('Loaded into editor', 'success');
+            } catch (e) {
+                showToast('Cannot load: invalid JSON', 'error');
+            }
+        }
+
+        async function cognosLoadAndSave() {
+            loadCognosOutputToEditor();
+            // Defer a beat so the editor renders the new content, then save via the
+            // common path used by other converters.
+            setTimeout(() => { if (typeof saveModel === 'function') saveModel(); }, 100);
+        }
+
+        function loadCognosExample() {
+            const example = JSON.stringify({
+                version: '24.0',
+                identifier: 'OrderFact_Cognos',
+                label: 'Order Fact (Cognos)',
+                useSpec: [{ identifier: 'M1', type: 'dataSource' }],
+                querySubject: [
+                    {
+                        identifier: 'ORDER_FACT',
+                        label: 'Order Fact',
+                        ref: ['M1.ORDER_FACT'],
+                        item: [
+                            { queryItem: { identifier: 'ORDER_ID', label: 'Order Id', expression: 'ORDER_ID', usage: 'identifier', datatype: 'INTEGER' } },
+                            { queryItem: { identifier: 'CUSTOMER_KEY', label: 'Customer Key', expression: 'CUSTOMER_KEY', usage: 'attribute', datatype: 'INTEGER' } },
+                            { queryItem: { identifier: 'ORDER_CHANNEL', label: 'Order Channel', expression: 'ORDER_CHANNEL', usage: 'attribute', datatype: 'NVARCHAR(50)' } },
+                            { queryItem: { identifier: 'NET_REVENUE', label: 'Net Revenue', expression: 'NET_REVENUE', usage: 'fact', regularAggregate: 'total', datatype: 'DECIMAL' } },
+                            { queryItem: { identifier: 'GROSS_REVENUE', label: 'Gross Revenue', expression: 'GROSS_REVENUE', usage: 'fact', regularAggregate: 'total', datatype: 'DECIMAL' } },
+                            { queryItem: { identifier: 'GROSS_PROFIT', label: 'Gross Profit', expression: 'GROSS_PROFIT', usage: 'fact', regularAggregate: 'total', datatype: 'DECIMAL' } },
+                            { calculation: { identifier: 'GROSS_MARGIN_PCT', label: 'Gross Margin Pct', expression: 'total([ORDER_FACT].[GROSS_PROFIT]) / total([ORDER_FACT].[GROSS_REVENUE])', datatype: 'DECIMAL' } },
+                            { calculation: { identifier: 'HIGH_VALUE', label: 'High Value Flag', expression: "if ([ORDER_FACT].[NET_REVENUE] >= 500) then ('High') else ('Standard')", datatype: 'NVARCHAR' } }
+                        ]
+                    },
+                    {
+                        identifier: 'CUSTOMER_DIM',
+                        label: 'Customer',
+                        ref: ['M1.CUSTOMER_DIM'],
+                        item: [
+                            { queryItem: { identifier: 'CUSTOMER_KEY', label: 'Customer Key', expression: 'CUSTOMER_KEY', usage: 'identifier', datatype: 'INTEGER' } },
+                            { queryItem: { identifier: 'REGION', label: 'Region', expression: 'REGION', usage: 'attribute', datatype: 'NVARCHAR(50)' } },
+                            { queryItem: { identifier: 'LIFETIME_REVENUE', label: 'Lifetime Revenue', expression: 'LIFETIME_REVENUE', usage: 'fact', regularAggregate: 'total', datatype: 'DECIMAL' } }
+                        ]
+                    }
+                ],
+                relationship: [
+                    {
+                        left: { ref: 'ORDER_FACT', mincard: 'one', maxcard: 'many' },
+                        right: { ref: 'CUSTOMER_DIM', mincard: 'one', maxcard: 'one' },
+                        link: [{ leftRef: 'CUSTOMER_KEY', rightRef: 'CUSTOMER_KEY', comparisonOperator: 'equalTo' }]
+                    }
+                ]
+            }, null, 2);
+            document.getElementById('cognosJsonInput').value = example;
+            document.getElementById('cognosFileList').innerHTML = '<div class="file-chip">🟦 order_fact.module.json</div>';
+            document.getElementById('cognosInputStats').innerHTML = '<span class="dbt-badge">example loaded</span>';
+            runCognosConversion();
         }
 
         // ── AWS QuickSight Converter ────────────────────────────────────────
@@ -30771,6 +31335,50 @@ models:
     <a href="https://developers.thoughtspot.com/docs/tml-import-export" target="_blank">ThoughtSpot TML Import/Export</a>
 </div>`,
 
+            cognos: `
+<h3>IBM Cognos Data Module Converter</h3>
+<p>Converts an IBM Cognos Analytics (11.x / Cognos Analytics) <b>Data Module JSON</b> — the modern semantic layer retrieved via <code>GET /api/v1/objects/{moduleId}?fields=specification</code> or exported from the Cognos data-module editor — to Sigma data model JSON. Parses query subjects (physical tables), query items, calculations, measures, and join relationships.</p>
+
+<h3>How to Get Files</h3>
+<ul>
+    <li><b>REST</b>: <code>GET /api/v1/objects/{moduleId}?fields=specification</code> and save the module specification JSON</li>
+    <li><b>Cognos UI</b>: open the data module → ⋯ menu → Export specification (JSON)</li>
+    <li><b>Paste</b>: paste the Data Module JSON directly into the textarea</li>
+</ul>
+
+<h3>What Gets Converted</h3>
+<ul>
+    <li><b>querySubject[]</b> → one Sigma warehouse-table element per query subject; the physical table is the tail of <code>ref: ["M1.ORDER_FACT"]</code> (→ <code>ORDER_FACT</code>), with database/schema from the module or the override fields</li>
+    <li><b>queryItem (attribute / identifier)</b> → Sigma column (the business label is preserved via the column <code>name</code>)</li>
+    <li><b>queryItem (fact / measure + regularAggregate)</b> → Sigma metric — <code>total</code>→<code>Sum</code>, <code>average</code>→<code>Avg</code>, <code>count</code>→<code>Count</code>, <code>maximum</code>→<code>Max</code>, <code>minimum</code>→<code>Min</code></li>
+    <li><b>calculation</b> → calculated column, or a metric when the expression aggregates</li>
+    <li><b>relationship[]</b> → Sigma relationship; the source side is the <b>many</b> side (from <code>maxcard</code>), join columns come from <code>link[].leftRef/rightRef</code> (or are parsed from an equi-join <code>expression</code>). The relationship name is the UPPERCASE target table key.</li>
+</ul>
+
+<h3>Expression Conversion</h3>
+<ul>
+    <li><code>total([X])</code> → <code>Sum([X])</code> (and <code>average/count/maximum/minimum</code> → <code>Avg/Count/Max/Min</code>)</li>
+    <li><code>total([X] for [A],[B])</code> → <code>SumOver([X], [A], [B])</code></li>
+    <li><code>if (cond) then (X) else (Y)</code> → <code>If(cond, X, Y)</code></li>
+    <li><code>_add_days/_add_months/_add_years(d, n)</code> → <code>DateAdd("day"/…, n, d)</code>; <code>_days_between(a, b)</code> → <code>DateDiff("day", b, a)</code>; <code>extract(year, d)</code> → <code>DatePart("year", d)</code></li>
+    <li><code>substring/substr</code> → <code>Mid</code>; <code>upper/lower/trim</code> → <code>Upper/Lower/Trim</code>; <code>substitute(pat, rep, src)</code> → <code>RegexpReplace(src, pat, rep)</code></li>
+    <li><code>cast(x AS varchar)</code> / <code>varchar(x)</code> → <code>Text(x)</code>; <code>decimal/double(x)</code> → passthrough; <code>||</code> → <code>&amp;</code>; <code>coalesce</code> → <code>Coalesce</code>; single quotes → double quotes</li>
+</ul>
+
+<h3>Known Limitations (flagged, never faked)</h3>
+<ul>
+    <li>Window / running calcs — <code>running-total</code>, <code>moving-average</code>, <code>rank</code>, <code>percentile</code>, <code>quantile</code>, <code>tertile</code> — are passed through with a warning; they have no clean single-column Sigma analog and need manual authoring</li>
+    <li>Any unrecognized <code>function()</code> is left as-is and flagged for manual review</li>
+    <li>Composite / conditional joins (multiple <code>AND</code>/<code>OR</code> predicates) are not auto-wired — add the relationship manually in Sigma</li>
+    <li>Framework Manager <code>.cpf</code>, report-spec XML, dashboards, and sub-queries are out of scope (Data Module JSON only)</li>
+</ul>
+
+<div class="help-links">
+    <div class="help-links-title">📚 Resources</div>
+    <a href="https://www.ibm.com/docs/en/cognos-analytics" target="_blank">IBM Cognos Analytics Docs</a>
+    <a href="https://www.ibm.com/docs/en/cognos-analytics/latest?topic=modeling-data-modules" target="_blank">Cognos Data Modules</a>
+</div>`,
+
             quicksight: `
 <h3>AWS QuickSight Converter</h3>
 <p>Converts AWS QuickSight asset exports — DescribeAnalysisDefinition JSON, DescribeDataSet JSON, and Asset Bundle (<code>.qs</code>) zips — to Sigma data model JSON. Files are auto-classified by content, so you can drop multiple JSONs together (one analysis + one dataset per referenced source).</p>
@@ -31226,7 +31834,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
 
         function switchHelpTab(tab) {
             document.querySelectorAll('#helpTabs .help-tab').forEach((t, i) => {
-                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'thoughtspot', 'quicksight', 'qlik', 'oac', 'bobj', 'cube', 'prep', 'ai', 'api', 'mcp', 'sql'];
+                const tabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'thoughtspot', 'cognos', 'quicksight', 'qlik', 'oac', 'bobj', 'cube', 'prep', 'ai', 'api', 'mcp', 'sql'];
                 t.classList.toggle('active', tabs[i] === tab);
             });
             document.getElementById('helpContent').innerHTML = HELP_CONTENT[tab] || '';
@@ -31238,7 +31846,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
             const hash = location.hash;
             if (hash && hash.startsWith('#help-')) {
                 const tab = hash.replace('#help-', '');
-                const validTabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'thoughtspot', 'quicksight', 'qlik', 'oac', 'bobj', 'cube', 'prep', 'sql', 'ai', 'api', 'mcp'];
+                const validTabs = ['overview', 'tableau', 'pbi', 'lookml', 'dbt', 'snow', 'alteryx', 'contract', 'omni', 'thoughtspot', 'cognos', 'quicksight', 'qlik', 'oac', 'bobj', 'cube', 'prep', 'sql', 'ai', 'api', 'mcp'];
                 if (validTabs.includes(tab)) {
                     toggleHelpModal();
                     switchHelpTab(tab);
@@ -32031,6 +32639,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
                 <button class="help-tab" onclick="switchHelpTab('contract')">📝 Atlan</button>
                 <button class="help-tab" onclick="switchHelpTab('omni')">🌐 Omni</button>
                 <button class="help-tab" onclick="switchHelpTab('thoughtspot')">🔷 ThoughtSpot</button>
+                <button class="help-tab" onclick="switchHelpTab('cognos')">🟦 IBM Cognos</button>
                 <button class="help-tab" onclick="switchHelpTab('quicksight')">☁️ QuickSight</button>
                 <button class="help-tab" onclick="switchHelpTab('qlik')">🔮 Qlik</button>
                 <button class="help-tab" onclick="switchHelpTab('oac')">☁️ Oracle</button>
