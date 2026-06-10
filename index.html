@@ -6024,17 +6024,15 @@ PRODUCT_NAME
                         (typeof k === 'string' && k.startsWith('_')) ? undefined : v
                     ));
 
-                    // Inject connection override into every element source
+                    // Inject connection override into every connectionId in the spec.
+                    // Must be a deep replace: connectionId nests below el.source in
+                    // join sources (source.joins[].left/right, recursively) and in
+                    // control sources (source.source.connectionId) — a top-level-only
+                    // rewrite leaves those pointing at the origin org's connection.
                     if (connectionIdOverride) {
-                        spec.pages = spec.pages.map(page => ({
-                            ...page,
-                            elements: (page.elements || []).map(el => {
-                                if (el.source && 'connectionId' in el.source) {
-                                    return { ...el, source: { ...el.source, connectionId: connectionIdOverride } };
-                                }
-                                return el;
-                            })
-                        }));
+                        spec.pages = JSON.parse(JSON.stringify(spec.pages, (k, v) =>
+                            k === 'connectionId' ? connectionIdOverride : v
+                        ));
                     }
 
                     let r, action;
