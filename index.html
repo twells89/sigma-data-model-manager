@@ -26246,6 +26246,16 @@ ${cleanedSql}`;
                     return `DateParse(${str.trim()}, "${sf}")`;
                 });
 
+            // User-context (row-level security) functions → Sigma equivalents.
+            // USERNAME()→CurrentUserEmail(); ISMEMBEROF('g')→CurrentUserInTeam("g");
+            // USERATTRIBUTE('a')→CurrentUserAttributeText("a"); ISUSERNAME('u')→email match.
+            // (Run before the single→double quote pass so the arg quoting is normalized here.)
+            // Mirrors MCP src/formulas.ts.
+            f = f.replace(/\bUSERNAME\s*\(\s*\)/gi, 'CurrentUserEmail()');
+            f = f.replace(/\bISMEMBEROF\s*\(\s*['"]([^'"]+)['"]\s*\)/gi, 'CurrentUserInTeam("$1")');
+            f = f.replace(/\bUSERATTRIBUTE\s*\(\s*['"]([^'"]+)['"]\s*\)/gi, 'CurrentUserAttributeText("$1")');
+            f = f.replace(/\bISUSERNAME\s*\(\s*['"]([^'"]+)['"]\s*\)/gi, '(CurrentUserEmail() = "$1")');
+
             // Map remaining functions
             for (const [tab, sig] of Object.entries(TABLEAU_FUNC_MAP)) {
                 f = f.replace(new RegExp('\\b' + tab + '\\s*\\(', 'gi'), sig + '(');
@@ -26316,6 +26326,47 @@ ${cleanedSql}`;
 
         function tableauIsAggregate(formula) {
             return /\b(SUM|AVG|COUNT|COUNTD|MAX|MIN|MEDIAN|STDEV|STDEVP|VAR|VARP|PERCENTILE|ATTR)\s*\(/i.test(formula);
+        }
+
+        // A Tableau calc is row-level security if it tests the viewer's identity/membership.
+        // Mirrors tableauFormulaIsRls in MCP src/formulas.ts.
+        function tableauFormulaIsRls(formula) {
+            return /\b(USERNAME|FULLNAME|USERDOMAIN|ISMEMBEROF|ISUSERNAME|USERATTRIBUTE)\s*\(/i.test(formula || '');
+        }
+
+        // Resolvable element name: explicit `name`, else the warehouse path tail
+        // (warehouse-table elements have no `name` — Sigma derives it from the path,
+        // e.g. ORDER_FACT — so the skill matches the live element by that).
+        function _securityElementName(el) {
+            if (el && el.name) return el.name;
+            const path = el && el.source && el.source.path;
+            return path && path.length ? String(path[path.length - 1]) : undefined;
+        }
+
+        // Build an RLS SecurityRule from a Sigma boolean formula, auto-extracting the
+        // user attributes / teams that must be provisioned, plus tailored guidance.
+        // Detected security is REPORTED (never injected into the model spec): a stateless
+        // converter can't provision Sigma user attributes/teams, so an injected
+        // CurrentUserAttributeText/CurrentUserInTeam filter would fail-closed to 0 rows.
+        // Mirrors makeRlsSecurity in MCP src/sigma-ids.ts.
+        function makeRlsSecurity(opts) {
+            const attrs = [...opts.formula.matchAll(/CurrentUserAttributeText\(\s*"([^"]+)"/g)].map(m => m[1]);
+            const teams = [...opts.formula.matchAll(/CurrentUserInTeam\(\s*"([^"]+)"/g)].map(m => m[1]);
+            const usesEmail = /\bCurrentUserEmail\(/.test(opts.formula);
+            const provision = [
+                attrs.length ? `provision/assign Sigma user attribute(s): ${[...new Set(attrs)].join(', ')}` : '',
+                teams.length ? `create Sigma team(s) + membership: ${[...new Set(teams)].join(', ')}` : '',
+                usesEmail && !attrs.length && !teams.length ? 'uses CurrentUserEmail() — no provisioning needed' : '',
+            ].filter(Boolean).join('; ');
+            const rls = { name: opts.name, formula: opts.formula };
+            if (attrs.length) rls.userAttributes = [...new Set(attrs)];
+            if (teams.length) rls.teams = [...new Set(teams)];
+            if (usesEmail) rls.usesCurrentUserEmail = true;
+            return {
+                kind: 'rls', source: opts.source, elementId: opts.element.id, elementName: _securityElementName(opts.element),
+                rls,
+                note: `Fail-closed RLS (boolean calc + element filter, only True rows). ${provision || 'review'}. The skill provisions then applies — the converter does NOT inject it.`,
+            };
         }
 
         function tableauExtractPath(rel, dbOverride, schOverride) {
@@ -26715,6 +26766,7 @@ ${cleanedSql}`;
         // call it once per datasource with its own connectionId.
         function convertOneDatasource(ds, connectionId, dbOverride, schOverride, strategy, parameters) {
             const warnings = [], elements = [];
+            const security = [];   // detected RLS — reported, not injected (architecture B)
 
             const connection   = ds.connection;
                 const rootRelation = connection ? connection.querySelector(':scope > relation') : null;
@@ -27506,6 +27558,33 @@ ${cleanedSql}`;
                                 continue;
                             }
 
+                            // ── Row-level security calc (USERNAME/ISMEMBEROF/USERATTRIBUTE/…) ──
+                            // REPORT (architecture B) — do not inject; the migration skill
+                            // provisions the attributes/teams and applies the boolean calc +
+                            // element filter. Mirrors MCP src/tableau.ts.
+                            if (typeof sigmaFormula === 'string' && !sigmaFormula.startsWith('/*') && tableauFormulaIsRls(formula)) {
+                                // Cross-element guard: a Sigma element filter must live on the same
+                                // element as its column. If the RLS calc references a related-table
+                                // (non-fact) column, the column would be moved to a derived view
+                                // downstream, orphaning the filter — so we don't auto-emit; we flag
+                                // it for manual placement on the owning element.
+                                const _rlsRefs = (sigmaFormula.match(/\[([^\]\/]+)\]/g) || []).map(r => r.replace(/^\[|\]$/g, ''));
+                                const _rlsOffFact = _rlsRefs.find(nm => {
+                                    if (/^(true|false|null)$/i.test(nm)) return false;
+                                    const hit = displayNameMap[nm.toUpperCase()]
+                                        || displayNameMap[nm.replace(/\s+/g, '_').toUpperCase()];
+                                    return hit && hit.el !== factEl;
+                                });
+                                if (_rlsOffFact) {
+                                    warnings.push('⚠ "' + caption + '" is row-level security but references a related-table column [' + _rlsOffFact + '] (cross-element). Sigma RLS filters apply per-element — re-apply this rule on the element that owns [' + _rlsOffFact + '] (or its derived view): add a boolean calc column ' + sigmaFormula.slice(0, 70) + ' and an element filter keeping only True.');
+                                    continue;
+                                }
+                                const _rlsName = /^RLS\b/i.test(caption) ? caption : 'RLS: ' + caption;
+                                security.push(makeRlsSecurity({ source: 'Tableau calc "' + caption + '"', element: factEl, name: _rlsName, formula: sigmaFormula }));
+                                warnings.push('🔐 "' + caption + '" → row-level security DETECTED (reported separately, not injected into the spec): ' + sigmaFormula.slice(0, 80) + '. The migration skill provisions the referenced attribute(s)/team(s) and applies the RLS calc + filter.');
+                                continue;
+                            }
+
                             // ── Regular aggregate → metric ──
                             if (tableauIsAggregate(formula)) {
                                 // A fact metric can only aggregate columns that physically live on
@@ -27697,7 +27776,7 @@ ${cleanedSql}`;
                     if (el.relationships && el.relationships.length === 0) delete el.relationships;
                 });
 
-                return { elements, controls, warnings };
+                return { elements, controls, warnings, security };
         }
 
         // ── Main conversion function ──────────────────────────────────────
@@ -27736,16 +27815,17 @@ ${cleanedSql}`;
                 // Use the first connection's friendly-names setting
                 state.useFriendlyNames = isConnectionFriendly(toConvert[0].connectionId);
 
-                const allElements = [], allControls = [], allWarnings = [];
+                const allElements = [], allControls = [], allWarnings = [], allSecurity = [];
                 { const fnWarn = friendlyNameWarning(); if (fnWarn) allWarnings.push(fnWarn); }
 
                 let firstControls = true;
                 for (const { ds, connectionId } of toConvert) {
-                    const { elements, controls, warnings } = convertOneDatasource(
+                    const { elements, controls, warnings, security } = convertOneDatasource(
                         ds, connectionId, dbOverride, schOverride, strategy, _tableauParsed.parameters
                     );
                     allElements.push(...elements);
                     allWarnings.push(...warnings);
+                    allSecurity.push(...(security || []));
                     // Parameters → controls are shared across all datasources; only add once
                     if (firstControls) { allControls.push(...controls); firstControls = false; }
                 }
@@ -27764,14 +27844,20 @@ ${cleanedSql}`;
 
                 document.getElementById('tableauJsonOutput').value = JSON.stringify(outputJson, null, 2);
 
+                // Detected RLS rules — reported, NEVER injected into the spec (the JSON
+                // output above is POSTable as-is). Exposed for tooling/tests; the
+                // per-rule 🔐 warnings below carry the provisioning guidance.
+                window._tableauSecurity = allSecurity;
+
                 const warnBox = document.getElementById('tableauWarningBox');
                 if (allWarnings.length) { warnBox.style.display = ''; warnBox.innerHTML = allWarnings.map(w => '<div>' + w + '</div>').join(''); }
                 else { warnBox.style.display = 'none'; }
 
-                const ec = allElements.length, cc = allControls.length, wc = allWarnings.length;
+                const ec = allElements.length, cc = allControls.length, wc = allWarnings.length, sc = allSecurity.length;
                 document.getElementById('tableauOutputStats').innerHTML = [
                     '<span class="dbt-stat-badge">' + ec + ' element' + (ec !== 1 ? 's' : '') + '</span>',
                     cc ? '<span class="dbt-stat-badge" style="color:var(--accent);">' + cc + ' control' + (cc !== 1 ? 's' : '') + '</span>' : '',
+                    sc ? '<span class="dbt-stat-badge" style="color:var(--warning);" title="Row-level security detected in the Tableau source — reported in the conversion notes, not injected into the spec. Provision the listed user attributes/teams in Sigma, then apply the boolean calc + element filter.">🔐 ' + sc + ' RLS rule' + (sc !== 1 ? 's' : '') + '</span>' : '',
                     wc ? '<span class="dbt-stat-badge" style="color:var(--warning);">' + wc + ' warning' + (wc !== 1 ? 's' : '') + '</span>' : ''
                 ].filter(Boolean).join('');
 
@@ -31314,6 +31400,7 @@ models:
     <li><b>Calculated fields</b> → Sigma calculated columns with formula conversion</li>
     <li><b>Simple aggregates</b> → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)</li>
     <li><b>Statistical / regex / date-construction functions</b> → <code>STDEV</code>→<code>StdDev</code>, <code>VAR</code>→<code>Variance</code>, <code>VARP</code>→<code>VariancePop</code>, <code>STDEVP</code>→<code>Sqrt(VariancePop(…))</code>, <code>PERCENTILE</code>→<code>PercentileCont</code>, <code>REGEXP_EXTRACT/MATCH/REPLACE</code>→<code>Regexp*</code>, <code>SPLIT</code>→<code>SplitPart</code>, <code>MAKEDATE</code>→<code>MakeDate</code>, and <code>DATEPARSE(fmt, str)</code>→<code>DateParse(str, "&lt;strftime&gt;")</code> (Tableau's arg order is reversed and its Java date tokens are rewritten to strftime — review the pattern).</li>
+    <li><b>User functions / row-level security</b> → User-context functions are translated (<code>USERNAME()</code>→<code>CurrentUserEmail()</code>, <code>ISMEMBEROF('g')</code>→<code>CurrentUserInTeam("g")</code>, <code>USERATTRIBUTE('a')</code>→<code>CurrentUserAttributeText("a")</code>, <code>ISUSERNAME('u')</code>→<code>CurrentUserEmail() = "u"</code>). Calcs that test the viewer's identity (the classic Tableau RLS / data-source-filter pattern) are <b>detected and reported, not injected</b>: the converter emits a 🔐 conversion note (and an RLS-rules badge) carrying the translated boolean formula plus the user attributes/teams to provision — it does NOT add the calc column to the spec, because a converter can't provision Sigma user attributes/teams and an injected filter would fail-closed to 0 rows for everyone. After saving, provision the listed attribute(s)/team(s), then apply the boolean calc column + an element filter keeping only <code>True</code> rows.</li>
     <li><b>Parameters</b> → Sigma controls (list, date-range, number-range, text)</li>
     <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves.</li>
     <li><b>Window / table calculations</b> (<code>RUNNING_SUM</code>, <code>RUNNING_AVG</code>, <code>RUNNING_MIN</code>, <code>RUNNING_MAX</code>, <code>WINDOW_SUM</code>, <code>WINDOW_AVG</code>, <code>WINDOW_MIN</code>, <code>WINDOW_MAX</code>, <code>WINDOW_COUNT</code>, <code>LOOKUP</code>, <code>PREVIOUS_VALUE</code>, <code>RANK</code>, <code>RANK_DENSE</code>, <code>RANK_UNIQUE</code>, <code>INDEX</code>, <code>FIRST</code>, <code>LAST</code>) → A <code>kind:sql</code> helper element with explicit Snowflake <code>OVER()</code> clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys are derived from worksheet <code>rows</code> shelves, order keys from time-truncated <code>cols</code> shelves. The DATE_TRUNC grain is derived from the cols-shelf prefix (<code>yr:</code>→year, <code>qr:</code>→quarter, <code>mn:</code>→month, <code>wk:</code>→week, <code>dy:</code>/<code>md:</code>→day; no prefix → no DATE_TRUNC wrapper). Explicit "Compute Using" addressing (<code>&lt;table-calculation&gt;</code> with <code>&lt;address&gt;</code> children, plus Table Across/Down direction) overrides the rows/cols heuristic. Multiple window calcs sharing the same partition+order signature are emitted as separate aliases on a single helper element.</li>
