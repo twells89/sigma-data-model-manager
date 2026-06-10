@@ -10677,8 +10677,8 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 usd:        { kind: 'number', formatString: '$,.2f', currencySymbol: '$' },
                 usd_0:      { kind: 'number', formatString: '$,.0f', currencySymbol: '$' },
                 usd_1:      { kind: 'number', formatString: '$,.1f', currencySymbol: '$' },
-                eur:        { kind: 'number', formatString: '$,.2f', currencySymbol: '€' },
-                gbp:        { kind: 'number', formatString: '$,.2f', currencySymbol: '£' },
+                eur:        { kind: 'number', formatString: '€,.2f', currencySymbol: '€' },
+                gbp:        { kind: 'number', formatString: '£,.2f', currencySymbol: '£' },
                 percent:    { kind: 'number', formatString: ',.2%' },
                 percent_0:  { kind: 'number', formatString: ',.0%' },
                 percent_1:  { kind: 'number', formatString: ',.1%' },
@@ -10686,36 +10686,65 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 percent_3:  { kind: 'number', formatString: ',.3%' },
                 percent_4:  { kind: 'number', formatString: ',.4%' },
             };
-            return map[n] || null;
+            if (map[n]) return map[n];
+            // Generic fallbacks for decimals/currencies not in the static map
+            // (e.g. usd_3, gbp_0, eur_0, cad, aud, decimal_5). Mirrors the MCP
+            // lookmlNamedFormat regex so both converters agree.
+            const CUR = { usd: '$', gbp: '£', eur: '€', cad: '$', aud: '$' };
+            let m2 = n.match(/^(usd|gbp|eur|cad|aud)(?:_(\d+))?$/);
+            if (m2) {
+                const sym = CUR[m2[1]];
+                const dec = m2[2] != null ? Number(m2[2]) : 2;
+                return { kind: 'number', formatString: `${sym},.${dec}f`, currencySymbol: sym };
+            }
+            m2 = n.match(/^percent(?:_(\d+))?$/);
+            if (m2) return { kind: 'number', formatString: `,.${m2[1] != null ? Number(m2[1]) : 0}%` };
+            m2 = n.match(/^decimal(?:_(\d+))?$/);
+            if (m2) return { kind: 'number', formatString: `,.${m2[1] != null ? Number(m2[1]) : 0}f` };
+            return null;
         }
 
         // Map an Excel-style format string (Power BI formatMask / LookML value_format)
         // to a Sigma format object.  Returns null for patterns we can't reliably convert.
         function _excelFormatToSigma(mask) {
             if (!mask || /^(General|Text|@)$/i.test(mask.trim())) return null;
+            const rawMask = mask.trim();
+            if (/general|date|time|@|yyyy|mmm|\bdd\b/i.test(rawMask)) return null;
+            // Trailing scale suffix in a quoted literal, e.g. $#,##0.0\"K\" or 0.0,,"M".
+            // The mask may arrive with inner quotes still escaped, so match an
+            // optional backslash before each. Detect BEFORE stripping backslashes.
+            const sufM = rawMask.match(/\\?["']\s*([KMB])\s*\\?["']/i);
+            const suffix = sufM ? sufM[1].toUpperCase() : undefined;
             // Excel/TMSL escapes literals with a backslash (e.g. "\$#,0"); strip
-            // them so the currency/number patterns below match (beads-sigma-4q7k).
-            const m = mask.trim().replace(/\\/g, '');
+            // them, then drop any quoted literal segments so the patterns below
+            // match the numeric core (beads-sigma-4q7k).
+            const m = rawMask.replace(/\\(.)/g, '$1').replace(/["'][^"']*["']/g, '');
             // Percentage: 0%, 0.0%, 0.00%, #,##0.0%, etc.
-            const pctMatch = m.match(/^[#,]*0(\.0+)?%$/);
+            const pctMatch = m.match(/[#,]*0(\.0+)?%/);
             if (pctMatch) {
                 const decimals = pctMatch[1] ? pctMatch[1].length - 1 : 0;
-                return { kind: 'number', formatString: `,.${decimals}%` };
+                const f = { kind: 'number', formatString: `,.${decimals}%` };
+                if (suffix) f.suffix = suffix;
+                return f;
             }
-            // Currency: $#,0.00  $#,##0  £#,##0.00  €#,##0  etc.
-            const currMatch = m.match(/^([$£€¥])([#,0]+)(\.0+)?$/);
+            // Currency: $#,0.00  $#,##0  £#,##0.00  €#,##0  $#,##0.0"K"  etc.
+            const currMatch = m.match(/([$£€¥])([#,0]+)(\.0+)?/);
             if (currMatch) {
                 const sym = currMatch[1];
                 const decimals = currMatch[3] ? currMatch[3].length - 1 : 0;
                 const hasGroup = currMatch[2].includes(',');
-                return { kind: 'number', formatString: `${hasGroup ? '$,' : '$'}.${decimals}f`, currencySymbol: sym };
+                const f = { kind: 'number', formatString: `${hasGroup ? '$,' : '$'}.${decimals}f`, currencySymbol: sym };
+                if (suffix) f.suffix = suffix;
+                return f;
             }
             // Plain number: #,##0  #,##0.00  0.00  0  etc.
-            const numMatch = m.match(/^[#,]*0(\.0+)?$/);
-            if (numMatch) {
+            const numMatch = m.match(/[#,]*0(\.0+)?/);
+            if (numMatch && /[0#]/.test(m)) {
                 const decimals = numMatch[1] ? numMatch[1].length - 1 : 0;
                 const hasGroup = m.includes(',');
-                return { kind: 'number', formatString: `${hasGroup ? ',' : ''}.${decimals}f` };
+                const f = { kind: 'number', formatString: `${hasGroup ? ',' : ''}.${decimals}f` };
+                if (suffix) f.suffix = suffix;
+                return f;
             }
             return null;
         }
@@ -22626,8 +22655,26 @@ views:
         // ── LookML Block Parser ───────────────────────────────────────────────
         // Parses LookML's curly-brace block syntax into a nested object tree.
         function parseLookML(text) {
-            // Strip line comments
-            text = text.replace(/#[^\n]*/g, '');
+            // Strip line comments — but a `#` inside a double-quoted string is NOT
+            // a comment (e.g. value_format: "$#,##0.0\"K\""). Walk char-by-char
+            // tracking quote state so we only drop `#`→EOL runs outside a string.
+            text = (() => {
+                let out = '';
+                let inStr = false;
+                for (let i = 0; i < text.length; i++) {
+                    const ch = text[i];
+                    if (inStr) {
+                        out += ch;
+                        if (ch === '\\' && i + 1 < text.length) { out += text[++i]; continue; }
+                        if (ch === '"') inStr = false;
+                        continue;
+                    }
+                    if (ch === '"') { inStr = true; out += ch; continue; }
+                    if (ch === '#') { while (i < text.length && text[i] !== '\n') i++; if (i < text.length) out += '\n'; continue; }
+                    out += ch;
+                }
+                return out;
+            })();
 
             // ── Pre-extract raw sql: ... ;; blocks before tokenizing ──────────
             // The tokenizer drops commas (they're not in its character class), which
@@ -24988,6 +25035,9 @@ ${cleanedSql}`;
                 colIdMap[physicalCol] = colId;
                 const dimCol = { id: colId, formula: colRef(physicalCol) };
                 if (d.hidden === true || d.hidden === 'yes') dimCol.hidden = true;
+                const _lkDimFmt = (d.value_format_name ? _lookFormatNameToSigma(d.value_format_name) : null)
+                    || (d.value_format ? _excelFormatToSigma(d.value_format) : null);
+                if (_lkDimFmt) dimCol.format = _lkDimFmt;
                 element.columns.push(dimCol);
                 element.order.push(colId);
             }
@@ -25286,7 +25336,12 @@ ${cleanedSql}`;
                                    .replace(/\b(COALESCE|NVL|IFNULL)\s*\(/gi, 'Coalesce(')
                                    .replace(/\b(IFF|IIF)\s*\(/gi, 'If(')
                                    .replace(/;;\s*$/, '');
-                        element.metrics.push({ id: sigmaShortId(), formula: expr.trim(), name: msLabel });
+                        const _lkCompFmt = (ms.value_format_name ? _lookFormatNameToSigma(ms.value_format_name) : null)
+                            || (ms.value_format ? _excelFormatToSigma(ms.value_format) : null)
+                            || _inferSigmaFormat(expr.trim(), msLabel);
+                        const _lkCompM = { id: sigmaShortId(), formula: expr.trim(), name: msLabel };
+                        if (_lkCompFmt) _lkCompM.format = _lkCompFmt;
+                        element.metrics.push(_lkCompM);
                         warnings.push(`✅ "${ms._name}" (computed) → ${expr.trim().slice(0, 70)}`);
                         continue;
                     }
@@ -31299,6 +31354,7 @@ models:
     <li><b>Filtered measures</b> → Conditional aggregates: <code>SumIf([Col], [Filter] = "value")</code>. A filtered <code>type:count</code> → <code>CountIf(condition)</code> referencing only the filter columns (no fabricated value column from the measure name)</li>
     <li><b>extends</b> → Base view fields inherited automatically when both files are uploaded</li>
     <li><b>refinements</b> → Merged automatically into the original view when both files are uploaded</li>
+    <li><b>Number formats</b> → A field's <code>value_format_name</code> (e.g. <code>usd</code>, <code>usd_0</code>, <code>gbp</code>, <code>eur</code>, <code>percent_0/1/2</code>, <code>decimal_0/1/2</code>) and custom <code>value_format</code> masks (e.g. <code>$#,##0.00</code>, <code>0.0%</code>, <code>#,##0</code>, and trailing scale suffixes like <code>$#,##0.0"K"</code>) are carried onto the generated metric/column as a Sigma <code>format</code> object, so migrated currency/percent measures render as <code>$110,342.75</code> / <code>34.2%</code> instead of bare numbers. Formats that can't be mapped cleanly are left off with a warning so you can set them manually.</li>
 </ul>
 
 <h3>Expression Conversion</h3>
