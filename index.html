@@ -16166,7 +16166,7 @@ views:
         // Aggregate-level TML formula (applies an aggregate fn to a column) → must be a
         // Sigma metric, not a row-level calc column.
         function _tsIsAggregateFormula(expr) {
-            return /\b(sum|count|count_distinct|unique_count|count_not_null|average|avg|max|min|median|std_deviation|stddev|variance|cumulative_sum|running_total)\s*\(/i.test(expr || '');
+            return /\b(sum|count|count_distinct|unique_count|count_not_null|average|avg|max|min|median|std_deviation|stddev|variance|cumulative_sum|running_total|sum_if|count_if|average_if|max_if|min_if|unique_count_if)\s*\(/i.test(expr || '');
         }
 
         function _tsFormulaToSigma(expr, elementByTable) {
@@ -16205,6 +16205,54 @@ views:
             // Paren-balanced parser handles nested calls like safe_divide(sum(x), sum(y)).
             // Note: bare `null` (Null() is not a valid Sigma function).
             s = _tsRewriteSafeDivide(s);
+
+            // Conditional aggregates — ThoughtSpot puts the condition FIRST
+            // (sum_if(cond, measure)); Sigma's SumIf(field, condition) is reversed.
+            s = _tsRewriteCondAgg(s, 'sum_if', 'SumIf');
+            s = _tsRewriteCondAgg(s, 'unique_count_if', 'CountDistinctIf');
+            s = _tsRewriteCondAgg(s, 'average_if', 'AvgIf');
+            s = _tsRewriteCondAgg(s, 'max_if', 'MaxIf');
+            s = _tsRewriteCondAgg(s, 'min_if', 'MinIf');
+            s = s.replace(/\bcount_if\s*\(/gi, 'CountIf(');
+            // Date truncation → DateTrunc("<unit>", …)
+            s = s.replace(/\bstart_of_week\s*\(/gi, 'DateTrunc("week", ');
+            s = s.replace(/\bstart_of_month\s*\(/gi, 'DateTrunc("month", ');
+            s = s.replace(/\bstart_of_quarter\s*\(/gi, 'DateTrunc("quarter", ');
+            s = s.replace(/\bstart_of_year\s*\(/gi, 'DateTrunc("year", ');
+            s = s.replace(/\bstart_of_day\s*\(/gi, 'DateTrunc("day", ');
+            // Date-part extraction
+            s = s.replace(/\bmonth_number\s*\(/gi, 'Month(');
+            s = s.replace(/\bquarter_number\s*\(/gi, 'Quarter(');
+            s = s.replace(/\b(?:day_number_of_week|day_of_week)\s*\(/gi, 'Weekday(');
+            s = s.replace(/\bday_of_month\s*\(/gi, 'Day(');
+            s = s.replace(/\byear\s*\(/gi, 'Year(');
+            s = s.replace(/\bmonth\s*\(/gi, 'Month(');
+            s = s.replace(/\bday\s*\(/gi, 'Day(');
+            s = s.replace(/\bhour\s*\(/gi, 'Hour(');
+            // Math
+            s = s.replace(/\bpow(?:er)?\s*\(/gi, 'Power(');
+            s = s.replace(/\bsqrt\s*\(/gi, 'Sqrt(');
+            s = s.replace(/\babs\s*\(/gi, 'Abs(');
+            s = s.replace(/\bround\s*\(/gi, 'Round(');
+            s = s.replace(/\bexp\s*\(/gi, 'Exp(');
+            s = s.replace(/\bln\s*\(/gi, 'Ln(');
+            s = s.replace(/\blog10\s*\(/gi, 'Log10(');
+            s = s.replace(/\bceil\s*\(/gi, 'Ceiling(');
+            s = s.replace(/\bfloor\s*\(/gi, 'Floor(');
+            s = s.replace(/\bmod\s*\(/gi, 'Mod(');
+            // String
+            s = s.replace(/\bconcat\s*\(/gi, 'Concat(');
+            s = s.replace(/\bsubstr(?:ing)?\s*\(/gi, 'Mid(');
+            s = s.replace(/\bstrlen\s*\(/gi, 'Len(');
+            s = s.replace(/\bupper\s*\(/gi, 'Upper(');
+            s = s.replace(/\blower\s*\(/gi, 'Lower(');
+            s = s.replace(/\bltrim\s*\(/gi, 'Ltrim(');
+            s = s.replace(/\brtrim\s*\(/gi, 'Rtrim(');
+            s = s.replace(/\btrim\s*\(/gi, 'Trim(');
+            s = s.replace(/\breplace\s*\(/gi, 'Replace(');
+            // Null handling
+            s = s.replace(/\bifnull\s*\(/gi, 'Coalesce(');
+            s = s.replace(/\bcoalesce\s*\(/gi, 'Coalesce(');
 
             // isnull(x) → IsNull(x)
             s = s.replace(/\bisnull\s*\(/gi, 'IsNull(');
@@ -16256,6 +16304,34 @@ views:
                 const a = s.slice(re.lastIndex, commaIdx).trim();
                 const b = s.slice(commaIdx + 1, j).trim();
                 out += `If(IsNull(${b}) or ${b} = 0, null, ${a} / ${b})`;
+                i = j + 1;
+                re.lastIndex = i;
+            }
+            out += s.slice(i);
+            return out;
+        }
+
+        // Paren-balanced rewrite of a ThoughtSpot two-arg conditional aggregate
+        // `<tsFn>(condition, measure)` → `<sigmaFn>(measure, condition)` (arg swap).
+        function _tsRewriteCondAgg(s, tsFn, sigmaFn) {
+            let out = '';
+            let i = 0;
+            const re = new RegExp(`\\b${tsFn}\\s*\\(`, 'gi');
+            let m;
+            while ((m = re.exec(s)) !== null) {
+                out += s.slice(i, m.index);
+                let depth = 1, j = re.lastIndex, commaIdx = -1;
+                while (j < s.length && depth > 0) {
+                    const ch = s[j];
+                    if (ch === '(') depth++;
+                    else if (ch === ')') { depth--; if (depth === 0) break; }
+                    else if (ch === ',' && depth === 1 && commaIdx === -1) commaIdx = j;
+                    j++;
+                }
+                if (depth !== 0 || commaIdx === -1) { out += m[0]; i = re.lastIndex; continue; }
+                const cond = s.slice(re.lastIndex, commaIdx).trim();
+                const measure = s.slice(commaIdx + 1, j).trim();
+                out += `${sigmaFn}(${measure}, ${cond})`;
                 i = j + 1;
                 re.lastIndex = i;
             }
@@ -18109,9 +18185,12 @@ views:
             coalesce: 'Coalesce', nullif: 'Nullif',
             concat: 'Concat', substring: 'Mid', strlen: 'Len',
             tolower: 'Lower', toupper: 'Upper', trim: 'Trim',
+            ltrim: 'LTrim', rtrim: 'RTrim', lpad: 'LPad', rpad: 'RPad',
+            left: 'Left', right: 'Right',
             replace: 'Replace', split: 'Split', locate: 'Find', contains: 'Contains',
             abs: 'Abs', ceil: 'Ceiling', floor: 'Floor', round: 'Round',
             log: 'Log', exp: 'Exp', sqrt: 'Sqrt', mod: 'Mod',
+            power: 'Power', pow: 'Power', sign: 'Sign', pi: 'Pi',
             now: 'Now', today: 'Today',
             truncdate: 'DateTrunc', adddatetime: 'DateAdd', datediff: 'DateDiff',
             extract: 'DatePart', epochdate: 'EpochDate',
@@ -18493,6 +18572,22 @@ views:
             s = s.replace(new RegExp(SENT + '(\\d+)' + SENT, 'g'), (_m, i) => tokens[+i]);
             return s.replace(/ {2,}/g, ' ').trim();
         }
+
+        // Like _qBracketBareFields but ONLY brackets bare tokens that are known
+        // Qlik field names (in displayMap) — leaves operators (and/or/not), function
+        // calls, literals, and bracketed refs alone, so `and` isn't mangled to `[and]`.
+        function _qBracketKnownBareFields(expr, displayMap) {
+            const tokens = [];
+            const SENT = '\u0001';
+            const stash = (mm) => { tokens.push(mm); return ` ${SENT}${tokens.length - 1}${SENT} `; };
+            let s = expr.replace(/'[^']*'|"[^"]*"|\[[^\]]+\]/g, stash);
+            s = s.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\b(\s*\()?/g, (full, ident, call) => {
+                if (call) return full;
+                return displayMap[ident] ? `[${ident}]` : full;
+            });
+            s = s.replace(new RegExp(SENT + '(\\d+)' + SENT, 'g'), (_m, i) => tokens[+i]);
+            return s.replace(/ {2,}/g, ' ').trim();
+        }
         // Qlik Set-Analysis aggregation(s) → Sigma If-wrapped aggregate(s), or null.
         // Translates EVERY `AGG({<set>} EXPR)` occurrence (AND across clauses, OR/AND
         // across a clause value list). `warnings`/`name` optional — used to flag the
@@ -18592,9 +18687,11 @@ views:
             if (start < 0 || end < 0 || f.slice(end + 1).trim()) return null;
             const args = _qSplitTop(f.slice(start, end));
             if (args.length < 2) return null;
-            const wrapped = args.map(a => `(${a.trim()})`);
-            if (/^Sum$/i.test(fn)) return wrapped.join(' + ');
-            if (/^Avg$/i.test(fn)) return `(${wrapped.join(' + ')}) / ${args.length}`;
+            // Qlik treats nulls as absent in Range aggregations — Coalesce to 0
+            // for Sum/Avg so a single null arg doesn't null the whole result.
+            const coalesced = args.map(a => `Coalesce(${a.trim()}, 0)`);
+            if (/^Sum$/i.test(fn)) return '(' + coalesced.join(' + ') + ')';
+            if (/^Avg$/i.test(fn)) return `((${coalesced.join(' + ')}) / ${args.length})`;
             if (/^Max$/i.test(fn)) return `Greatest(${args.map(a => a.trim()).join(', ')})`;
             if (/^Min$/i.test(fn)) return `Least(${args.map(a => a.trim()).join(', ')})`;
             return null;
@@ -19077,6 +19174,9 @@ views:
                         continue;
                     }
 
+                    // Bracket bare Qlik field tokens (real master items use unbracketed
+                    // refs, e.g. RangeSum(Sum(NET_REVENUE), …)) so the raw→display rewrite resolves them.
+                    sigmaFormula = _qBracketKnownBareFields(sigmaFormula, qlikColToDisplayName);
                     // Rewrite [WAREHOUSE_NAME] → [Display Name] to match how element
                     // columns were created (same pattern as the PBI converter)
                     sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m, colName) =>
@@ -19127,6 +19227,9 @@ views:
 
                     let sigmaFormula = qlikExprToSigma(exprRaw, warnings, title);
                     if (!sigmaFormula) continue;
+                    // Bracket bare Qlik field tokens (real master dims use unbracketed
+                    // refs, e.g. Class(UNIT_PRICE, 50)) so the raw→display rewrite resolves them.
+                    sigmaFormula = _qBracketKnownBareFields(sigmaFormula, qlikColToDisplayName);
 
                     // Rewrite [WAREHOUSE_NAME] → [Display Name] to match element columns
                     sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m, colName) =>
@@ -24720,7 +24823,10 @@ ${cleanedSql}`;
             'YEAR': 'Year', 'MONTH': 'Month', 'DAY': 'Day',
             'HOUR': 'Hour', 'MINUTE': 'Minute', 'SECOND': 'Second',
             'WEEK': 'Week', 'QUARTER': 'Quarter',
-            'DATE': 'Date', 'DATETIME': 'Datetime',
+            'DATE': 'Date', 'DATETIME': 'Datetime', 'MAKEDATE': 'MakeDate',
+            'REGEXP_EXTRACT': 'RegexpExtract', 'REGEXP_REPLACE': 'RegexpReplace', 'REGEXP_MATCH': 'RegexpMatch',
+            'STDEV': 'StdDev', 'VAR': 'Variance', 'VARP': 'VariancePop',
+            'PERCENTILE': 'PercentileCont', 'SPLIT': 'SplitPart',
         };
 
         // ── Tableau LOD Expression Parser ──────────────────────────────────
@@ -25077,6 +25183,21 @@ ${cleanedSql}`;
             f = f.replace(/\bDATEADD\s*\(\s*'([^']+)'\s*,/gi, 'DateAdd("$1",');
             f = f.replace(/\bDATEDIFF\s*\(\s*'([^']+)'\s*,/gi, 'DateDiff("$1",');
 
+            // STDEVP (population std dev) — Sigma has no population-stddev fn; use Sqrt(VariancePop()).
+            f = f.replace(/\bSTDEVP\s*\(([^()]+(?:\([^()]*\)[^()]*)*)\)/gi, 'Sqrt(VariancePop($1))');
+            // DATEPARSE('format', string) — Tableau args (format, string) + Java tokens;
+            // Sigma DateParse(text, format) reverses them and uses strftime tokens.
+            f = f.replace(/\bDATEPARSE\s*\(\s*('[^']*'|"[^"]*")\s*,\s*([^()]+(?:\([^()]*\)[^()]*)*)\)/gi,
+                (_m, fmt, str) => {
+                    const sf = fmt.slice(1, -1)
+                        .replace(/yyyy/g, '%Y').replace(/yy/g, '%y')
+                        .replace(/MMMM/g, '%B').replace(/MMM/g, '%b').replace(/MM/g, '%m')
+                        .replace(/dd/g, '%d').replace(/HH/g, '%H').replace(/hh/g, '%I')
+                        .replace(/mm/g, '%M').replace(/ss/g, '%S');
+                    if (warnings) warnings.push('⚠ DATEPARSE format translated to strftime tokens — verify the pattern resolves on your warehouse.');
+                    return `DateParse(${str.trim()}, "${sf}")`;
+                });
+
             // Map remaining functions
             for (const [tab, sig] of Object.entries(TABLEAU_FUNC_MAP)) {
                 f = f.replace(new RegExp('\\b' + tab + '\\s*\\(', 'gi'), sig + '(');
@@ -25146,7 +25267,7 @@ ${cleanedSql}`;
         }
 
         function tableauIsAggregate(formula) {
-            return /\b(SUM|AVG|COUNT|COUNTD|MAX|MIN|MEDIAN|STDEV|VAR|ATTR)\s*\(/i.test(formula);
+            return /\b(SUM|AVG|COUNT|COUNTD|MAX|MIN|MEDIAN|STDEV|STDEVP|VAR|VARP|PERCENTILE|ATTR)\s*\(/i.test(formula);
         }
 
         function tableauExtractPath(rel, dbOverride, schOverride) {
@@ -27808,6 +27929,15 @@ ${cleanedSql}`;
             f = f.replace(/\bINT\s*\(/gi, 'Int(');
             f = f.replace(/\bSQRT\s*\(/gi, 'Sqrt(');
             f = f.replace(/\bPOWER\s*\(/gi, 'Power(');
+            f = f.replace(/\bLN\s*\(/gi, 'Ln(');     // DAX LN(x) == Sigma Ln(x)
+            // DAX LOG10(x) and LOG(x,[base]) → Sigma Log(value,[base]) (base-10 default matches).
+            f = f.replace(/\bLOG10\s*\(/gi, 'Log(');
+            f = f.replace(/\bLOG\s*\(/gi, 'Log(');
+            // DAX CEILING/FLOOR(number, significance) — align to the multiple manually.
+            f = f.replace(/\bCEILING\s*\(([^(),]+),\s*([^()]+)\)/gi, 'Ceiling($1 / $2) * $2');
+            f = f.replace(/\bFLOOR\s*\(([^(),]+),\s*([^()]+)\)/gi, 'Floor($1 / $2) * $2');
+            f = f.replace(/\bCEILING\s*\(/gi, 'Ceiling(');
+            f = f.replace(/\bFLOOR\s*\(/gi, 'Floor(');
             // Date
             f = f.replace(/\bYEAR\s*\(/gi, 'Year(');
             f = f.replace(/\bMONTH\s*\(/gi, 'Month(');
@@ -30135,6 +30265,7 @@ models:
     <li><b>Joins/Relationships</b> → Sigma relationships on the fact element. <b>Tableau 2020.2+ relationship model ("noodles")</b>: Tableau resolves join type and granularity at viz time — the converter maps these directly to Sigma relationships (which are also lazy / resolved at query time), so no semantic information is lost. Cardinality hints (1:1, 1:N, N:1, N:N) are preserved when present and default to <code>N:1</code> (the dominant fact-to-dim pattern) when Tableau leaves them unspecified. <b>Pre-2020.2 physical joins</b> (older Tableau Server on-prem versions, including 2018.x and 2019.x): handled via the Join Strategy dropdown — Auto routes <code>many_to_one</code> joins to relationships and others to physical joins; Force Relationships keeps everything lazy; Force Physical Joins keeps everything eager. Both code paths produce valid Sigma data models.</li>
     <li><b>Calculated fields</b> → Sigma calculated columns with formula conversion</li>
     <li><b>Simple aggregates</b> → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)</li>
+    <li><b>Statistical / regex / date-construction functions</b> → <code>STDEV</code>→<code>StdDev</code>, <code>VAR</code>→<code>Variance</code>, <code>VARP</code>→<code>VariancePop</code>, <code>STDEVP</code>→<code>Sqrt(VariancePop(…))</code>, <code>PERCENTILE</code>→<code>PercentileCont</code>, <code>REGEXP_EXTRACT/MATCH/REPLACE</code>→<code>Regexp*</code>, <code>SPLIT</code>→<code>SplitPart</code>, <code>MAKEDATE</code>→<code>MakeDate</code>, and <code>DATEPARSE(fmt, str)</code>→<code>DateParse(str, "&lt;strftime&gt;")</code> (Tableau's arg order is reversed and its Java date tokens are rewritten to strftime — review the pattern).</li>
     <li><b>Parameters</b> → Sigma controls (list, date-range, number-range, text)</li>
     <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves.</li>
     <li><b>Window / table calculations</b> (<code>RUNNING_SUM</code>, <code>RUNNING_AVG</code>, <code>RUNNING_MIN</code>, <code>RUNNING_MAX</code>, <code>WINDOW_SUM</code>, <code>WINDOW_AVG</code>, <code>WINDOW_MIN</code>, <code>WINDOW_MAX</code>, <code>WINDOW_COUNT</code>, <code>LOOKUP</code>, <code>PREVIOUS_VALUE</code>, <code>RANK</code>, <code>RANK_DENSE</code>, <code>RANK_UNIQUE</code>, <code>INDEX</code>, <code>FIRST</code>, <code>LAST</code>) → A <code>kind:sql</code> helper element with explicit Snowflake <code>OVER()</code> clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys are derived from worksheet <code>rows</code> shelves, order keys from time-truncated <code>cols</code> shelves. The DATE_TRUNC grain is derived from the cols-shelf prefix (<code>yr:</code>→year, <code>qr:</code>→quarter, <code>mn:</code>→month, <code>wk:</code>→week, <code>dy:</code>/<code>md:</code>→day; no prefix → no DATE_TRUNC wrapper). Explicit "Compute Using" addressing (<code>&lt;table-calculation&gt;</code> with <code>&lt;address&gt;</code> children, plus Table Across/Down direction) overrides the rows/cols heuristic. Multiple window calcs sharing the same partition+order signature are emitted as separate aliases on a single helper element.</li>
@@ -30180,6 +30311,7 @@ models:
     <li><b>Measures-only tables</b> → Measures moved to the fact element</li>
     <li><b>Simple CALCULATE</b> → <code>SumIf</code> / <code>CountIf</code> with correct argument order</li>
     <li><b>DIVIDE</b> → Null-safe division with <code>If(den = 0, alt, num / den)</code></li>
+    <li><b>Math functions</b> → <code>LN</code>→<code>Ln</code>; <code>LOG10</code> and <code>LOG(x, [base])</code>→Sigma <code>Log(value, [base])</code> (base-10 default matches DAX); <code>CEILING/FLOOR(n, significance)</code>→<code>Ceiling(n / s) * s</code> / <code>Floor(n / s) * s</code> (Sigma's Ceiling/Floor take no significance argument)</li>
     <li><b>RELATED(Table[Col])</b> → <code>Lookup([TABLE/Col], [LocalKey], [TABLE/ForeignKey])</code> — resolved automatically using the model's relationship definitions</li>
     <li><b>LOOKUPVALUE(Table[ReturnCol], Table[MatchCol], LocalValue)</b> → <code>Lookup([TABLE/ReturnCol], LocalValue, [TABLE/MatchCol])</code></li>
 </ul>
@@ -30627,6 +30759,9 @@ models:
     <li><code>isnull(x)</code> → <code>IsNull(x)</code></li>
     <li><code>date_diff(unit, start, end)</code> → <code>DateDiff(unit, start, end)</code></li>
     <li><code>today()</code> → <code>Today()</code></li>
+    <li><b>Date:</b> <code>start_of_week/month/quarter/year(x)</code> → <code>DateTrunc("week"/…, x)</code>; <code>month_number/quarter_number/day_of_week(x)</code> → <code>Month/Quarter/Weekday(x)</code></li>
+    <li><b>Math/String:</b> <code>pow/sqrt/abs/round/exp/ln/log10/ceil/floor</code> and <code>concat/substr/strlen/upper/lower/trim/ltrim/rtrim/replace</code> → their Sigma equivalents (<code>Power/…/Len/…</code>); <code>ifnull/coalesce</code> → <code>Coalesce</code></li>
+    <li><b>Conditional aggregates:</b> <code>sum_if(cond, measure)</code> → <code>SumIf(measure, cond)</code> (condition moves to the second arg — same for <code>avg_if/max_if/min_if/unique_count_if</code>); <code>count_if(cond)</code> → <code>CountIf(cond)</code></li>
 </ul>
 
 <div class="help-links">
@@ -30685,6 +30820,7 @@ models:
     <li><code>switch(expr, k1, v1, k2, v2, default)</code> → nested <code>If(expr = k1, v1, If(expr = k2, v2, default))</code></li>
     <li><code>'string'</code> → <code>"string"</code>, <code>&lt;&gt;</code> → <code>!=</code></li>
     <li><code>ifelse / distinct_count / coalesce / nullif / dateDiff / truncDate</code> → <code>If / CountDistinct / Coalesce / Nullif / DateDiff / DateTrunc</code> etc.</li>
+    <li><b>Scalar functions:</b> <code>left/right</code> → <code>Left/Right</code>, <code>ltrim/rtrim/lpad/rpad</code> → <code>LTrim/RTrim/LPad/RPad</code>, <code>power/pow</code> → <code>Power</code>, <code>sign</code> → <code>Sign</code>, <code>pi()</code> → <code>Pi()</code></li>
 </ul>
 
 <div class="help-links">
@@ -30705,7 +30841,8 @@ models:
     <li><b>Fields</b> → Sigma columns with display names (<code>FIELD_NAME</code> → <i>Field Name</i>)</li>
     <li><b>Associations</b> → Sigma relationships; fields shared between two tables are automatically detected and converted to FK/PK relationships; direction (one vs. many side) is inferred from row counts and field cardinality; tables with outgoing associations also get a <b>derived element</b> surfacing all own + associated table columns via <code>[SRC/TARGET/Col]</code> cross-element formulas</li>
     <li><b>Master Measures</b> → Sigma metrics with formula conversion (include a <code>masterMeasures</code> array in your JSON)</li>
-    <li><b>Master Dimensions (calculated)</b> → Sigma calculated columns; plain field references are skipped, calculated expressions are converted</li>
+    <li><b>Master Dimensions (calculated)</b> → Sigma calculated columns; plain field references are skipped, calculated expressions are converted. Bare (unbracketed) Qlik field refs are bracketed and mapped to Sigma display names.</li>
+    <li><b>Range &amp; binning functions</b> → <code>RangeSum</code>→<code>Coalesce(a,0)+…</code>, <code>RangeAvg</code>→fixed-denominator mean, <code>RangeMin/Max</code>→<code>Least/Greatest</code>, and <code>Class(field, n[, label, start])</code>→<code>Floor((field - start) / n) * n + start</code> (numeric lower bound of each bin)</li>
     <li><b>System tables</b> → Skipped (<code>$</code>-prefix and synthetic key tables like <code>%TableName%</code>)</li>
     <li><b>System fields</b> → Skipped (<code>$</code>-prefix fields such as <code>$Field</code>)</li>
 </ul>
