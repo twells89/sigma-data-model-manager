@@ -357,6 +357,48 @@ Converts ThoughtSpot Modeling Language (TML) files — worksheets and models exp
 
 ---
 
+### IBM Cognos Data Module
+
+Converts an IBM Cognos Analytics (11.x+) **Data Module JSON** — the modern semantic layer retrieved via `GET /api/v1/objects/{moduleId}?fields=specification` or exported from the Cognos data-module editor — to Sigma data model JSON. Parses query subjects (physical tables), query items, calculations, measures, and join relationships.
+
+**What gets converted:**
+- `querySubject[]` → One Sigma warehouse-table element per query subject; the physical table is the tail of `ref: ["M1.ORDER_FACT"]` (→ `ORDER_FACT`), with database/schema from the module or the override fields
+- `queryItem` (attribute / identifier) → Sigma column (the business label is preserved via the column `name`)
+- `queryItem` (fact / measure + `regularAggregate`) → Sigma metric — `total`→`Sum`, `average`→`Avg`, `count`→`Count`, `maximum`→`Max`, `minimum`→`Min`
+- `calculation` → calculated column, or a metric when the expression aggregates
+- `relationship[]` → Sigma relationship; the source side is the **many** side (from `maxcard`), join columns come from `link[].leftRef/rightRef` (or are parsed from an equi-join `expression`). The relationship name is the UPPERCASE target table key.
+
+**Expression conversion:**
+
+| Cognos | Sigma |
+|---|---|
+| `total([X])` | `Sum([X])` (and `average/count/maximum/minimum` → `Avg/Count/Max/Min`) |
+| `total([X] for [A],[B])` | `SumOver([X], [A], [B])` |
+| `if (cond) then (X) else (Y)` | `If(cond, X, Y)` |
+| `_add_days/_add_months/_add_years(d, n)` | `DateAdd("day"/…, n, d)` |
+| `_days_between(a, b)` | `DateDiff("day", b, a)` |
+| `extract(year, d)` | `DatePart("year", d)` |
+| `substring/substr` | `Mid`; `upper/lower/trim` → `Upper/Lower/Trim` |
+| `substitute(pat, rep, src)` | `RegexpReplace(src, pat, rep)` |
+| `cast(x AS varchar)` / `varchar(x)` | `Text(x)`; `decimal/double(x)` → passthrough |
+| `abs/round/floor/ceiling/sqrt/ln/mod/power` | `Abs/Round/Floor/Ceiling/Sqrt/Ln/Mod/Power` |
+| `\|\|` / single quotes | `&` / double quotes |
+
+**Known limitations (flagged, never faked):**
+- Window / running calcs — `running-total`, `moving-average`, `rank`, `percentile`, `quantile`, `tertile` — are passed through with a warning; they need manual authoring
+- Any unrecognized `function()` is left as-is and flagged for manual review
+- Composite / conditional joins (multiple `AND`/`OR` predicates) are not auto-wired — add the relationship manually in Sigma
+- Data-module **security filters** (row-level security) are **detected and reported** in the warnings — never injected into the spec. Re-create them in Sigma after saving (boolean calc column + element filter scoped via user attributes/teams)
+- Framework Manager `.cpf`, report-spec XML, dashboards, and sub-queries are out of scope (Data Module JSON only)
+
+**How to get the Data Module JSON:**
+1. **REST**: `GET /api/v1/objects/{moduleId}?fields=specification` and save the module specification JSON
+2. **Cognos UI**: open the data module → ⋯ menu → Export specification (JSON)
+
+**Useful resources:** [IBM Cognos Analytics Docs](https://www.ibm.com/docs/en/cognos-analytics) · [Cognos Data Modules](https://www.ibm.com/docs/en/cognos-analytics/latest?topic=modeling-data-modules)
+
+---
+
 ### Qlik Sense
 
 Converts Qlik Sense data model metadata (from the REST API or Engine API) to Sigma data model JSON. Parses tables, fields, automatically inferred associations, master measures, and master dimensions.
