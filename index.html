@@ -17061,7 +17061,7 @@ views:
             f = f.replace(/'([^']*)'/g, '"$1"');  // Cognos single-quoted strings → Sigma double-quoted
 
             // Unknown bareword(...) functions → warn (kept as-is for manual review)
-            const known = /\b(If|Sum|Avg|Count|CountDistinct|Min|Max|SumOver|AvgOver|CountOver|MinOver|MaxOver|DateAdd|DateDiff|DatePart|Mid|Upper|Lower|Trim|Coalesce|Text|RegexpReplace|Replace)\b/;
+            const known = /\b(If|Switch|Sum|Avg|Count|CountDistinct|Min|Max|SumOver|AvgOver|CountOver|MinOver|MaxOver|DateAdd|DateDiff|DatePart|Mid|Upper|Lower|Trim|Coalesce|Text|RegexpReplace|Replace)\b/;
             for (const m of f.matchAll(/\b([a-z][a-z0-9_-]*)\s*\(/gi)) {
                 if (!known.test(m[1]) && !/^(and|or|not|in|like|between|then|else|end|case|when)$/i.test(m[1])) {
                     warnings.push(`function "${m[1]}()" has no confirmed Sigma mapping — review/translate manually.`);
