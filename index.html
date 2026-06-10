@@ -23991,7 +23991,16 @@ ${cleanedSql}`;
                 });
             });
 
-            // ── LookML access_filter → Sigma RLS columns ─────────────────────
+            // ── LookML access_filter → Sigma row-level security (spec-expressible) ─
+            // access_filter implements RLS: each row is restricted by matching a
+            // column against the value of a Looker user_attribute. This IS
+            // expressible in the Sigma DM spec (verified live end-to-end): on the
+            // element that owns the field we add a boolean calc column
+            //   RLS: <Field> = CurrentUserAttributeText("<attr>") = [<Field>]
+            // plus an element-level `filters` entry on that calc column that keeps
+            // only rows where it is True (kind:list, mode:include, values:[true]) —
+            // fail-closed RLS. Never silently dropped; emit an actionable note so
+            // the user provisions/reuses the matching Sigma user attribute.
             const accessFilters = explore.access_filter
                 ? (Array.isArray(explore.access_filter) ? explore.access_filter : [explore.access_filter])
                 : [];
@@ -24000,27 +24009,51 @@ ${cleanedSql}`;
                 const userAttr = af.user_attribute || '';
                 if (!fieldRef || !userAttr) continue;
 
-                // field is "view_name.field_name" — extract the field part
-                const fieldName = fieldRef.includes('.') ? fieldRef.split('.').pop() : fieldRef;
-                const displayName = sigmaDisplayName(fieldName);
-
-                // Find the target element (try to match by view name, fall back to first element)
-                const viewPart = fieldRef.includes('.') ? fieldRef.split('.')[0] : '';
-                let targetEl = allElements.find(el => {
-                    const elTableName = el.source?.path?.[el.source.path.length - 1] || '';
-                    return elTableName.toUpperCase() === viewPart.toUpperCase();
-                }) || allElements[0];
-
-                if (targetEl) {
-                    const rlsId = sigmaShortId();
-                    const rlsFormula = `CurrentUserAttributeText("${userAttr}") = [${displayName}]`;
-                    const _lkRlsFmt = _inferSigmaFormat(rlsFormula, `RLS: ${userAttr}`);
-                    const _lkRlsCol = { id: rlsId, formula: rlsFormula, name: `RLS: ${userAttr}` };
-                    if (_lkRlsFmt) _lkRlsCol.format = _lkRlsFmt;
-                    targetEl.columns.push(_lkRlsCol);
-                    targetEl.order.push(rlsId);
-                    warnings.push(`✅ access_filter "${fieldRef}" → RLS column "RLS: ${userAttr}". Ensure user attribute "${userAttr}" exists in Sigma, then add a True filter on this column.`);
+                // Resolve the element + column the access_filter restricts.
+                const dotIdx = fieldRef.lastIndexOf('.');
+                const viewPart = dotIdx >= 0 ? fieldRef.slice(0, dotIdx) : baseViewName;
+                const fieldPart = (dotIdx >= 0 ? fieldRef.slice(dotIdx + 1) : fieldRef).toUpperCase();
+                const targetRes = elementMap[viewPart] || elementMap[baseAlias];
+                const colId = targetRes ? lookFindColId(targetRes, fieldPart) : null;
+                if (!targetRes || !colId) {
+                    warnings.push(`⚠ access_filter "${fieldRef}" by user_attribute "${userAttr}" (row-level security): column "${fieldRef}" was not found in the converted model — re-apply this RLS rule manually in Sigma (boolean calc column CurrentUserAttributeText("${userAttr}") = [<field>] + an element filter keeping only True).`);
+                    continue;
                 }
+
+                // Display name to reference inside the calc column. A physical dim has
+                // no explicit `name` — its display name is the trailing segment of its
+                // [TABLE/Display] formula; a calc column carries its `name` directly.
+                const targetEl = targetRes.element;
+                const ownerCol = (targetEl.columns || []).find(c => c.id === colId);
+                let dispName = ownerCol && ownerCol.name;
+                if (!dispName && ownerCol && ownerCol.formula) {
+                    const fm = String(ownerCol.formula).match(/^\[(?:[^\]\/]+\/)?([^\]]+)\]$/);
+                    if (fm) dispName = fm[1];
+                }
+                if (!dispName) dispName = sigmaDisplayName(fieldPart);
+
+                // Boolean RLS calc column on the owning element.
+                const rlsId = sigmaShortId();
+                const rlsName = `RLS: ${dispName}`;
+                const rlsFormula = `CurrentUserAttributeText("${userAttr}") = [${dispName}]`;
+                const _lkRlsCol = { id: rlsId, formula: rlsFormula, name: rlsName };
+                const _lkRlsFmt = _inferSigmaFormat(rlsFormula, rlsName);
+                if (_lkRlsFmt) _lkRlsCol.format = _lkRlsFmt;
+                targetEl.columns.push(_lkRlsCol);
+                if (!targetEl.order) targetEl.order = [];
+                targetEl.order.push(rlsId);
+
+                // Fail-closed element filter: keep only rows where the RLS column is True.
+                if (!targetEl.filters) targetEl.filters = [];
+                targetEl.filters.push({
+                    id: sigmaShortId(),
+                    columnId: rlsId,
+                    kind: 'list',
+                    mode: 'include',
+                    values: [true]
+                });
+
+                warnings.push(`✅ access_filter "${fieldRef}" → Sigma RLS applied via user attribute "${userAttr}". Added boolean calc column "${rlsName}" (CurrentUserAttributeText("${userAttr}") = [${dispName}]) + an element filter keeping only matching rows. ℹ Provision/reuse a Sigma user attribute named "${userAttr}" (GET/POST /v2/user-attributes) and assign each user their allowed value, or remove this filter from the element if you are not porting RLS.`);
             }
 
             // ── LookML always_filter → Sigma element filters ─────────────────
@@ -31236,7 +31269,7 @@ models:
     <li><b>Liquid templating</b> — <code>{% %}</code> and <code>{{ }}</code> blocks are <b>stripped entirely</b> with warnings. Any dimension or measure that depends on Liquid conditionals (e.g. <code>{% if _user_attributes['region'] %}</code>) will produce incorrect formulas. Review all Liquid warnings carefully after conversion. Note: <code>html:</code>, <code>sql_on:</code>, <code>sql_where:</code>, <code>sql_table_name:</code>, and <code>sql_trigger_value:</code> blocks are now pre-extracted alongside <code>sql:</code> before tokenizing, so Liquid <code>%}</code> inside an <code>html:</code> block no longer desyncs the parser and silently drops subsequent fields.</li>
     <li><b>Cross-view refs (<code>\${view_name.field}</code>)</b> — Dimensions whose <code>sql:</code> references fields from another view (e.g. <code>\${orders.customer_id}</code>) are automatically converted to <code>Lookup()</code> formulas using the explore's relationship keys. If a relationship exists and FK/PK columns are resolved, the full Lookup is emitted and a <code>✅</code> confirmation appears in the warnings panel. If the relationship can't be resolved, a partial <code>[TABLE/Col]</code> reference is emitted with a <code>⚠</code> warning to update it manually.</li>
     <li><b>PDT materializations</b> — Persistent Derived Tables are recognized and converted to Custom SQL elements. The materialization strategy (trigger, datagroup, sql_trigger_value) does not carry over. When a derived table's SQL references another PDT via <code>${'{'}view.SQL_TABLE_NAME{'}'}</code>, the referenced PDT is auto-converted to its own Custom SQL element and referenced via <code>sigma_element('Name')</code>; upload all referenced view files at once to enable full auto-resolution.</li>
-    <li><b>Access filters / row-level access</b> — LookML <code>access_filter</code> blocks are converted to Sigma RLS calculated columns using <code>CurrentUserAttributeText()</code>. You must ensure the matching user attribute exists in Sigma and add a <code>True</code> filter on the generated column. <code>access_grant</code> blocks (permission-based access) are not converted.</li>
+    <li><b>Access filters / row-level access</b> — LookML <code>access_filter</code> blocks are converted to a complete Sigma RLS artifact: a boolean calculated column (<code>RLS: &lt;Field&gt; = CurrentUserAttributeText("&lt;attr&gt;") = [&lt;Field&gt;]</code>) on the element that owns the field, <b>plus</b> an element-level filter on that column (<code>kind:list, mode:include, values:[true]</code>) that fail-closes to only matching rows. No manual filter step is needed. You must still provision (or reuse) a Sigma user attribute with the same name (<code>GET/POST /v2/user-attributes</code>) and assign each user their allowed value — or remove the generated filter if you are not porting RLS. <code>access_grant</code> blocks (permission-based access) are not converted.</li>
     <li><b>Explore-level always_filter</b> — String/list value filters are converted directly to Sigma element filters. Date relative expressions ("1 day", "last month") and range expressions (">100") cannot be auto-converted — add those manually using Sigma's date range or number range filter after import. <code>conditionally_filter</code> is not converted.</li>
     <li><b>sql_table_name with Liquid</b> — If a view's <code>sql_table_name</code> uses Liquid to switch tables dynamically (e.g. by environment), the converter strips the Liquid and uses whatever static text remains. Verify the warehouse path after conversion.</li>
     <li><b>Unsupported SQL functions</b> — Dimension and measure <code>sql:</code> expressions containing Snowflake-specific functions without Sigma equivalents (<code>FLATTEN</code>, <code>LATERAL</code>, <code>QUALIFY</code>, <code>PIVOT</code>, <code>UNPIVOT</code>, <code>GENERATOR</code>, <code>TABLESAMPLE</code>, <code>OBJECT_CONSTRUCT</code>, <code>ARRAY_CONSTRUCT</code>) are automatically <b>skipped with a warning</b>. The column is omitted from the output — add it manually in the Sigma UI after saving.</li>
