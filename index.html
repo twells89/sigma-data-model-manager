@@ -10476,7 +10476,12 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                     if (!rel.name) return; // name required for formula middle-segment
                     var tgtEl = elements.find(function(e) { return e.id === rel.targetElementId; });
                     if (!tgtEl || !tgtEl.source || tgtEl.source.kind !== 'warehouse-table') return;
+                    // Don't denormalize the relationship's OWN key column across the join — the
+                    // base element already carries that value, and the cross-element passthrough
+                    // of a join key compiles to type "error" in Sigma (verified via readback).
+                    var tgtKeyIds = new Set((rel.keys || []).map(function(k) { return k.targetColumnId; }));
                     (tgtEl.columns || []).forEach(function(col) {
+                        if (tgtKeyIds.has(col.id)) return;
                         if (!col.formula || col.formula.startsWith('/*')) return;
                         var fm = col.formula.match(/^\[([^\]]+)\]$/);
                         if (!fm) return;
