@@ -54,6 +54,7 @@ Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) 
 - Joins / Relationships → Sigma relationships on the fact element. Tableau 2020.2+ relationship model ("noodles") maps 1:1 to Sigma relationships — both tools resolve join type and granularity at viz time, so no semantic information is lost. Cardinality hints (1:1, 1:N, N:1, N:N) are preserved when present and default to N:1 (the dominant fact-to-dim pattern) when Tableau leaves them unspecified. Pre-2020.2 physical joins (older Tableau Server on-prem versions back to 2018.x) are handled via the Join Strategy dropdown: Auto routes many-to-one joins to relationships and others to physical joins; Force Relationships keeps everything lazy; Force Physical Joins keeps everything eager.
 - Calculated fields → Sigma calculated columns with formula conversion
 - Simple aggregates → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)
+- Statistical / regex / date-construction functions → `STDEV`→`StdDev`, `VAR`→`Variance`, `VARP`→`VariancePop`, `STDEVP`→`Sqrt(VariancePop(…))`, `PERCENTILE`→`PercentileCont`, `REGEXP_EXTRACT/MATCH/REPLACE`→`Regexp*`, `SPLIT`→`SplitPart`, `MAKEDATE`→`MakeDate`, and `DATEPARSE(fmt, str)`→`DateParse(str, "<strftime>")` (arg order reversed; Java date tokens rewritten to strftime — review the pattern)
 - Parameters → Sigma controls (list, date-range, text)
 - LOD FIXED / INCLUDE / EXCLUDE expressions → A `kind:sql` helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves.
 - Sets → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → `In([Field], ...)` column. If a set's formula references a related-element column, the set column is automatically moved to the derived element and scrubbed from the source element's "Sets" folder so the model saves cleanly
@@ -91,6 +92,7 @@ Converts Power BI models (`.pbit`, `.bim`, or `.json`) to Sigma data model JSON.
 - Measures-only tables → Measures moved to the fact element
 - `CALCULATE` (simple) → `SumIf` / `CountIf` with correct argument order
 - `DIVIDE` → Null-safe division with `If(den = 0, alt, num / den)`
+- Math functions → `LN`→`Ln`; `LOG10` and `LOG(x, [base])`→Sigma `Log(value, [base])` (base-10 default matches DAX); `CEILING/FLOOR(n, significance)`→`Ceiling(n / s) * s` / `Floor(n / s) * s` (Sigma's Ceiling/Floor have no significance argument)
 
 **DAX patterns that generate warnings:**
 - `CALCULATE` + `ALL` / `ALLEXCEPT` → Use groupings for different aggregation contexts
@@ -320,6 +322,8 @@ Converts ThoughtSpot Modeling Language (TML) files — worksheets and models exp
 - `tables[]` → One Sigma warehouse-table element per table, with database/schema from TML or overrides
 - `worksheet_columns` / `columns` → Sigma columns (ATTRIBUTE/DATE types) and metrics (MEASURE type with aggregation)
 - `formulas[]` → Sigma calculated columns; `if/then/else`, `sum()`, `count_distinct()`, `safe_divide()`, `isnull()`, `date_diff()`, and `in {}` converted to Sigma syntax
+- Date functions (`start_of_week/month/quarter/year`→`DateTrunc`, `month_number`/`quarter_number`/`day_of_week`→`Month`/`Quarter`/`Weekday`), math/string (`pow/sqrt/round/concat/substr/strlen/upper/lower/…`), and `ifnull`/`coalesce`→`Coalesce`
+- Conditional aggregates → `sum_if(cond, measure)`→`SumIf(measure, cond)` (condition moves to the 2nd arg; same for `avg_if`/`max_if`/`min_if`/`unique_count_if`), `count_if(cond)`→`CountIf(cond)`
 - `joins[]` → Sigma `N:1` relationships; join key columns matched by physical name
 - `table_paths[]` → Resolves `ALIAS::Column` column_ids to actual table names
 - Aggregations: SUM → Sum, COUNT → Count, COUNT_DISTINCT → CountDistinct, AVERAGE → Avg, MAX → Max, MIN → Min, STD_DEVIATION → StdDev, VARIANCE → Variance
@@ -359,8 +363,9 @@ Converts Qlik Sense data model metadata (from the REST API or Engine API) to Sig
 - Tables → Sigma elements (one per Qlik data model table)
 - Fields → Sigma columns with display names (`FIELD_NAME` → `Field Name`)
 - Associations → Sigma relationships; direction inferred from row counts and field cardinality
-- Master Measures → Sigma metrics with formula conversion
+- Master Measures → Sigma metrics with formula conversion (bare/unbracketed field refs are bracketed and mapped to display names)
 - Master Dimensions (calculated) → Sigma calculated columns
+- Range / binning functions → `RangeSum`→`Coalesce(a,0)+…`, `RangeAvg`→fixed-denominator mean, `RangeMin/Max`→`Least/Greatest`, `Class(field, n[, label, start])`→`Floor((field - start) / n) * n + start` (numeric lower bound of each bin)
 - System tables and fields ($ prefix, %synthetic keys) → Skipped automatically
 
 **How to get the metadata:**
