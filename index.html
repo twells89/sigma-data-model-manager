@@ -10397,14 +10397,30 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             'a','an','the','and','but','or','for','nor','so','yet',
             'at','by','in','of','on','to','up','as','into','via','per'
         ]);
+        // Matches Sigma's OWN derivation rule for warehouse column names (verified
+        // empirically against live DM readbacks, 2026-06-10): Sigma splits words at
+        // underscores, camelCase boundaries, AND every letter↔digit boundary — in BOTH
+        // directions. E.g. CY_Q1_REVENUE → "Cy Q 1 Revenue" (NOT "Cy Q1 Revenue"),
+        // FY2024 → "Fy 2024", PY_Q4 → "Py Q 4". Raw-column formula refs
+        // ([TABLE/Display Name]) must reproduce this exactly or the POST fails with
+        // "dependency not found" (beads-sigma-c31q).
         function sigmaDisplayName(s, friendly) {
             const useFriendly = (friendly !== undefined) ? friendly : state.useFriendlyNames;
             if (useFriendly === false) return s || '';
-            // Insert underscores at camelCase boundaries so OrderDate → Order_Date
+            // Insert underscores at camelCase + letter↔digit boundaries so OrderDate →
+            // Order_Date and CY_Q1 → CY_Q_1 (Sigma splits BOTH letters→digits and
+            // digits→letters).
             const normalized = (s || '')
                 .replace(/([a-z])([A-Z])/g, '$1_$2')
-                .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2');
-            const words = normalized.toLowerCase().split('_').filter(Boolean);
+                .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+                .replace(/([A-Za-z])([0-9])/g, '$1_$2')
+                .replace(/([0-9])([A-Za-z])/g, '$1_$2');
+            // Split on underscores AND whitespace so the function is IDEMPOTENT:
+            // sigmaDisplayName("Cyq Rev") === "Cyq Rev". Formulas pass through the
+            // expression translators more than once, and same-element sibling refs are
+            // resolved case-SENSITIVELY by Sigma — a non-idempotent derivation
+            // ("Cyq Rev" → "Cyq rev") breaks the ref (column compiles to type "error").
+            const words = normalized.toLowerCase().split(/[_\s]+/).filter(Boolean);
             return words.map((w, i) =>
                 (i === 0 || !SIGMA_LOWERCASE_WORDS.has(w))
                     ? w.charAt(0).toUpperCase() + w.slice(1)
@@ -17006,7 +17022,34 @@ views:
                 });
             }
 
-            return { name, querySubjects, relationships };
+            // Security filters (detect-only — surfaced via result.security + a warning).
+            // Real CA data modules carry row-level security as `securityFilter` entries
+            // (top-level or per-query-subject) holding an expression + the CAM groups/roles
+            // it applies to. Shape tolerance: also catch plain `filter` entries explicitly
+            // marked as security.
+            const securityFilters = [];
+            const pushSec = (sf, subject) => {
+                if (!sf || typeof sf !== 'object') return;
+                const groups = _cognosArr(sf.securityObject || sf.member || sf.members || sf.appliesTo)
+                    .map((g) => (typeof g === 'string' ? g : (g && (g.searchPath || g.ref || g.identifier))))
+                    .filter(Boolean);
+                securityFilters.push({
+                    type: 'data-module-security-filter',
+                    subject,
+                    name: sf.label || sf.identifier,
+                    expression: sf.expression || sf.filterDefinition || (sf.embeddedFilter && sf.embeddedFilter.expression),
+                    ...(groups.length ? { groups } : {}),
+                });
+            };
+            for (const sf of _cognosArr(root.securityFilter || root.securityFilters)) pushSec(sf);
+            for (const qs of qsList) {
+                for (const sf of _cognosArr(qs.securityFilter || qs.securityFilters)) pushSec(sf, qs.identifier || qs.label);
+            }
+            for (const fl of _cognosArr(root.filter || root.filters)) {
+                if (fl && (_cognosLc(fl.classifier).includes('security') || _cognosArr(fl.propertyOverride).some((p) => _cognosLc(p).includes('security')))) pushSec(fl);
+            }
+
+            return { name, querySubjects, relationships, securityFilters };
         }
 
         // Cognos expression DSL → Sigma formula.
@@ -17089,8 +17132,14 @@ views:
             f = f.replace(/\bcoalesce\s*\(/gi, 'Coalesce(');
             f = f.replace(/'([^']*)'/g, '"$1"');  // Cognos single-quoted strings → Sigma double-quoted
 
+            // Math fns with direct Sigma analogs
+            f = f.replace(/\babs\s*\(/gi, 'Abs(').replace(/\bround\s*\(/gi, 'Round(')
+                 .replace(/\bfloor\s*\(/gi, 'Floor(').replace(/\bceiling\s*\(/gi, 'Ceiling(')
+                 .replace(/\bsqrt\s*\(/gi, 'Sqrt(').replace(/\bln\s*\(/gi, 'Ln(')
+                 .replace(/\bmod\s*\(/gi, 'Mod(').replace(/\bpower\s*\(/gi, 'Power(');
+
             // Unknown bareword(...) functions → warn (kept as-is for manual review)
-            const known = /\b(If|Switch|Sum|Avg|Count|CountDistinct|Min|Max|SumOver|AvgOver|CountOver|MinOver|MaxOver|DateAdd|DateDiff|DatePart|Mid|Upper|Lower|Trim|Coalesce|Text|RegexpReplace|Replace)\b/;
+            const known = /\b(If|Switch|Sum|Avg|Count|CountDistinct|Min|Max|SumOver|AvgOver|CountOver|MinOver|MaxOver|DateAdd|DateDiff|DatePart|Mid|Upper|Lower|Trim|Coalesce|Text|RegexpReplace|Replace|Abs|Round|Floor|Ceiling|Sqrt|Ln|Mod|Power)\b/;
             for (const m of f.matchAll(/\b([a-z][a-z0-9_-]*)\s*\(/gi)) {
                 if (!known.test(m[1]) && !/^(and|or|not|in|like|between|then|else|end|case|when)$/i.test(m[1])) {
                     warnings.push(`function "${m[1]}()" has no confirmed Sigma mapping — review/translate manually.`);
@@ -17217,9 +17266,19 @@ views:
                 metrics: elements.reduce((n, e) => n + (e.metrics?.length || 0), 0),
                 relationships: elements.reduce((n, e) => n + (e.relationships?.length || 0), 0),
             };
+            // Detect-only security reporting: Cognos data-module security filters are
+            // surfaced via result.security + a loud warning, NEVER injected into the spec
+            // (a stateless converter can't provision Sigma user attributes — an injected
+            // CurrentUserAttributeText filter would fail-closed to 0 rows).
+            const security = (model.securityFilters || []).map((sf) => ({ ...sf }));
+            if (security.length) {
+                warnings.push(`SECURITY: ${security.length} data-module security filter(s) detected — NOT ported into the model spec. ` +
+                    `Re-create the row-level security in Sigma after saving (boolean calc column + element filter, scoped via user attributes/teams); skipping leaves ALL rows visible to everyone.`);
+            }
             return {
                 model: { name: modelName || model.name, schemaVersion: 1, pages: [{ id: sigmaShortId(), name: 'Page 1', elements }] },
                 warnings, stats,
+                ...(security.length ? { security } : {}),
             };
         }
 
@@ -31880,6 +31939,7 @@ models:
     <li><code>_add_days/_add_months/_add_years(d, n)</code> → <code>DateAdd("day"/…, n, d)</code>; <code>_days_between(a, b)</code> → <code>DateDiff("day", b, a)</code>; <code>extract(year, d)</code> → <code>DatePart("year", d)</code></li>
     <li><code>substring/substr</code> → <code>Mid</code>; <code>upper/lower/trim</code> → <code>Upper/Lower/Trim</code>; <code>substitute(pat, rep, src)</code> → <code>RegexpReplace(src, pat, rep)</code></li>
     <li><code>cast(x AS varchar)</code> / <code>varchar(x)</code> → <code>Text(x)</code>; <code>decimal/double(x)</code> → passthrough; <code>||</code> → <code>&amp;</code>; <code>coalesce</code> → <code>Coalesce</code>; single quotes → double quotes</li>
+    <li><code>abs/round/floor/ceiling/sqrt/ln/mod/power</code> → <code>Abs/Round/Floor/Ceiling/Sqrt/Ln/Mod/Power</code></li>
 </ul>
 
 <h3>Known Limitations (flagged, never faked)</h3>
@@ -31887,6 +31947,7 @@ models:
     <li>Window / running calcs — <code>running-total</code>, <code>moving-average</code>, <code>rank</code>, <code>percentile</code>, <code>quantile</code>, <code>tertile</code> — are passed through with a warning; they have no clean single-column Sigma analog and need manual authoring</li>
     <li>Any unrecognized <code>function()</code> is left as-is and flagged for manual review</li>
     <li>Composite / conditional joins (multiple <code>AND</code>/<code>OR</code> predicates) are not auto-wired — add the relationship manually in Sigma</li>
+    <li>Data-module <b>security filters</b> (row-level security) are <b>detected and reported</b> in the warnings — never injected into the spec. Re-create them in Sigma after saving (boolean calc column + element filter scoped via user attributes/teams); skipping leaves all rows visible to everyone</li>
     <li>Framework Manager <code>.cpf</code>, report-spec XML, dashboards, and sub-queries are out of scope (Data Module JSON only)</li>
 </ul>
 
