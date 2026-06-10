@@ -16885,6 +16885,40 @@ views:
         }
         const _cognosTrunc = (s, n = 80) => (s && s.length > n ? s.slice(0, n) + '…' : (s || ''));
 
+        // CASE … END → Sigma. Searched CASE → nested If(); simple CASE (selector before the
+        // first WHEN) → Switch(selector, v1, r1, …, default). Flat (non-nested) only.
+        function _cognosTranslateCase(s) {
+            let guard = 0;
+            while (/\bcase\b/i.test(s) && guard++ < 25) {
+                const m = s.match(/\bcase\b([\s\S]*?)\bend\b/i);
+                if (!m || m.index == null) break;
+                const repl = _cognosConvertCaseBody(m[1]);
+                if (repl == null) break;
+                s = s.slice(0, m.index) + repl + s.slice(m.index + m[0].length);
+            }
+            return s;
+        }
+        function _cognosConvertCaseBody(body) {
+            const em = body.match(/\belse\b([\s\S]*)$/i);
+            const elseVal = em ? em[1].trim() : 'Null';
+            const head = em ? body.slice(0, em.index) : body;
+            const fw = head.search(/\bwhen\b/i);
+            if (fw < 0) return null;
+            const selector = head.slice(0, fw).trim();
+            const clauses = head.slice(fw).split(/\bwhen\b/i).map(c => c.trim()).filter(Boolean);
+            const pairs = [];
+            for (const cl of clauses) {
+                const tm = cl.match(/^([\s\S]*?)\bthen\b([\s\S]*)$/i);
+                if (!tm) return null;
+                pairs.push([tm[1].trim(), tm[2].trim()]);
+            }
+            if (!pairs.length) return null;
+            if (selector) return `Switch(${[selector, ...pairs.flatMap(p => [p[0], p[1]]), elseVal].join(', ')})`;
+            let out = elseVal;
+            for (let i = pairs.length - 1; i >= 0; i--) out = `If(${pairs[i][0]}, ${pairs[i][1]}, ${out})`;
+            return out;
+        }
+
         // Data Module JSON → IR (tolerant of the common shape variants)
         function normalizeCognosDataModule(input) {
             const root = typeof input === 'string' ? JSON.parse(input) : input;
@@ -16962,6 +16996,23 @@ views:
                 const item = segs[segs.length - 1];
                 return `[${sigmaDisplayName(item)}]`;
             });
+
+            // SQL-style CASE … WHEN … THEN … END → searched→nested If(); simple→Switch().
+            f = _cognosTranslateCase(f);
+            // Bracket bare column idents (Cognos calcs ref columns unbracketed, e.g. inside
+            // CASE). Table-tail-prefix so a bare fact ref resolves to the raw column, not the
+            // same-named metric (a bare [Revenue] is otherwise ambiguous). Skip text in [ ].
+            const _cognosIdentMap = new Map();
+            for (const it of (qs.items || [])) _cognosIdentMap.set(it.identifier.toLowerCase(), sigmaDisplayName(it.label || it.identifier));
+            if (_cognosIdentMap.size) {
+                const _pfx = (ctx && ctx.tableTail) ? `${ctx.tableTail}/` : '';
+                f = f.replace(/\[[^\]]*\]|[^[\]]+/g, (seg) => seg.startsWith('[') ? seg
+                    : seg.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()/g, (w) => {
+                        const d = _cognosIdentMap.get(w.toLowerCase());
+                        return d ? `[${_pfx}${d}]` : w;
+                    }));
+            }
+            if (/\bcase\b[\s\S]*\bwhen\b/i.test(f)) warnings.push('a CASE expression could not be fully translated (nested or non-standard) — review/author manually.');
 
             // Aggregations with optional "for" scope: total([X] for [A],[B])
             f = f.replace(/\b(total|sum|average|count|maximum|minimum)\s*\(\s*([^()]*?)\s+for\s+([^()]*)\)/gi,
