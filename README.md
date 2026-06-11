@@ -91,19 +91,25 @@ Converts Power BI models (`.pbit`, `.bim`, or `.json`) to Sigma data model JSON.
 - Calculated columns → Sigma calculated columns
 - Display folders → Sigma folders
 - Measures-only tables → Measures moved to the fact element
-- `CALCULATE` (simple) → `SumIf` / `CountIf` with correct argument order
+- `CALCULATE` conditional aggregates → `SumIf` / `AvgIf` / `MinIf` / `MaxIf` / `CountIf` / `CountDistinctIf`, including complex boolean predicates (`&&` / `||` / `NOT()` / `<>` / `ISBLANK`), multiple filter args (AND-combined), `KEEPFILTERS` unwrap, and `FILTER(Table, pred)` wrappers — rewritten in place so `DIVIDE`/`COALESCE` wrappers keep working
+- `IN {…}` lists → or-chains of equality (`NOT … IN {…}` → and-chain of `!=`) — Sigma has no `IsIn`
+- `FILTER(ALL(Table), pred)` → `GrandTotal(AggIf(…))`; whole-table `ALL`/`REMOVEFILTERS` → `GrandTotal(agg)`; single-column `ALL(T[col])` → `GrandTotal(…)` with a loud caveat (exact only when that column is the visual's sole grouping)
+- `USERELATIONSHIP` over an inactive relationship → activated as a distinctly-named alternate join path (`TOTABLE_VIA_FROMCOLUMN`); the derived view surfaces the alternate-keyed columns; inactive relationships no measure activates are skipped; metrics combining measures on different join paths are refused with a rebuild recipe
+- `EARLIER` window idioms in calc columns → SQL window helper elements: rank (`COUNTROWS(FILTER(…EARLIER…)) + 1` → `DENSE_RANK() OVER`), running totals (`<=/>= EARLIER` → `agg(col) OVER (… ORDER BY …)`), group share/total (`= EARLIER` → `agg(col) OVER (PARTITION BY …)`), peer counts (`COUNT(*) OVER`)
 - `DIVIDE` → Null-safe division with `If(den = 0, alt, num / den)`
 - Math functions → `LN`→`Ln`; `LOG10` and `LOG(x, [base])`→Sigma `Log(value, [base])` (base-10 default matches DAX); `CEILING/FLOOR(n, significance)`→`Ceiling(n / s) * s` / `Floor(n / s) * s` (Sigma's Ceiling/Floor have no significance argument)
 
 **DAX patterns that generate warnings:**
-- `CALCULATE` + `ALL` / `ALLEXCEPT` → Use groupings for different aggregation contexts
-- Iterators (`SUMX`, `AVERAGEX`) → Use groupings or calculated columns
+- `ALLEXCEPT` / `ALLSELECTED` / multi-column `ALL` → subtotal re-scopes with no faithful scalar metric; flagged with the original DAX preserved (recreate as a grouped workbook element)
+- Unrecognized `EARLIER` patterns → flagged with the original DAX preserved (recognized idioms: rank, running total, group share/total, peer count)
+- `CALCULATE` predicates comparing to a measure/aggregate → need a windowed comparison; flagged
+- Iterators with nested aggregates (`SUMX` over derived tables, `COUNTAX`, `CONCATENATEX`) → Use groupings or calculated columns
 - Time intelligence (`TOTALYTD`, `SAMEPERIODLASTYEAR`) → Use Period over Period feature
-- `VAR` / `RETURN` blocks → Break into multiple calculated columns
+- `VAR` / `RETURN` blocks that can't be inlined → Break into multiple calculated columns
 
 **Known limitations:**
 - M expression parsing — Works for common data sources (Snowflake, SQL Server, BigQuery, Databricks); complex Power Query with parameters or custom functions may not extract paths correctly
-- Complex DAX — `CALCULATE` with `ALL` / `ALLEXCEPT`, iterators, time intelligence, and `VAR` / `RETURN` generate warnings but are not auto-converted
+- Complex DAX — `CALCULATE` conditional aggregates, simple `VAR` / `RETURN` blocks, simple iterators, `USERELATIONSHIP` measures, and common `EARLIER` window idioms now auto-convert; `ALLEXCEPT`/`ALLSELECTED` subtotal re-scopes, iterators with nested aggregates, time intelligence, measure-compare predicates, and unrecognized `EARLIER` patterns still warn (preserving the original DAX)
 - Composite models — DirectQuery vs Import mode distinction not preserved
 - Calculation groups — Not converted
 - Row-level security — Simple equality filters (e.g. `[Region] = "East"`) converted to Sigma RLS using `CurrentUserAttributeText()`; complex DAX filter expressions generate a warning
