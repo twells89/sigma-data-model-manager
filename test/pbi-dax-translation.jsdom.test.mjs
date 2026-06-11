@@ -101,7 +101,8 @@ const RAW_DAX_BANNED =
 
   // w9s: SalaryBands GENERATESERIES -> sql element, not warehouse-table
   const sqlEls = result.pages[0].elements.filter(e => e?.source?.kind === 'sql');
-  const bands = sqlEls.find(e => e.name === 'SALARYBANDS');
+  const bands = sqlEls.find(e => /VALUES\s*\(40000\)/.test(e.source?.statement || ''));
+  assert.ok(bands && !('name' in bands), 'w9s: custom-SQL elements omit the element-level name (rule 3)');
   assert.ok(bands, 'w9s: SalaryBands must be a sql element');
   assert.match(bands.source.statement, /VALUES\s*\(40000\)/, 'w9s: series starts at 40000');
   assert.match(bands.source.statement, /\(200000\)/, 'w9s: series includes 200000');
@@ -121,7 +122,7 @@ const RAW_DAX_BANNED =
 
   // w9s: DimMonth GENERATESERIES -> sql element
   const sqlEls = result.pages[0].elements.filter(e => e?.source?.kind === 'sql');
-  const dm = sqlEls.find(e => e.name === 'DIMMONTH');
+  const dm = sqlEls.find(e => /VALUES\s*\(0\)/.test(e.source?.statement || ''));
   assert.ok(dm, 'w9s: DimMonth must be a sql element');
   assert.match(dm.source.statement, /VALUES\s*\(0\)/, 'w9s: DimMonth series starts at 0');
   const bases = result.pages[0].elements.filter(e => e?.source?.kind === 'warehouse-table');
@@ -145,7 +146,7 @@ const RAW_DAX_BANNED =
 {
   const { result, warnText } = await convert('fixture_06_kitchen_sink.bim');
   const sqlEls = result.pages[0].elements.filter(e => e?.source?.kind === 'sql');
-  const dd = sqlEls.find(e => e.name === 'DIMDATE');
+  const dd = sqlEls.find(e => /GENERATOR/i.test(e.source?.statement || ''));
   assert.ok(dd, '7mn: DimDate must be a sql element');
   assert.notEqual(dd.ok, false, '7mn: CALENDAR is translatable — must NOT carry ok:false');
   assert.doesNotMatch(dd.source.statement, /TODO/, '7mn: real spine SQL must not be a TODO placeholder');
