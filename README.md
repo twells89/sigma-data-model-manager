@@ -324,17 +324,18 @@ Converts ThoughtSpot Modeling Language (TML) files — worksheets and models exp
 **What gets converted:**
 - `tables[]` → One Sigma warehouse-table element per table, with database/schema from TML or overrides
 - `worksheet_columns` / `columns` → Sigma columns (ATTRIBUTE/DATE types) and metrics (MEASURE type with aggregation)
-- `formulas[]` → Sigma calculated columns; `if/then/else`, `sum()`, `count_distinct()`, `safe_divide()`, `isnull()`, `date_diff()`, and `in {}` converted to Sigma syntax
+- `formulas[]` → Sigma calculated columns; `if/then/else`, `sum()`, `count_distinct()`, `unique count()`, `median()`, `safe_divide()`, `isnull()`, `date_diff()`, and `in {}` converted to Sigma syntax (single-quoted TML string literals become double-quoted)
+- Window functions (`cumulative_sum`/`running_total`, `moving_average`, `rank`/`rank_desc`, `lag`/`lead`, `first`/`last`, …) → an auto-built grouped child element carrying the Sigma window calc (`CumulativeSum`, `MovingAvg`, `Rank`, `Lag`, …) plus a flagged Null placeholder column on the host element — Sigma window functions silently error in data-model calc columns, so they only ever land in grouped elements; cross-element dims group on the host's derived join view
 - Date functions (`start_of_week/month/quarter/year`→`DateTrunc`, `month_number`/`quarter_number`/`day_of_week`→`Month`/`Quarter`/`Weekday`), math/string (`pow/sqrt/round/concat/substr/strlen/upper/lower/…`), and `ifnull`/`coalesce`→`Coalesce`
 - Conditional aggregates → `sum_if(cond, measure)`→`SumIf(measure, cond)` (condition moves to the 2nd arg; same for `avg_if`/`max_if`/`min_if`/`unique_count_if`), `count_if(cond)`→`CountIf(cond)`
 - `joins[]` → Sigma `N:1` relationships; join key columns matched by physical name
 - `table_paths[]` → Resolves `ALIAS::Column` column_ids to actual table names
-- Aggregations: SUM → Sum, COUNT → Count, COUNT_DISTINCT → CountDistinct, AVERAGE → Avg, MAX → Max, MIN → Min, STD_DEVIATION → StdDev, VARIANCE → Variance
+- Aggregations: SUM → Sum, COUNT → Count, COUNT_DISTINCT / `unique count` → CountDistinct, AVERAGE → Avg, MAX → Max, MIN → Min, MEDIAN → Median, STD_DEVIATION → StdDev, VARIANCE → Variance
 
 **Known limitations:**
 - Complex nested join paths resolved to leaf table only — intermediate logic not preserved
 - Row-level security rules and access control expressions are not converted
-- `cumulative_sum` / running window functions map to `CumulativeSum` but may need partition/order adjustments
+- Window functions embedded in a larger expression (e.g. `cumulative_sum(x, d) / 100`) can't be decomposed into one grouped element — they degrade to a flagged Null column with the original expression in its description for manual re-authoring
 - Formula columns with no resolvable `formula_id` or `column_id` are skipped with a warning
 
 **Expression conversion:**
@@ -343,7 +344,13 @@ Converts ThoughtSpot Modeling Language (TML) files — worksheets and models exp
 |---|---|
 | `if (cond) then X else Y` | `If(cond, X, Y)` |
 | `sum(Revenue)` | `Sum([Revenue])` |
-| `count_distinct(CustomerID)` | `CountDistinct([CustomerID])` |
+| `count_distinct(CustomerID)` / `unique count (CustomerID)` | `CountDistinct([CustomerID])` |
+| `median(Revenue)` | `Median([Revenue])` |
+| `'literal'` | `"literal"` |
+| `cumulative_sum(m, dim)` | grouped element with `CumulativeSum([m])` + Null placeholder on host |
+| `moving_average(m, 2, 1, dim)` | grouped element with `MovingAvg([m], 2, 1)` |
+| `rank_desc(sum(m), dim)` | grouped element with `Rank([base], "desc")` |
+| `lag(m, dim, 1)` | grouped element with `Lag([m], 1)` |
 | `safe_divide(a, b)` | `If(IsNull(b) or b = 0, null, a / b)` |
 | `col in {A, B, C}` | `In([col], List(A, B, C))` |
 | `isnull(x)` | `IsNull(x)` |
