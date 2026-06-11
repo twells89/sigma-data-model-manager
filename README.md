@@ -411,6 +411,8 @@ Converts Qlik Sense data model metadata (from the REST API or Engine API) to Sig
 - Master Measures → Sigma metrics with formula conversion (bare/unbracketed field refs are bracketed and mapped to display names)
 - Master Dimensions (calculated) → Sigma calculated columns
 - Range / binning functions → `RangeSum`→`Coalesce(a,0)+…`, `RangeAvg`→fixed-denominator mean, `RangeMin/Max`→`Least/Greatest`, `Class(field, n[, label, start])`→`Floor((field - start) / n) * n + start` (numeric lower bound of each bin)
+- Inter-record / window functions (`Rank`, `Above`, `Below`, `Previous`, `Peek('F', -n)`, rolling `RangeSum(Above(expr, 0, n))`) → reported as 🧩 **workbook patterns** with ready Sigma `Rank`/`Lag`/`Lead` formulas to place in a GROUPED workbook element (window functions silently error as DM metrics/columns, so they are never injected into the spec); `HRank`/`VRank`/`Before`/`After`/`Top`/`Bottom` (pivot column-axis) and script-time `Peek` forms are flagged, not dropped
+- `FirstSortedValue(value, -weight[, n])` → Custom-SQL `QUALIFY ROW_NUMBER()` helper element + `Min([Fsv Value])` metric (single-table form), else the `If(Rank(weight, "desc") = n, value, Null)` workbook pattern (verify-me)
 - System tables and fields ($ prefix, %synthetic keys) → Skipped automatically
 
 **How to get the metadata:**
@@ -440,13 +442,14 @@ To include master measures and master dimensions, use the extended format:
 }
 ```
 
-**Expression conversion:** Most Qlik functions share Sigma's syntax directly. Notable mappings: `Only([Field])` → `[Field]`, `Text([Field])` → `ToString([Field])`, `IsNum([Field])` → `IsNumber([Field])`, `Log([x])` → `Ln([x])`, `Fmod(a, b)` → `Mod(a, b)`. Set Analysis expressions generate a warning — use `SumIf` / `CountIf` in Sigma instead.
+**Expression conversion:** Most Qlik functions share Sigma's syntax directly. Notable mappings: `Only([Field])` → `[Field]`, `Text([Field])` → `ToString([Field])`, `IsNum([Field])` → `IsNumber([Field])`, `Log([x])` → `Ln([x])`, `Fmod(a, b)` → `Mod(a, b)`. Multi-clause Set Analysis translates to conditional aggregation (`Sum({<Year={2024}>} Sales)` → `Sum(If([Year]=2024, [Sales], 0))`); exotic forms (wildcards, alternate states, `$()` macros in the set) are dropped with a specific warning.
 
 **Known limitations:**
 - Source paths — REST API metadata does not include database or schema; use the Database / Schema override fields
 - Synthetic keys — `%SyntheticKey%` bridge tables are filtered out; review relationships manually for complex many-to-many joins
 - Master items — Not returned by `/data/metadata`; use the extended JSON format above
-- Set Analysis — Skipped with a warning; no direct Sigma equivalent
+- Set Analysis (exotic forms) — wildcard searches, alternate states, and `$()` macros in the set are skipped with a warning; the common multi-clause forms translate
+- Inter-record / window calcs — never emitted into the data model (they silently error there); delivered as workbook patterns to rebuild in a GROUPED workbook element, so they need a manual placement + verification step
 
 **Useful resources:** [Qlik Cloud REST API](https://qlik.dev/apis/rest/apps/) · [Qlik Engine API](https://qlik.dev/apis/engine/)
 

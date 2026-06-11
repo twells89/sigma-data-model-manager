@@ -19509,7 +19509,293 @@ views:
             return { element, metricFormula };
         }
 
-        function qlikExprToSigma(expr, warnings, name) {
+        // ── Inter-record / window-function workarounds ──────────────────────
+        // Inline mirror of sigma-data-model-mcp/src/qlik.ts (beads-sigma-7dgk).
+
+        // Find the index of the matching close brace/paren for the char at `open`.
+        function _qMatchClose(s, open, oc, cc) {
+            let depth = 0;
+            for (let i = open; i < s.length; i++) {
+                const ch = s[i];
+                if (ch === "'" || ch === '"') {
+                    const q = ch; i++;
+                    while (i < s.length && s[i] !== q) i++;
+                    continue;
+                }
+                if (ch === oc) depth++;
+                else if (ch === cc) { depth--; if (depth === 0) return i; }
+            }
+            return -1;
+        }
+
+        // Sentinel marker for a FirstSortedValue() expression that Pass 3 lowers to a
+        // SQL QUALIFY helper element (or the Rank=n-filter workbook pattern).
+        const QLIK_FSV_SENTINEL = '__QLIK_FSV__';
+
+        // Cosmetic cleanup for pattern formulas: the _qBracketKnownBareFields stash/
+        // restore pads protected tokens with spaces (harmless to Sigma, ugly in a
+        // ready-to-paste formula). Only applied to workbook-pattern output.
+        function _qTidyFormula(f) {
+            return f
+                .replace(/\(\s+/g, '(')
+                .replace(/\s+\)/g, ')')
+                .replace(/\s+,/g, ',')
+                .replace(/ {2,}/g, ' ')
+                .trim();
+        }
+
+        const QLIK_GROUPED_REQUIRES =
+            "Place as a calculation in a GROUPED workbook element: group by the Qlik chart's dimension(s), sort the element to match the chart's sort order, and put this formula at the grouping level. (Spec gotcha, live-verified 2026-06-11: the element-level `sort` field 400s on grouped tables — 'Sort column not found' — so a grouped element computes Lag/Lead over the group key ASCENDING at POST time; apply any other sort in the UI afterwards, or pick the grouping key so ascending order matches the Qlik chart.) When placing in a workbook element, prefix base-column refs with the source element name ([Element/Col]). Window functions (Rank/RankDense/Lag/Lead) silently error in data-model calc columns/metrics and in workbook master calc columns — they only work in grouped workbook elements.";
+
+        // Qlik inter-record / chart-position functions. Rank/Above/Below/Previous/Peek
+        // translate to Sigma window formulas (grouped-element context, live-verified
+        // exact vs warehouse RANK/LAG/LEAD); HRank/VRank (pivot column-axis rank) and
+        // the column-segment walkers (Before/After/Top/Bottom) flag-not-drop.
+        const QLIK_IR_RE = /\b(Rank|HRank|VRank|Above|Below|Before|After|Top|Bottom|Previous|Peek)\s*\(/i;
+
+        // Lower Qlik inter-record functions in-place to Sigma window functions:
+        //   Rank(total Expr[, mode[, fmt]])  → Rank(Expr', "desc")          (Qlik: rank 1 = largest)
+        //   Above(Expr[, off[, n]])          → Lag(Expr', off)  — n>1 range form expands to a
+        //                                      Lag list inside RangeSum/Avg/Min/Max (rolling window)
+        //   Below(...)                       → Lead(...)        (negative offsets flip Lag/Lead)
+        //   Previous(Expr)                   → Lag(Expr', 1)    (load-order ⇒ verify sort)
+        //   Peek('F'[, -n])                  → Lag([F], n)      (row ≥ 0 / table arg = script-time ⇒ flag)
+        // Emits __SIGMA_RANK__/__SIGMA_LAG__/__SIGMA_LEAD__ sentinels during the loop so
+        // freshly-emitted functions are never re-matched, then restores them.
+        // Returns null to DEGRADE (warning + 'unsupported' workbook-pattern entry pushed).
+        function _qLowerInterRecordFns(f, warnings, name, original, ctx) {
+            const flagUnsupported = (note) => {
+                if (warnings) warnings.push(`⚠ "${name}": ${note} — left untranslated (flagged as a workbook pattern).`);
+                if (ctx && ctx.patterns) ctx.patterns.push({ kind: 'unsupported', name, source: original, note });
+                return null;
+            };
+            const setKind = (k) => {
+                if (!ctx) return;
+                ctx.window = true;
+                if (k === 'rank' || !ctx.kind) ctx.kind = k;   // rank is the headline kind
+            };
+            const note = (msg) => { if (ctx && !(ctx.notes || []).includes(msg)) (ctx.notes = ctx.notes || []).push(msg); };
+
+            let guard = 0;
+            let m;
+            while ((m = f.match(QLIK_IR_RE)) && guard++ < 50) {
+                const fn = m[1].toLowerCase();
+                const idx = m.index;
+                const open = f.indexOf('(', idx);
+                const close = _qMatchClose(f, open, '(', ')');
+                if (close < 0) return flagUnsupported(`unbalanced parentheses in ${m[1]}()`);
+                const args = _qSplitTop(f.slice(open + 1, close)).map(a => a.trim());
+
+                if (fn === 'hrank' || fn === 'vrank') {
+                    return flagUnsupported(`${m[1]}() ranks across a pivot table's COLUMN dimension (horizontal rank); Sigma pivots have no spec-level cross-column calculation (that axis is UI-only)`);
+                }
+                if (fn === 'before' || fn === 'after' || fn === 'top' || fn === 'bottom') {
+                    return flagUnsupported(`${m[1]}() walks a pivot's column segments (chart-position on the column axis); Sigma has no spec-level equivalent`);
+                }
+
+                let repl;
+                if (fn === 'rank') {
+                    const inner = (args[0] || '').replace(/^total\b\s*/i, '');
+                    if (!inner) return flagUnsupported('Rank() missing expression argument');
+                    if (args.length > 1 && args[1] && args[1] !== '0') {
+                        if (warnings) warnings.push(`"${name}": Rank() mode/fmt argument(s) (${args.slice(1).join(', ')}) ignored — Sigma Rank uses standard competition ranking (ties share the lowest rank, gap after); verify tie handling.`);
+                        if (ctx) ctx.verify = true;
+                    }
+                    repl = `__SIGMA_RANK__(${inner}, "desc")`;   // Qlik Rank: largest value gets rank 1
+                    setKind('rank');
+                    note("Qlik Rank(expr) ranks the chart's dimension values by expr descending — Sigma Rank(expr, \"desc\") at the grouping level.");
+                } else if (fn === 'above' || fn === 'below') {
+                    let effFn = fn === 'above' ? 'LAG' : 'LEAD';
+                    const inner = (args[0] || '').replace(/^total\b\s*/i, '');
+                    if (!inner) return flagUnsupported(`${m[1]}() missing expression argument`);
+                    let offset = 1;
+                    if (args.length > 1 && args[1]) {
+                        if (!/^-?\d+$/.test(args[1])) return flagUnsupported(`${m[1]}() offset "${args[1]}" is not a literal integer`);
+                        offset = parseInt(args[1], 10);
+                    }
+                    if (offset < 0) { effFn = effFn === 'LAG' ? 'LEAD' : 'LAG'; offset = -offset; }
+                    let count = 1;
+                    if (args.length > 2 && args[2]) {
+                        if (!/^\d+$/.test(args[2])) return flagUnsupported(`${m[1]}() count "${args[2]}" is not a literal integer`);
+                        count = parseInt(args[2], 10);
+                    }
+                    if (count > 1) {
+                        // Range form: Above(expr, off, n) yields n values consumed by a Range
+                        // aggregation (rolling window). Expand to a Lag/Lead arg list so the
+                        // existing RangeSum/Avg/Min/Max folding produces the rolling window.
+                        if (!/\bRange(?:Sum|Avg|Min|Max)\s*\(\s*$/i.test(f.slice(0, idx))) {
+                            return flagUnsupported(`${m[1]}(expr, offset, ${count}) range form outside a RangeSum/Avg/Min/Max aggregation`);
+                        }
+                        if (count > 24) return flagUnsupported(`${m[1]}() range count ${count} too large to expand to a Lag/Lead list`);
+                        const items = [];
+                        for (let i = 0; i < count; i++) {
+                            const off = offset + i;
+                            items.push(off === 0 ? inner : `__SIGMA_${effFn}__(${inner}, ${off})`);
+                        }
+                        repl = items.join(', ');
+                    } else {
+                        repl = offset === 0 ? inner : `__SIGMA_${effFn}__(${inner}, ${offset})`;
+                    }
+                    setKind(effFn === 'LAG' ? 'lag' : 'lead');
+                    note(`Qlik ${m[1]}() reads a neighbouring chart row — Sigma ${effFn === 'LAG' ? 'Lag' : 'Lead'} follows the grouped element's sort order; sort it to match the Qlik chart.`);
+                    if (ctx) ctx.verify = true;
+                } else if (fn === 'previous') {
+                    const inner = args[0] || '';
+                    if (!inner) return flagUnsupported('Previous() missing expression argument');
+                    repl = `__SIGMA_LAG__(${inner}, 1)`;
+                    setKind('lag');
+                    if (ctx) ctx.verify = true;
+                    if (warnings) warnings.push(`"${name}": Previous() is a Qlik LOAD-ORDER (script) function — translated to Lag(expr, 1), which follows the grouped element's SORT order. Sort the element to reproduce load order, and verify.`);
+                } else { // peek
+                    if (args.length > 2 && args[2]) {
+                        return flagUnsupported(`Peek() with a table argument reads another table's load buffer (script-time semantics, not chart semantics)`);
+                    }
+                    const fieldRaw = (args[0] || '').trim().replace(/^['"\[]/, '').replace(/['"\]]$/, '');
+                    if (!fieldRaw) return flagUnsupported('Peek() missing field argument');
+                    let row = -1;
+                    if (args.length > 1 && args[1]) {
+                        if (!/^-?\d+$/.test(args[1])) return flagUnsupported(`Peek() row argument "${args[1]}" is not a literal integer`);
+                        row = parseInt(args[1], 10);
+                    }
+                    if (row >= 0) {
+                        return flagUnsupported(`Peek('${fieldRaw}', ${row}) addresses an ABSOLUTE load-order row index (script-time semantics, not chart semantics)`);
+                    }
+                    repl = `__SIGMA_LAG__([${fieldRaw}], ${-row})`;
+                    setKind('lag');
+                    if (ctx) ctx.verify = true;
+                    if (warnings) warnings.push(`"${name}": Peek() is a Qlik LOAD-ORDER (script) function — translated to Lag([${fieldRaw}], ${-row}), which follows the grouped element's SORT order. Sort the element to reproduce load order, and verify.`);
+                }
+                f = f.slice(0, idx) + repl + f.slice(close + 1);
+            }
+            // restore window-function sentinels (kept emitted Rank/Lag/Lead from re-matching)
+            return f.replace(/__SIGMA_(RANK|LAG|LEAD)__/g, (_s, w) =>
+                w === 'RANK' ? 'Rank' : w === 'LAG' ? 'Lag' : 'Lead');
+        }
+
+        // Lower a standalone FirstSortedValue([distinct] value, [-]weight[, n]) to a
+        // kind:'sql' QUALIFY helper element (mirrors _qLowerAggr / the validated
+        // QuickSight/PBI topn QUALIFY pattern):
+        //   FirstSortedValue(CUSTOMER, -Sum(SALES))
+        // → SELECT "CUSTOMER" AS "fsv_value" FROM <db.schema.table>
+        //   GROUP BY 1 QUALIFY ROW_NUMBER() OVER (ORDER BY SUM("SALES") DESC) = 1
+        //   metric: Min([Fsv Value])
+        // Returns null to DEGRADE to the Rank=n-filter workbook pattern (complex value
+        // expr, set analysis in the weight, multi-table grain, non-literal n).
+        function _qLowerFirstSortedValue(expr, name, tableElementMap, connectionId, warnings) {
+            const m = expr.match(/^\s*FirstSortedValue\s*\(/i);
+            if (!m) return null;
+            const open = expr.indexOf('(', m.index);
+            const close = _qMatchClose(expr, open, '(', ')');
+            if (close < 0) return null;
+            const args = _qSplitTop(expr.slice(open + 1, close)).map(a => a.trim());
+            if (args.length < 2) return null;
+
+            let valueArg = args[0];
+            const distinct = /^distinct\s+/i.test(valueArg);
+            if (distinct) valueArg = valueArg.replace(/^distinct\s+/i, '');
+            const vm = valueArg.match(/^\[?([A-Za-z0-9_ .]+?)\]?$/);
+            if (!vm) return null;                       // complex value expr → pattern fallback
+            const valueField = vm[1].trim();
+
+            let weightArg = args[1];
+            let dir = 'ASC';                            // FirstSortedValue sorts ascending; -weight ⇒ descending
+            if (/^-/.test(weightArg)) { dir = 'DESC'; weightArg = weightArg.slice(1).trim(); }
+            if (/[{}]/.test(weightArg)) return null;    // set analysis in the weight → pattern fallback
+
+            let n = 1;
+            if (args.length > 2 && args[2]) {
+                if (!/^\d+$/.test(args[2])) return null;
+                n = parseInt(args[2], 10);
+            }
+
+            // weight: simple aggregate Agg(field) (grain = the value field) or a bare row-level field
+            let weightField = '', weightAggSql = '';
+            const am = weightArg.match(/^([A-Za-z_]+)\s*\(\s*\[?([A-Za-z0-9_ .]+?)\]?\s*\)$/);
+            if (am) {
+                const aggSql = _Q_AGG_TO_SQL[am[1].toUpperCase()];
+                if (!aggSql) return null;
+                weightField = am[2].trim();
+                weightAggSql = aggSql;
+            } else {
+                const wm = weightArg.match(/^\[?([A-Za-z0-9_ .]+?)\]?$/);
+                if (!wm) return null;
+                weightField = wm[1].trim();
+            }
+
+            // Resolve one warehouse table owning both fields (mirrors _qLowerAggr).
+            let owner = null;
+            for (const info of Object.values(tableElementMap)) {
+                const has = (nm) => Object.keys(info.colMap).some(k => k.toUpperCase() === nm.toUpperCase());
+                if (has(valueField) && has(weightField)) { owner = info; break; }
+            }
+            if (!owner) return null;
+            const path = (owner.element.source && owner.element.source.path) || [];
+            if (!path.length) return null;
+            const fromSql = path.map(p => `"${p}"`).join('.');
+            const realName = (nm) => Object.keys(owner.colMap).find(k => k.toUpperCase() === nm.toUpperCase()) || nm;
+            const valCol = realName(valueField);
+            const wCol = realName(weightField);
+            const alias = 'fsv_value';
+
+            let statement;
+            if (weightAggSql) {
+                const aggExpr = weightAggSql.includes('(') ? `${weightAggSql} "${wCol}")` : `${weightAggSql}("${wCol}")`;
+                statement = `SELECT "${valCol}" AS "${alias}" FROM ${fromSql} GROUP BY 1 QUALIFY ROW_NUMBER() OVER (ORDER BY ${aggExpr} ${dir}) = ${n}`;
+            } else {
+                statement = `SELECT ${distinct ? 'DISTINCT ' : ''}"${valCol}" AS "${alias}" FROM ${fromSql} QUALIFY ROW_NUMBER() OVER (ORDER BY "${wCol}" ${dir}) = ${n}`;
+            }
+
+            const colId = sigmaShortId();
+            const display = sigmaDisplayName(alias);    // "Fsv Value"
+            const element = {
+                id: sigmaShortId(),
+                kind: 'table',
+                name: `${name} (FirstSortedValue)`,
+                source: { connectionId, kind: 'sql', statement },
+                columns: [{ id: colId, name: display, formula: `[Custom SQL/${alias}]` }],
+                order: [colId],
+            };
+            if (warnings) warnings.push(`ℹ "${name}": FirstSortedValue() lowered to a SQL QUALIFY helper element (ROW_NUMBER ${dir} = ${n}). Tie caveat: Qlik returns NULL on a tie at position ${n}; the SQL picks one row — verify.`);
+            return { element, metricFormula: `Min([${display}])` };
+        }
+
+        // Rank=n-filter workbook pattern for FirstSortedValue() forms the SQL lowering
+        // can't take (complex value expr / set-analysis weight / multi-table grain):
+        //   If(Rank(<weight'>, "asc|desc") = n, <value>, Null)
+        // placed in a grouped workbook element grouped by the value's dimension and
+        // surfaced with Max()/Min(). Always verify-me.
+        function _qFsvRankPattern(expr, warnings, name) {
+            const base = {
+                kind: 'first-sorted-value',
+                name,
+                source: expr,
+                requires: QLIK_GROUPED_REQUIRES + " Group by the value field's dimension; aggregate the result with Max() (or Min()) to surface the single picked value.",
+                verify: true,
+                note: 'FirstSortedValue(value, weight[, n]) = the value at sorted-weight position n. Emitted as the Rank=n-filter pattern: rank the groups by the weight and keep rank = n. Tie caveat: Qlik returns NULL on a tie, this pattern picks one row — VERIFY against Qlik.',
+            };
+            const m = expr.match(/^\s*FirstSortedValue\s*\(/i);
+            if (!m) return { ...base, kind: 'unsupported' };
+            const open = expr.indexOf('(', m.index);
+            const close = _qMatchClose(expr, open, '(', ')');
+            if (close < 0) return { ...base, kind: 'unsupported' };
+            const args = _qSplitTop(expr.slice(open + 1, close)).map(a => a.trim());
+            if (args.length < 2) return { ...base, kind: 'unsupported' };
+            const valueArg = args[0].replace(/^distinct\s+/i, '');
+            let weightArg = args[1];
+            let dir = 'asc';
+            if (/^-/.test(weightArg)) { dir = 'desc'; weightArg = weightArg.slice(1).trim(); }
+            let n = '1';
+            if (args.length > 2 && /^\d+$/.test(args[2] || '')) n = args[2];
+            const weightSigma = qlikExprToSigma(weightArg, warnings, `${name} (weight)`);
+            if (!weightSigma || weightSigma.startsWith(QLIK_AGGR_SENTINEL) || weightSigma.startsWith(QLIK_FSV_SENTINEL)) {
+                return { ...base, kind: 'unsupported' };
+            }
+            const valueRef = /^\[.*\]$/.test(valueArg) ? valueArg
+                : (/^[A-Za-z_][A-Za-z0-9_]*$/.test(valueArg) ? `[${valueArg}]` : valueArg);
+            return { ...base, formula: `If(Rank(${weightSigma}, "${dir}") = ${n}, ${valueRef}, Null)` };
+        }
+
+        function qlikExprToSigma(expr, warnings, name, ctx) {
             if (!expr || !expr.trim()) return null;
             let f = expr.trim();
             // Strip leading = sign (common in Qlik dimension definitions)
@@ -19522,10 +19808,8 @@ views:
             }
             // ── Inter-record / chart-position / selection-state / ranking → drop+warn ──
             const UNSUPPORTED = [
-                [/\b(Above|Below|Before|After|Top|Bottom)\s*\(/i, 'an inter-record/chart function (Above/Below/…)'],
-                [/\b(Peek|Previous|Exists|FieldValue|FieldIndex|LookUp)\s*\(/i, 'a script/inter-record lookup function'],
-                [/\b(RowNo|RecNo|NoOfRows|NoOfColumns|FirstSortedValue)\s*\(/i, 'a row-position/sorted-value function'],
-                [/\b(Rank|HRank|VRank)\s*\(/i, 'Rank() (Sigma Rank is a window function with different semantics)'],
+                [/\b(Exists|FieldValue|FieldIndex|LookUp)\s*\(/i, 'a script lookup function'],
+                [/\b(RowNo|RecNo|NoOfRows|NoOfColumns)\s*\(/i, 'a row-position function'],
                 [/(?<![A-Za-z_])[PE]\s*\(/, 'a set-element function P()/E()'],
                 [/\bGet(?:Field)?(?:Selections?|CurrentSelections?|PossibleCount|SelectedCount|AlternativeCount|ExcludedCount)\s*\(/i, 'a selection-state function'],
             ];
@@ -19534,6 +19818,18 @@ views:
                     if (warnings) warnings.push(`⚠ "${name}": uses ${label} — no direct Sigma equivalent; measure dropped (see gap-scout).`);
                     return null;
                 }
+            }
+            // ── FirstSortedValue(): the standalone whole-expression form hands off to
+            //    Pass 3 for SQL QUALIFY lowering (or the Rank=n-filter workbook pattern).
+            //    Checked BEFORE set-analysis translation so the lowering sees raw args. ──
+            const fsvM = f.match(/^FirstSortedValue\s*\(/i);
+            if (fsvM && _qMatchClose(f, f.indexOf('('), '(', ')') === f.length - 1) {
+                return QLIK_FSV_SENTINEL + f;
+            }
+            if (/\bFirstSortedValue\s*\(/i.test(f)) {
+                if (warnings) warnings.push(`⚠ "${name}": FirstSortedValue() nested inside a larger expression — left untranslated (flagged as a workbook pattern).`);
+                if (ctx && ctx.patterns) ctx.patterns.push({ kind: 'unsupported', name, source: expr, note: 'FirstSortedValue() nested inside a larger expression; only the standalone form is lowered (SQL QUALIFY helper element or the Rank=n-filter workbook pattern).' });
+                return null;
             }
             // ── Set Analysis: translate to conditional aggregation; degrade+flag the rest ──
             // (AND across clauses, OR/AND across a clause value list, -= → De Morgan,
@@ -19550,6 +19846,15 @@ views:
             if (/\bAggr\s*\(/i.test(f)) {
                 return QLIK_AGGR_SENTINEL + f;
             }
+            // ── Inter-record / chart-position functions → Sigma window formulas (Rank/
+            //    Lag/Lead in grouped-element context) or flag-not-drop. Runs BEFORE the
+            //    Range lowering so Above(expr, off, n) rolling windows expand to Lag
+            //    lists that the RangeSum/Avg/Min/Max folding consumes. Set analysis
+            //    inside the inner expr was already translated above, so Rank(Sum({<…>} X))
+            //    wraps the conditional-aggregation form. ──
+            const ir = _qLowerInterRecordFns(f, warnings, name, expr, ctx);
+            if (ir === null) return null;
+            f = ir;
             // ── Row-wise Range* (multiple args) → arithmetic / Greatest / Least ──
             if (/^Range(?:Sum|Avg|Max|Min)\s*\(/i.test(f)) {
                 const t = _qTranslateRange(f);
@@ -19671,6 +19976,9 @@ views:
                 const dbOverride = document.getElementById('qlikDatabase').value.trim().toUpperCase();
                 const schOverride = document.getElementById('qlikSchema').value.trim().toUpperCase();
                 const warnings = [];
+                // Inter-record/window calcs — reported as workbook patterns, NOT injected
+                // into the spec (same architecture as detected Tableau RLS).
+                const workbookPatterns = [];
                 { const fnWarn = friendlyNameWarning(); if (fnWarn) warnings.push(fnWarn); }
 
                 const { tables, masterMeasures, masterDimensions, appName } = _qlikParseInput(_qlikModel);
@@ -19873,7 +20181,8 @@ views:
                     const exprRaw = m.expr  || m.qDef   || m.expression || '';
                     const desc    = m.description || m.qDescription || '';
 
-                    let sigmaFormula = qlikExprToSigma(exprRaw, warnings, title);
+                    const ctx = { patterns: workbookPatterns };
+                    let sigmaFormula = qlikExprToSigma(exprRaw, warnings, title, ctx);
                     if (!sigmaFormula) continue;
 
                     // Aggr() lowering — qlikExprToSigma tags these with QLIK_AGGR_SENTINEL.
@@ -19888,6 +20197,30 @@ views:
                         if (aggrFmt) aggrMetric.format = aggrFmt;
                         if (!lowered.element.metrics) lowered.element.metrics = [];
                         lowered.element.metrics.push(aggrMetric);
+                        continue;
+                    }
+
+                    // FirstSortedValue() lowering — qlikExprToSigma tags with QLIK_FSV_SENTINEL.
+                    // SQL QUALIFY helper element where the simple form resolves to one table;
+                    // otherwise degrade to the Rank=n-filter workbook pattern (verify-me).
+                    if (sigmaFormula.startsWith(QLIK_FSV_SENTINEL)) {
+                        const fsvExpr = sigmaFormula.slice(QLIK_FSV_SENTINEL.length);
+                        const fsvLowered = _qLowerFirstSortedValue(fsvExpr, title, tableElementMap, connectionId, warnings);
+                        if (fsvLowered) {
+                            aggrElements.push(fsvLowered.element);
+                            const fsvMetric = { id: sigmaShortId(), formula: fsvLowered.metricFormula, name: title };
+                            if (desc) fsvMetric.description = desc;
+                            if (!fsvLowered.element.metrics) fsvLowered.element.metrics = [];
+                            fsvLowered.element.metrics.push(fsvMetric);
+                        } else {
+                            const fp = _qFsvRankPattern(fsvExpr, warnings, title);
+                            if (fp.formula) {
+                                fp.formula = _qTidyFormula(_qBracketKnownBareFields(fp.formula, qlikColToDisplayName).replace(/\[([^\]\/]+)\]/g, (_m2, colName) =>
+                                    qlikColToDisplayName[colName] ? `[${qlikColToDisplayName[colName]}]` : _m2));
+                            }
+                            workbookPatterns.push(fp);
+                            warnings.push(`ℹ "${title}": FirstSortedValue() → Rank=n-filter workbook pattern (see the 🧩 workbook-pattern notes) — build it in a GROUPED workbook element and VERIFY values against Qlik.`);
+                        }
                         continue;
                     }
 
@@ -19917,6 +20250,29 @@ views:
                         warnings.push(`ℹ "${title}": references fields from ${ranked.length} elements — placed on the most-referenced one. If it errors as cross-element, host it on the denormalized element instead.`);
                     }
 
+                    // Inter-record/window expression → workbook-pattern handoff, NOT a DM
+                    // metric: window functions (Rank/Lag/Lead) silently error in DM calc
+                    // columns/metrics and in workbook master calc columns; they only work in
+                    // GROUPED workbook elements (live-verified 2026-06-11, exact vs warehouse
+                    // RANK/DENSE_RANK/LAG/LEAD). Mirrors the PBI time-intel handoff.
+                    if (ctx.window) {
+                        const bestEl = elements.find(e => e.id === bestElementId);
+                        const bestPath = bestEl && bestEl.source && bestEl.source.path;
+                        workbookPatterns.push({
+                            kind: ctx.kind || 'rank',
+                            name: title,
+                            source: exprRaw,
+                            formula: _qTidyFormula(sigmaFormula),
+                            requires: QLIK_GROUPED_REQUIRES,
+                            elementId: bestElementId,
+                            elementName: (bestEl && bestEl.name) || (bestPath ? bestPath[bestPath.length - 1] : undefined),
+                            ...(ctx.verify ? { verify: true } : {}),
+                            note: (ctx.notes && ctx.notes.length) ? ctx.notes.join(' ') : 'Translated Qlik inter-record expression.',
+                        });
+                        warnings.push(`ℹ "${title}": inter-record/window expression → ready Sigma formula in the 🧩 workbook-pattern notes — place as a calculation in a GROUPED workbook element (group by the chart's dimension); not emitted as a DM metric (window functions silently error there).`);
+                        continue;
+                    }
+
                     if (!measuresByElement[bestElementId]) measuresByElement[bestElementId] = [];
                     const metric = { id: sigmaShortId(), formula: sigmaFormula, name: title };
                     if (desc) metric.description = desc;
@@ -19939,11 +20295,26 @@ views:
 
                     // Skip plain field references (non-calculated)
                     const isCalc = exprRaw.trim().startsWith('=') ||
-                        /\b(If|Sum|Count|Avg|Concat|Year|Month|Day|Left|Right|Upper|Lower|Trim|Class|Dual|Floor|Ceil|Round|Pick|Match)\s*\(/i.test(exprRaw);
+                        /\b(If|Sum|Count|Avg|Concat|Year|Month|Day|Left|Right|Upper|Lower|Trim|Class|Dual|Floor|Ceil|Round|Pick|Match|Rank|HRank|Above|Below|Peek|Previous|FirstSortedValue)\s*\(/i.test(exprRaw);
                     if (!isCalc) continue;
 
-                    let sigmaFormula = qlikExprToSigma(exprRaw, warnings, title);
+                    const ctx = { patterns: workbookPatterns };
+                    let sigmaFormula = qlikExprToSigma(exprRaw, warnings, title, ctx);
                     if (!sigmaFormula) continue;
+                    // FirstSortedValue() in a calc dimension → Rank=n-filter workbook pattern
+                    // (the SQL helper lowering is metric-shaped; a dim wants the picked value
+                    // per group, which is exactly the grouped Rank=n pattern).
+                    if (sigmaFormula.startsWith(QLIK_FSV_SENTINEL)) {
+                        const fp = _qFsvRankPattern(sigmaFormula.slice(QLIK_FSV_SENTINEL.length), warnings, title);
+                        if (fp.formula) {
+                            fp.formula = _qTidyFormula(_qBracketKnownBareFields(fp.formula, qlikColToDisplayName).replace(/\[([^\]\/]+)\]/g, (_m2, colName) =>
+                                qlikColToDisplayName[colName] ? `[${qlikColToDisplayName[colName]}]` : _m2));
+                        }
+                        fp.note += ' (Qlik master dimension.)';
+                        workbookPatterns.push(fp);
+                        warnings.push(`ℹ Calc dimension "${title}": FirstSortedValue() → Rank=n-filter workbook pattern (see the 🧩 workbook-pattern notes) — build in a GROUPED workbook element and VERIFY.`);
+                        continue;
+                    }
                     // Bracket bare Qlik field tokens (real master dims use unbracketed
                     // refs, e.g. Class(UNIT_PRICE, 50)) so the raw→display rewrite resolves them.
                     sigmaFormula = _qBracketKnownBareFields(sigmaFormula, qlikColToDisplayName);
@@ -19952,6 +20323,22 @@ views:
                     sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m, colName) =>
                         qlikColToDisplayName[colName] ? `[${qlikColToDisplayName[colName]}]` : m
                     );
+
+                    // Inter-record/window expression in a calc dimension → workbook-pattern
+                    // handoff, NOT a DM column (window functions silently error there).
+                    if (ctx.window) {
+                        workbookPatterns.push({
+                            kind: ctx.kind || 'rank',
+                            name: title,
+                            source: exprRaw,
+                            formula: _qTidyFormula(sigmaFormula),
+                            requires: QLIK_GROUPED_REQUIRES,
+                            ...(ctx.verify ? { verify: true } : {}),
+                            note: ((ctx.notes && ctx.notes.length) ? ctx.notes.join(' ') : 'Translated Qlik inter-record expression.') + ' (Qlik master dimension.)',
+                        });
+                        warnings.push(`ℹ Calc dimension "${title}": inter-record/window expression → ready Sigma formula in the 🧩 workbook-pattern notes — place in a GROUPED workbook element; not emitted as a DM column (window functions silently error there).`);
+                        continue;
+                    }
 
                     const targetEl = elements[0];
                     if (!targetEl) continue;
@@ -19965,6 +20352,20 @@ views:
 
                 // Add derived element for each table with outgoing relationships
                 buildDerivedElementsAndMoveCalcs(elements, warnings);
+
+                // Inter-record/window workbook patterns — reported, NEVER injected into
+                // the spec (the JSON output below is POSTable as-is; window functions
+                // silently error in DM calc columns/metrics). Exposed for tooling/tests;
+                // the 🧩 lines carry the ready formula + grouped-element placement note.
+                window._qlikWorkbookPatterns = workbookPatterns;
+                for (const p of workbookPatterns) {
+                    warnings.push(`🧩 Workbook pattern [${p.kind}] "${p.name}"` +
+                        (p.formula ? ` → ${p.formula}` : '') +
+                        (p.elementName ? ` (source element: ${p.elementName})` : '') +
+                        ' — ' + (p.kind === 'unsupported'
+                            ? p.note
+                            : `build as a calculation in a GROUPED workbook element (group by the Qlik chart's dimension(s), match its sort)${p.verify ? '; VERIFY values against Qlik' : ''}. ${p.note}`));
+                }
 
                 // ── Build output ────────────────────────────────────────────
                 const sigma = {
@@ -19993,11 +20394,13 @@ views:
                 const mc = elements.reduce((n, e) => n + (e.metrics  || []).length, 0);
                 const rc = elements.reduce((n, e) => n + (e.relationships || []).length, 0);
                 const wc = warnings.length;
+                const pc = workbookPatterns.length;
                 document.getElementById('qlikOutputStats').innerHTML = [
                     `<span class="dbt-stat-badge">${ec} element${ec !== 1 ? 's' : ''}</span>`,
                     cc ? `<span class="dbt-stat-badge">${cc} column${cc !== 1 ? 's' : ''}</span>` : '',
                     mc ? `<span class="dbt-stat-badge measures">${mc} metric${mc !== 1 ? 's' : ''}</span>` : '',
                     rc ? `<span class="dbt-stat-badge entities">${rc} relationship${rc !== 1 ? 's' : ''}</span>` : '',
+                    pc ? `<span class="dbt-stat-badge" style="color:var(--warning);" title="Inter-record/window calcs (Rank/Above/Below/Previous/Peek/FirstSortedValue) translate to Sigma window formulas that only work in GROUPED workbook elements — reported in the conversion notes with ready formulas, not injected into the data model spec.">🧩 ${pc} workbook pattern${pc !== 1 ? 's' : ''}</span>` : '',
                     wc ? `<span class="dbt-stat-badge" style="color:var(--warning);">${wc} warning${wc !== 1 ? 's' : ''}</span>` : ''
                 ].filter(Boolean).join('');
 
@@ -32029,6 +32432,8 @@ models:
     <li><b>Master Measures</b> → Sigma metrics with formula conversion (include a <code>masterMeasures</code> array in your JSON)</li>
     <li><b>Master Dimensions (calculated)</b> → Sigma calculated columns; plain field references are skipped, calculated expressions are converted. Bare (unbracketed) Qlik field refs are bracketed and mapped to Sigma display names.</li>
     <li><b>Range &amp; binning functions</b> → <code>RangeSum</code>→<code>Coalesce(a,0)+…</code>, <code>RangeAvg</code>→fixed-denominator mean, <code>RangeMin/Max</code>→<code>Least/Greatest</code>, and <code>Class(field, n[, label, start])</code>→<code>Floor((field - start) / n) * n + start</code> (numeric lower bound of each bin)</li>
+    <li><b>Inter-record / window functions</b> → reported as 🧩 <b>workbook patterns</b> (warning lines + badge), NOT data-model metrics — window functions silently error in DM calc columns/metrics and workbook master calc columns; they only work in GROUPED workbook elements. Each pattern carries a ready Sigma formula: <code>Rank(expr)</code>→<code>Rank(expr', "desc")</code> (Qlik ranks descending), <code>Above/Below(expr, off)</code>→<code>Lag/Lead(expr', off)</code> (negative offsets flip), <code>RangeSum(Above(expr, 0, n))</code>→rolling-window <code>Lag</code> chain, <code>Previous(expr)</code>→<code>Lag(expr', 1)</code> and <code>Peek('F', -n)</code>→<code>Lag([F], n)</code> (load-order semantics ⇒ verify sort). Place the formula in a workbook element grouped by the chart's dimension(s), sorted to match the chart.</li>
+    <li><b>FirstSortedValue([distinct] value, [-]weight[, n])</b> → a Custom-SQL <code>QUALIFY ROW_NUMBER()</code> helper element + <code>Min([Fsv Value])</code> metric when value + weight resolve to one warehouse table; otherwise the <code>If(Rank(weight', "asc|desc") = n, value, Null)</code> workbook pattern (verify-me — Qlik returns NULL on ties, the pattern picks one row)</li>
     <li><b>System tables</b> → Skipped (<code>$</code>-prefix and synthetic key tables like <code>%TableName%</code>)</li>
     <li><b>System fields</b> → Skipped (<code>$</code>-prefix fields such as <code>$Field</code>)</li>
 </ul>
@@ -32082,8 +32487,9 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
 <p>These have no scalar Sigma equivalent, so the measure is dropped (not emitted broken). Re-create them in the workbook (window functions, controls) or via SumIf/CountIf by hand.</p>
 <ul>
     <li><b>Variable expansion <code>$(var)</code></b> — cannot resolve; emitting it verbatim would reject the whole data-model POST. Define the value explicitly in Sigma.</li>
-    <li><b>Inter-record functions</b> — <code>Above()</code>, <code>Below()</code>, <code>Peek()</code>, <code>Previous()</code>, <code>RowNo()</code> (running totals / MoM): rebuild as a Sigma window function on a date-grouped element.</li>
-    <li><b>Ranking</b> — <code>Rank()</code>, <code>HRank()</code>: Sigma <code>Rank</code> is a window function with different semantics; build it in a grouping table.</li>
+    <li><b>Row-position functions</b> — <code>RowNo()</code>, <code>RecNo()</code>, <code>NoOfRows()</code>: no scalar Sigma equivalent. (<code>Rank()</code>, <code>Above()</code>, <code>Below()</code>, <code>Previous()</code>, <code>Peek('F', -n)</code> and <code>FirstSortedValue()</code> are no longer dropped — they translate to 🧩 workbook patterns / a SQL QUALIFY helper, see above.)</li>
+    <li><b>Pivot column-axis functions</b> — <code>HRank()</code>, <code>VRank()</code>, <code>Before()</code>, <code>After()</code>, <code>Top()</code>, <code>Bottom()</code> rank/walk a pivot's COLUMN dimension; Sigma pivots have no spec-level cross-column calculation (that axis is UI-only). Flagged as <code>unsupported</code> workbook-pattern entries (flag-not-drop, with the original expression).</li>
+    <li><b>Script-time inter-record forms</b> — <code>Peek()</code> with an absolute row index (<code>≥ 0</code>) or a table argument reads the LOAD buffer, not the chart; flagged as <code>unsupported</code> workbook-pattern entries. Nested <code>FirstSortedValue()</code> (inside a larger expression) is likewise flagged — only the standalone form is lowered.</li>
     <li><b>Aggr() (nested or non-aggregate outer)</b> — single-level <code>Sum(Aggr(…))</code> is now lowered to a SQL GROUP-BY helper element (see above); genuinely nested <code>Aggr(Aggr(…))</code> or a non-aggregate outer op is dropped.</li>
     <li><b>Set-element / selection-state</b> — <code>P()</code>, <code>E()</code>, <code>GetFieldSelections()</code>, <code>GetCurrentSelections()</code> have no Sigma equivalent.</li>
     <li><b>Exotic Set Analysis</b> — wildcard search strings (<code>"*x*"</code>), alternate states, <code>$()</code> macros in the set, and set operators (<code>+ - *</code>) on the measure are dropped with a specific warning; translate by hand.</li>
