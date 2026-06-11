@@ -16144,6 +16144,7 @@ views:
             const pageId = sigmaShortId();
             const elements = [];
             const elementByTable = {}; // tableName → element
+            const colAggByDisp = {}; // display name (uppercased) → default Sigma aggregation
 
             allTableNames.forEach(tableName => {
                 const meta = tablesMeta[tableName] || {};
@@ -16189,6 +16190,12 @@ views:
                         // Metric formula references the column by its Sigma display name,
                         // which is derived from the physical name via sigmaDisplayName.
                         const colDisplayName = sigmaDisplayName(physCol);
+                        // Default aggregation by display name — used by the window-function
+                        // grouped-element emission (a TS window call takes the RAW measure,
+                        // e.g. cumulative_sum([Net Revenue], …), and inherits the column's
+                        // default aggregation).
+                        colAggByDisp[colDisplayName.toUpperCase()] = sigmaAgg;
+                        colAggByDisp[dispName.toUpperCase()] = sigmaAgg;
                         const formula = `${sigmaAgg}([${colDisplayName}])`;
                         let fmt = _inferSigmaFormat(formula, dispName);
                         if (fmt?.formatString === ',.2%') fmt = { kind: 'number', formatString: ',.2f', suffix: '%' };
@@ -16218,6 +16225,24 @@ views:
                 elementByTable[tableName] = element;
             });
 
+            // Build a map: display name (uppercased) → owning element id. Used by the
+            // window-function grouped-element emission to resolve a formula's host
+            // element (mirrors MCP thoughtspot.ts dispNameToElId).
+            const dispNameToElId = {};
+            elements.forEach(el => {
+                (el.columns || []).forEach(c => {
+                    // Physical column formula form: [TABLE/PHYS_COL] → display name = sigmaDisplayName(PHYS_COL).
+                    const fm = (c.formula || '').match(/^\[([^\/\]]+)\/([^\]]+)\]$/);
+                    if (fm) {
+                        const disp = sigmaDisplayName(fm[2]);
+                        if (!dispNameToElId[disp.toUpperCase()]) dispNameToElId[disp.toUpperCase()] = el.id;
+                    } else if (c.name) {
+                        if (!dispNameToElId[c.name.toUpperCase()]) dispNameToElId[c.name.toUpperCase()] = el.id;
+                    }
+                });
+            });
+            const pendingWindowCalcs = [];
+
             // ── 5. Attach formula-derived columns to the best element
             if (formulaCols.length > 0) {
                 // Use first element as default host for formula columns
@@ -16225,6 +16250,16 @@ views:
                 if (hostEl) {
                     formulaCols.forEach(({ col, formulaExpr }) => {
                         const dispName = col.name || 'Calculated';
+                        // Window functions (rank / lead / lag / first / last / running_total /
+                        // cumulative_* / moving_*) silently error in DM element calc columns and
+                        // DM metrics — they only evaluate in GROUPED elements. Divert them: each
+                        // becomes a flagged Null column on its host element PLUS an auto-built
+                        // grouped child element carrying the Sigma window calc (same handoff the
+                        // Power BI converter uses for time-intel measures — beads-sigma-5d9k).
+                        if (TS_WINDOW_FN_RE.test(formulaExpr)) {
+                            pendingWindowCalcs.push({ dispName, formulaExpr, call: _tsParseWindowCall(formulaExpr) });
+                            return;
+                        }
                         const sigmaFormula = _tsFormulaToSigma(formulaExpr, elementByTable);
                         let fmt = _inferSigmaFormat(sigmaFormula, dispName);
                         if (fmt?.formatString === ',.2%') fmt = { kind: 'number', formatString: ',.2f', suffix: '%' };
@@ -16301,6 +16336,12 @@ views:
             // output and what the other converters do).
             buildDerivedElementsAndMoveCalcs(elements, warnings);
 
+            // ── Window-function formulas → grouped child elements ──────────
+            // (after derived views exist — they are the parents for window calcs
+            // whose dims span elements; matches MCP thoughtspot.ts ordering).
+            const derivedEls = elements.filter(e => e.source && e.source.kind === 'table' && e.source.elementId);
+            _tsEmitWindowElements(pendingWindowCalcs, elements, derivedEls, dispNameToElId, colAggByDisp, warnings);
+
             const spec = {
                 schemaVersion: 1,
                 name: modelName,
@@ -16325,6 +16366,12 @@ views:
             if (!expr) return '';
             let s = expr;
 
+            // TML string literals are single-quoted; Sigma's are double-quoted. Convert
+            // FIRST so _tsWrapColumnRefs' literal protection covers them (otherwise
+            // 'West' gets identifier-wrapped into [West]). No-op when the caller
+            // already converted.
+            s = s.replace(/'([^']*)'/g, '"$1"');
+
             // Model TML formula refs are [TABLE::COL]; rewrite to bare [Display Name]
             // so downstream ref handling + element bucketing resolve them. No-op for
             // worksheet TML (bare identifiers).
@@ -16341,14 +16388,18 @@ views:
                 return `In(${colRef}, ${vlist})`;
             });
 
+            // ThoughtSpot's distinct count is the two-word keyword `unique count` —
+            // normalise it (and the underscore form) before the aggregate-map pass.
+            s = s.replace(/\bunique[\s_]+count\s*\(/gi, 'count_distinct(');
+
             // Aggregation functions: sum(col) → Sum([col])
             const tsAggMap = {
                 sum: 'Sum', count: 'Count', count_distinct: 'CountDistinct',
-                average: 'Avg', avg: 'Avg', max: 'Max', min: 'Min',
+                average: 'Avg', avg: 'Avg', max: 'Max', min: 'Min', median: 'Median',
                 std_deviation: 'StdDev', variance: 'Variance',
                 count_not_null: 'CountDistinct', cumulative_sum: 'CumulativeSum',
             };
-            s = s.replace(/\b(sum|count_distinct|count_not_null|count|average|avg|max|min|std_deviation|variance|cumulative_sum)\s*\(([^)]+)\)/gi, (_, fn, arg) => {
+            s = s.replace(/\b(sum|count_distinct|count_not_null|count|average|avg|max|min|median|std_deviation|variance|cumulative_sum)\s*\(([^)]+)\)/gi, (_, fn, arg) => {
                 const sigmaFn = tsAggMap[fn.toLowerCase()] || fn;
                 return `${sigmaFn}(${_tsWrapColumnRefs(arg.trim())})`;
             });
@@ -16522,6 +16573,217 @@ views:
             });
 
             return s.replace(/\x02(\d+)\x03/g, (_, i) => saved[+i]);
+        }
+
+        // ── ThoughtSpot window functions → grouped child elements ──────────
+        //
+        // HARD CONSTRAINT (live-verified; feedback_sigma_window_functions):
+        // Sigma window functions (CumulativeSum, Rank, Lag, Lead, MovingAvg, First,
+        // Last, …) silently compile to error-type columns in data-model element calc
+        // columns and DM metrics. They only evaluate in a GROUPED element. The proven
+        // handoff (Power BI time-intel, exact-parity-verified) is to emit a grouped
+        // child table element whose innermost grouping level carries the aggregate and
+        // the window calc, and leave a flagged Null placeholder column on the host so
+        // the original column name stays discoverable with re-author instructions in
+        // its description (beads-sigma-5d9k). Mirrors MCP src/thoughtspot.ts.
+
+        const TS_WINDOW_SIGMA = {
+            cumulative_sum: 'CumulativeSum', running_total: 'CumulativeSum', running_sum: 'CumulativeSum',
+            cumulative_average: 'CumulativeAvg', cumulative_avg: 'CumulativeAvg',
+            cumulative_max: 'CumulativeMax', cumulative_min: 'CumulativeMin',
+            running_count: 'CumulativeCount',
+            moving_average: 'MovingAvg', moving_avg: 'MovingAvg', moving_sum: 'MovingSum',
+            moving_max: 'MovingMax', moving_min: 'MovingMin',
+            rank: 'Rank', rank_desc: 'Rank', lead: 'Lead', lag: 'Lag',
+            first: 'First', first_value: 'First', last: 'Last', last_value: 'Last',
+        };
+
+        const TS_WINDOW_FN_RE = new RegExp(
+            '\\b(' + Object.keys(TS_WINDOW_SIGMA).sort((a, b) => b.length - a.length).join('|') + ')\\s*\\(', 'i');
+
+        // Parse a formula that IS a single window-function call (the whole expression).
+        // Returns null for embedded usage (`cumulative_sum(x, d) / 100`) — those can't
+        // be decomposed into one grouped element and degrade to flag-only.
+        function _tsParseWindowCall(expr) {
+            const t = (expr || '').trim();
+            const m = t.match(/^([a-z_]+)\s*\(/i);
+            if (!m || !(m[1].toLowerCase() in TS_WINDOW_SIGMA)) return null;
+            let depth = 1, j = m[0].length, cur = '';
+            const args = [];
+            for (; j < t.length; j++) {
+                const ch = t[j];
+                if (ch === '(') depth++;
+                else if (ch === ')') { depth--; if (depth === 0) break; }
+                if (ch === ',' && depth === 1) { args.push(cur.trim()); cur = ''; continue; }
+                cur += ch;
+            }
+            if (depth !== 0 || j !== t.length - 1) return null;
+            if (cur.trim()) args.push(cur.trim());
+            return { fn: m[1].toLowerCase(), args };
+        }
+
+        function _tsEmitWindowElements(pend, elements, derivedEls, dispNameToElId, colAggByDisp, warnings) {
+            if (!pend.length || !elements.length) return;
+            const refsOf = (sig) =>
+                (sig.match(/\[([^\]\/]+)\]/g) || []).map(r => r.slice(1, -1));
+            // Display name of a host column ([TABLE/PHYS] → derived display; calc/date cols carry name).
+            const hostColDisp = (c) => {
+                if (c.name) return c.name;
+                const fm = (c.formula || '').match(/^\[([^\/\]]+)\/([^\]]+)\]$/);
+                return fm ? sigmaDisplayName(fm[2]) : '';
+            };
+
+            for (const p of pend) {
+                const flagOnly = (host, reason) => {
+                    const colId = sigmaShortId();
+                    host.columns.push({
+                        id: colId, name: p.dispName, formula: 'Null',
+                        description: `ThoughtSpot window function (re-author as a grouped-element calc in Sigma — window functions error in DM calc columns): ${p.formulaExpr}`,
+                    });
+                    if (host.order) host.order.push(colId);
+                    warnings.push(`⚠ "${p.dispName}": ${reason} Left as a flagged Null column on "${host.name}" with the original expression in its description — re-author as a calc in a grouped workbook element.`);
+                };
+
+                // Resolve host from the formula's refs (fall back to the first element).
+                const allRefs = refsOf(_tsFormulaToSigma(p.formulaExpr, {}));
+                const hostElId = allRefs.map(r => dispNameToElId[r.toUpperCase()]).find(Boolean) || elements[0].id;
+                const host = elements.find(e => e.id === hostElId) || elements[0];
+
+                if (!p.call || !p.call.args.length) {
+                    flagOnly(host, 'window function is embedded in a larger expression (or has no arguments), which can\'t be decomposed into a single grouped element.');
+                    continue;
+                }
+
+                const fn = p.call.fn;
+                const sigmaFn = TS_WINDOW_SIGMA[fn];
+                const rawMeasure = p.call.args[0];
+                const measureSigma = _tsFormulaToSigma(rawMeasure, {});
+
+                // Classify trailing args: integers → window offsets, the rest → dims.
+                const nums = [];
+                const dimSigs = [];
+                for (const a of p.call.args.slice(1)) {
+                    if (/^-?\d+$/.test(a.trim())) nums.push(a.trim());
+                    else dimSigs.push(_tsFormulaToSigma(a, {}));
+                }
+
+                // The grouped element's parent: the host itself when every ref lives there,
+                // the host's derived join view when refs span elements (the view already
+                // denormalizes related columns as "Col (REL)" — same pattern the PBI
+                // time-intel emission uses).
+                const offHost = [...refsOf(measureSigma), ...dimSigs.flatMap(refsOf)]
+                    .filter(r => { const id = dispNameToElId[r.toUpperCase()]; return id && id !== host.id; });
+                let parent = host;
+                let crossRel = null;   // ref display → "ref (REL)"
+                if (offHost.length) {
+                    const view = derivedEls.find(d => d.source && d.source.elementId === host.id);
+                    const rels = host.relationships || [];
+                    crossRel = {};
+                    let ok = !!view;
+                    for (const r of new Set(offHost)) {
+                        const tgtId = dispNameToElId[r.toUpperCase()];
+                        const rel = rels.find(rr => rr.targetElementId === tgtId && rr.name);
+                        if (!rel) { ok = false; break; }
+                        crossRel[r] = `${r} (${rel.name})`;
+                    }
+                    if (!ok) {
+                        flagOnly(host, 'window function references columns across elements with no derived join view to host the grouped calc.');
+                        continue;
+                    }
+                    parent = view;
+                }
+                const parentName = parent.name;
+                // Qualify bare [X] refs against the parent element ([Parent/X], with the
+                // derived-view "X (REL)" display for cross-element refs).
+                const qualify = (sig) =>
+                    sig.replace(/\[([^\]\/]+)\]/g, (mch, ref) => {
+                        const disp = crossRel && crossRel[ref] ? crossRel[ref] : ref;
+                        return `[${parentName}/${disp}]`;
+                    });
+
+                // Grouping dims. Default (no dims in the call): the host's first date
+                // column, else its first physical column.
+                let dims = [];
+                for (let i = 0; i < dimSigs.length; i++) {
+                    const sig = dimSigs[i];
+                    const bare = sig.match(/^\[([^\]\/]+)\]$/);
+                    if (bare) {
+                        const disp = bare[1];
+                        dims.push({ name: disp, formula: qualify(sig) });
+                    } else {
+                        dims.push({ name: `${p.dispName} Key ${i + 1}`, formula: qualify(sig) });
+                    }
+                }
+                if (!dims.length) {
+                    const hostCols = host.columns || [];
+                    const dateCol = hostCols.find(c => typeof c.formula === 'string' && c.formula.startsWith('DateTrunc('));
+                    const fallback = dateCol || hostCols.find(c => hostColDisp(c) && c.formula !== 'Null');
+                    if (!fallback) {
+                        flagOnly(host, `${fn}() has no ordering dimension and "${host.name}" has no usable column to group by.`);
+                        continue;
+                    }
+                    const disp = hostColDisp(fallback);
+                    dims.push({ name: disp, formula: qualify(`[${disp}]`) });
+                    warnings.push(`ℹ "${p.dispName}": ${fn}() had no explicit dimension — grouped by "${disp}" (host's ${dateCol ? 'date' : 'first'} column). Adjust the grouping in Sigma if a different grain is wanted.`);
+                }
+
+                // Aggregate value column. A raw measure ref inherits the column's default
+                // aggregation (TS window calls take the raw measure — no sum() wrap); an
+                // already-aggregated arg passes through; any other expression is Sum-wrapped.
+                let valFormula;
+                let valName;
+                const bareMeasure = measureSigma.match(/^\[([^\]\/]+)\]$/);
+                if (_tsIsAggregateFormula(rawMeasure)) {
+                    valFormula = qualify(measureSigma);
+                    valName = `${p.dispName} Base`;
+                } else if (bareMeasure) {
+                    valName = bareMeasure[1];
+                    const agg = colAggByDisp[valName.toUpperCase()] || 'Sum';
+                    valFormula = `${agg}(${qualify(measureSigma)})`;
+                } else {
+                    valFormula = `Sum(${qualify(measureSigma)})`;
+                    valName = `${p.dispName} Base`;
+                }
+
+                // Window calc formula (Sigma signatures verified against the function docs:
+                // Rank([col], "asc"|"desc"), Lag/Lead(value, offset), MovingAvg(col, above,
+                // [below]), Cumulative*(col), First/Last(col)).
+                let winFormula;
+                if (sigmaFn === 'Rank') {
+                    winFormula = `Rank([${valName}], "${fn === 'rank_desc' ? 'desc' : 'asc'}")`;
+                } else if (sigmaFn === 'Lead' || sigmaFn === 'Lag') {
+                    winFormula = `${sigmaFn}([${valName}], ${nums[0] || '1'})`;
+                } else if (sigmaFn.startsWith('Moving')) {
+                    winFormula = `${sigmaFn}([${valName}], ${nums[0] || '1'}${nums.length > 1 ? `, ${nums[1]}` : ''})`;
+                } else {
+                    winFormula = `${sigmaFn}([${valName}])`;
+                }
+
+                const dimCols = dims.map(d => ({ id: sigmaShortId(), formula: d.formula, name: d.name }));
+                const vId = sigmaShortId();
+                const wId = sigmaShortId();
+                const cols = [
+                    ...dimCols,
+                    { id: vId, formula: valFormula, name: valName },
+                    { id: wId, formula: winFormula, name: p.dispName },
+                ];
+                elements.push({
+                    id: sigmaShortId(), kind: 'table', name: p.dispName,
+                    source: { kind: 'table', elementId: parent.id },
+                    columns: cols, order: cols.map(c => c.id),
+                    groupings: [{ id: sigmaShortId(), groupBy: dimCols.map(c => c.id), calculations: [vId, wId] }],
+                });
+
+                // Flagged placeholder on the host so the original column name resolves and
+                // carries a pointer to the grouped element.
+                const flagId = sigmaShortId();
+                host.columns.push({
+                    id: flagId, name: p.dispName, formula: 'Null',
+                    description: `ThoughtSpot window function — auto-built as grouped element "${p.dispName}" in this data model (window functions error in DM calc columns): ${p.formulaExpr}`,
+                });
+                if (host.order) host.order.push(flagId);
+                warnings.push(`ℹ "${p.dispName}": ${fn}() → grouped ${sigmaFn} element "${p.dispName}" on "${parentName}" (group by ${dims.map(d => `"${d.name}"`).join(', ')}). The column on "${host.name}" is a flagged Null placeholder pointing at it.`);
+            }
         }
 
         // ── ThoughtSpot UI helpers ─────────────────────────────────────────
@@ -31874,10 +32136,11 @@ models:
 <ul>
     <li><b>tables[]</b> → one Sigma warehouse-table element per table, with database/schema from TML or overrides</li>
     <li><b>worksheet_columns / columns</b> → Sigma columns (ATTRIBUTE/DATE types) and metrics (MEASURE type with aggregation)</li>
-    <li><b>formulas[]</b> → Sigma calculated columns; <code>if/then/else</code>, <code>sum()</code>, <code>count_distinct()</code>, <code>safe_divide()</code> and more are converted to Sigma formula syntax</li>
+    <li><b>formulas[]</b> → Sigma calculated columns; <code>if/then/else</code>, <code>sum()</code>, <code>count_distinct()</code>, <code>unique count()</code>, <code>median()</code>, <code>safe_divide()</code> and more are converted to Sigma formula syntax (single-quoted TML string literals become double-quoted)</li>
+    <li><b>Window functions</b> (<code>cumulative_sum</code>/<code>running_total</code>, <code>moving_average</code>, <code>rank</code>/<code>rank_desc</code>, <code>lag</code>/<code>lead</code>, <code>first</code>/<code>last</code>, …) → an auto-built <b>grouped child element</b> carrying the Sigma window calc (<code>CumulativeSum</code>, <code>MovingAvg</code>, <code>Rank</code>, <code>Lag</code>, …) plus a flagged Null placeholder column on the host element. Sigma window functions silently error in data-model calc columns — they only evaluate in grouped elements, so the converter never emits them there. Cross-element dims group on the host's derived join view.</li>
     <li><b>joins[]</b> → Sigma relationships (<code>N:1</code>); join key columns are matched by physical name; join type (LEFT_OUTER, INNER) is noted in warnings if non-standard</li>
     <li><b>table_paths[]</b> → Used to resolve <code>ALIAS::Column</code> column_ids to actual table names</li>
-    <li><b>Aggregation functions</b>: SUM → Sum, COUNT → Count, COUNT_DISTINCT → CountDistinct, AVERAGE → Avg, MAX → Max, MIN → Min, STD_DEVIATION → StdDev, VARIANCE → Variance</li>
+    <li><b>Aggregation functions</b>: SUM → Sum, COUNT → Count, COUNT_DISTINCT / <code>unique count</code> → CountDistinct, AVERAGE → Avg, MAX → Max, MIN → Min, MEDIAN → Median, STD_DEVIATION → StdDev, VARIANCE → Variance</li>
 </ul>
 
 <h3>Known Limitations</h3>
@@ -31885,7 +32148,7 @@ models:
     <li>Complex nested join paths are resolved to the leaf table name only — intermediate join logic is not preserved</li>
     <li>ThoughtSpot chained/multi-hop formulas may need manual review after conversion</li>
     <li>Row-level security rules and access control expressions are not converted</li>
-    <li>ThoughtSpot <code>cumulative_sum</code> / <code>running</code> window functions map to Sigma <code>CumulativeSum</code> but may need partition/order adjustments</li>
+    <li>Window functions <b>embedded</b> in a larger expression (e.g. <code>cumulative_sum(x, d) / 100</code>) can't be decomposed into one grouped element — they degrade to a flagged Null column with the original expression in its description for manual re-authoring</li>
     <li>Formula columns with no matching <code>formula_id</code> or <code>column_id</code> are skipped with a warning</li>
 </ul>
 
@@ -31893,7 +32156,10 @@ models:
 <ul>
     <li><code>if (cond) then X else Y</code> → <code>If(cond, X, Y)</code></li>
     <li><code>sum(Revenue)</code> → <code>Sum([Revenue])</code></li>
-    <li><code>count_distinct(CustomerID)</code> → <code>CountDistinct([CustomerID])</code></li>
+    <li><code>count_distinct(CustomerID)</code> / <code>unique count (CustomerID)</code> → <code>CountDistinct([CustomerID])</code></li>
+    <li><code>median(Revenue)</code> → <code>Median([Revenue])</code></li>
+    <li><code>'literal'</code> → <code>"literal"</code> (single-quoted TML strings → Sigma double quotes)</li>
+    <li><b>Window functions:</b> <code>cumulative_sum(m, dim)</code> → grouped element with <code>CumulativeSum([m])</code>; <code>moving_average(m, 2, 1, dim)</code> → <code>MovingAvg([m], 2, 1)</code>; <code>rank_desc(sum(m), dim)</code> → <code>Rank([base], "desc")</code>; <code>lag(m, dim, 1)</code> → <code>Lag([m], 1)</code> — each grouped by its dim(s), with a Null placeholder left on the host element</li>
     <li><code>safe_divide(a, b)</code> → <code>If(IsNull(b) or b = 0, null, a / b)</code></li>
     <li><code>col in {A, B, C}</code> → <code>In([col], A, B, C)</code></li>
     <li><code>isnull(x)</code> → <code>IsNull(x)</code></li>
