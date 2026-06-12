@@ -26767,11 +26767,12 @@ ${cleanedSql}`;
         }
 
         // ── Tableau window/table-calc parser ─────────────────────────────
-        // Parses RUNNING_*, WINDOW_*, LOOKUP, RANK*, INDEX, FIRST, LAST,
-        // PREVIOUS_VALUE into a structured form so the Tableau converter can
-        // lower them to a kind:'sql' helper element with explicit OVER clauses.
-        // Sigma DM has no working partitioned/ordered window formulas, so SQL
-        // is the only path.
+        // Parses RUNNING_*, WINDOW_*, LOOKUP, RANK*, INDEX, FIRST, LAST into a
+        // structured form so the Tableau converter can lower them to a
+        // kind:'sql' helper element with explicit OVER clauses. Sigma DM has no
+        // working partitioned/ordered window formulas, so SQL is the DM-safe
+        // path; patterns it can't express fall back to the validated
+        // chart-context mappings (tableauWindowToSigmaChart → workbookPatterns).
         function _windowInnerToSql(expr) {
             let s = expr;
             s = s.replace(/\bZN\s*\(([^()]+)\)/gi, '$1');
@@ -26780,7 +26781,11 @@ ${cleanedSql}`;
         }
         function tableauParseWindow(formula) {
             const f = formula.trim();
-            if (!/^(WINDOW_|RUNNING_|LOOKUP\(|PREVIOUS_VALUE\(|RANK\b|RANK_DENSE\b|RANK_UNIQUE\b|INDEX\(|FIRST\(|LAST\()/i.test(f)) return null;
+            if (!/^(WINDOW_|RUNNING_|LOOKUP\(|RANK\b|RANK_DENSE\b|RANK_UNIQUE\b|INDEX\(|FIRST\(|LAST\()/i.test(f)) return null;
+            // PREVIOUS_VALUE is self-referential (returns the calc's own prior result) —
+            // a LAG over the inner aggregate is NOT equivalent. It is flagged loudly by
+            // the untranslatable path downstream; never lowered here.
+            if (/^PREVIOUS_VALUE\s*\(/i.test(f)) return null;
             let m = f.match(/^(RUNNING_(?:SUM|AVG|MIN|MAX))\s*\(\s*(SUM|AVG|MIN|MAX|COUNT)\s*\(\s*(\[[^\]]+\]|[A-Z0-9_]+)\s*\)\s*\)\s*$/i);
             if (m) return { _isWindow: true, windowType: m[1].toUpperCase(), innerAggFunc: m[2].toUpperCase(), innerColRaw: m[3], innerExprSql: _windowInnerToSql(m[3]) };
             m = f.match(/^(RUNNING_(?:SUM|AVG|MIN|MAX))\s*\(\s*(\[[^\]]+\]|[A-Z0-9_]+)\s*\)\s*$/i);
@@ -26789,8 +26794,6 @@ ${cleanedSql}`;
             if (m) return { _isWindow: true, windowType: m[1].toUpperCase(), innerAggFunc: m[2].toUpperCase(), innerColRaw: m[3], innerExprSql: _windowInnerToSql(m[3]) };
             m = f.match(/^LOOKUP\s*\(\s*(SUM|AVG|MIN|MAX|COUNT)\s*\(\s*(\[[^\]]+\]|[A-Z0-9_]+)\s*\)\s*,\s*(-?\d+)\s*\)\s*$/i);
             if (m) return { _isWindow: true, windowType: 'LOOKUP', innerAggFunc: m[1].toUpperCase(), innerColRaw: m[2], innerExprSql: _windowInnerToSql(m[2]), lookupOffset: parseInt(m[3], 10) };
-            m = f.match(/^PREVIOUS_VALUE\s*\(\s*(SUM|AVG|MIN|MAX|COUNT)\s*\(\s*(\[[^\]]+\]|[A-Z0-9_]+)\s*\)\s*\)\s*$/i);
-            if (m) return { _isWindow: true, windowType: 'PREVIOUS_VALUE', innerAggFunc: m[1].toUpperCase(), innerColRaw: m[2], innerExprSql: _windowInnerToSql(m[2]), lookupOffset: -1 };
             m = f.match(/^(FIRST|LAST)\s*\(\s*\)\s*$/i);
             if (m) return { _isWindow: true, windowType: m[1].toUpperCase(), innerAggFunc: '', innerColRaw: '', innerExprSql: '' };
             m = f.match(/^(RANK|RANK_DENSE|RANK_UNIQUE)\s*\(\s*\)\s*$/i);
@@ -26956,6 +26959,139 @@ ${cleanedSql}`;
             return a;
         }
 
+        // ── Tableau table calcs → Sigma window functions (CHART context only) ──
+        // WINPROBE-validated mappings (live-proven 930/930). Mirrors MCP
+        // src/formulas.ts. CONTEXT CAVEAT: every Sigma function emitted here
+        // (Cumulative*/Moving*/Rank/RankDense/RankPercentile/PercentOfTotal/
+        // RowNumber/Lag/Lead) is valid ONLY in chart / grouped-workbook-element
+        // context — they silently error in DM element calc columns and workbook
+        // master calc columns, so the converter routes them to workbookPatterns,
+        // never into a DM column/metric. NEVER rewrite to *Over functions
+        // (SumOver/MaxOver/CountOver = 'Unknown function' in spec contexts).
+
+        // Sigma window functions that only resolve in chart/grouped-element
+        // context (GrandTotal is deliberately absent — it is DM-safe).
+        const SIGMA_CHART_ONLY_WINDOW_RE =
+            /\b(?:Cumulative(?:Sum|Avg|Min|Max|Count)|Moving(?:Sum|Avg|Min|Max|Count|StdDev)|RankDense|RankPercentile|Rank|PercentOfTotal|RowNumber|Lag|Lead)\s*\(/;
+
+        // Raw Tableau table-calc tokens — detects table calcs embedded inside
+        // larger expressions so they're flagged loudly, never leaked silently.
+        // Case-sensitive so converted Sigma output (Rank(...)) never matches.
+        const TABLEAU_TABLE_CALC_TOKEN_RE =
+            /\b(?:WINDOW_[A-Z]+|RUNNING_[A-Z]+|LOOKUP|PREVIOUS_VALUE|RANK(?:_[A-Z]+)?|INDEX|SIZE|TOTAL|FIRST|LAST)\s*\(/;
+
+        const _TABLEAU_TC_AGG_MAP = {
+            SUM: 'Sum', AVG: 'Avg', MIN: 'Min', MAX: 'Max', COUNT: 'Count',
+            COUNTD: 'CountDistinct', MEDIAN: 'Median', STDEV: 'StdDev', VAR: 'Variance',
+        };
+        const _TABLEAU_TC_COL = '(\\[[^\\]]+\\]|[A-Za-z_][A-Za-z0-9_]*)';
+        const _TABLEAU_TC_AGG = '(SUM|AVG|MIN|MAX|COUNT|COUNTD|MEDIAN|STDEV|VAR)';
+        // groups: 1 = agg func, 2 = column ref
+        const _TABLEAU_TC_AGG_EXPR = _TABLEAU_TC_AGG + '\\s*\\(\\s*' + _TABLEAU_TC_COL + '\\s*\\)';
+
+        function _tableauTcCol(raw) {
+            const name = raw.replace(/^\[|\]$/g, '');
+            if (/^[A-Z][A-Z0-9_]{2,}$/.test(name)) return '[' + sigmaDisplayName(name) + ']';
+            return '[' + name + ']';
+        }
+        function _tableauTcAgg(aggFunc, colRaw) {
+            const fn = _TABLEAU_TC_AGG_MAP[aggFunc.toUpperCase()] || 'Sum';
+            return fn + '(' + _tableauTcCol(colRaw) + ')';
+        }
+        function _tableauTcSameRef(a, b) {
+            const norm = s => s.replace(/^\[|\]$/g, '').replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+            return norm(a) === norm(b);
+        }
+
+        // Returns the name of a Tableau table-calc function with NO validated
+        // Sigma equivalent (must be flagged loudly, never emitted), or null.
+        function tableauWindowUntranslatable(formula) {
+            const m = (formula || '').match(/\b(WINDOW_MEDIAN|WINDOW_PERCENTILE|WINDOW_CORR|WINDOW_COVARP?|WINDOW_VARP?|WINDOW_STDEVP|PREVIOUS_VALUE|SIZE)\s*\(/i);
+            return m ? m[1].toUpperCase() : null;
+        }
+
+        // Map a complete Tableau table-calc formula to its validated Sigma
+        // chart-context window-function equivalent ({ formula, kind, verify?,
+        // note? }), or null when not a recognised (validated) pattern. Patterns
+        // are anchored — embedded table calcs are not claimed (use
+        // TABLEAU_TABLE_CALC_TOKEN_RE to detect and flag those).
+        function tableauWindowToSigmaChart(formula) {
+            const f = (formula || '').trim();
+            if (!f || tableauWindowUntranslatable(f)) return null;
+            let m;
+
+            // AGG([x]) / WINDOW_SUM(AGG([x])) → PercentOfTotal(Agg([x]), "grand_total")
+            m = f.match(new RegExp('^' + _TABLEAU_TC_AGG_EXPR + '\\s*\\/\\s*WINDOW_SUM\\s*\\(\\s*' + _TABLEAU_TC_AGG_EXPR + '\\s*\\)$', 'i'));
+            if (m && m[1].toUpperCase() === m[3].toUpperCase() && _tableauTcSameRef(m[2], m[4])) {
+                return { formula: 'PercentOfTotal(' + _tableauTcAgg(m[1], m[2]) + ', "grand_total")', kind: 'percent-of-total' };
+            }
+
+            // RUNNING_SUM(AGG([x])) / TOTAL(AGG([x])) (or / WINDOW_SUM(AGG([x])))
+            //   → CumulativeSum(PercentOfTotal(Agg([x]), "grand_total"))
+            m = f.match(new RegExp('^RUNNING_SUM\\s*\\(\\s*' + _TABLEAU_TC_AGG_EXPR + '\\s*\\)\\s*\\/\\s*(?:TOTAL|WINDOW_SUM)\\s*\\(\\s*' + _TABLEAU_TC_AGG_EXPR + '\\s*\\)$', 'i'));
+            if (m && m[1].toUpperCase() === m[3].toUpperCase() && _tableauTcSameRef(m[2], m[4])) {
+                return { formula: 'CumulativeSum(PercentOfTotal(' + _tableauTcAgg(m[1], m[2]) + ', "grand_total"))', kind: 'cumulative' };
+            }
+
+            // RUNNING_SUM/AVG/MAX/MIN/COUNT(AGG([x])) → Cumulative*(Agg([x]))
+            m = f.match(new RegExp('^RUNNING_(SUM|AVG|MIN|MAX|COUNT)\\s*\\(\\s*' + _TABLEAU_TC_AGG_EXPR + '\\s*\\)$', 'i'));
+            if (m) {
+                const fn = 'Cumulative' + m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+                return { formula: fn + '(' + _tableauTcAgg(m[2], m[3]) + ')', kind: 'cumulative' };
+            }
+            // Bare-column form RUNNING_SUM([x]) — inner aggregate implied by the outer fn
+            m = f.match(new RegExp('^RUNNING_(SUM|AVG|MIN|MAX|COUNT)\\s*\\(\\s*' + _TABLEAU_TC_COL + '\\s*\\)$', 'i'));
+            if (m) {
+                const fn = 'Cumulative' + m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+                return { formula: fn + '(' + _tableauTcAgg(m[1], m[2]) + ')', kind: 'cumulative' };
+            }
+
+            // WINDOW_SUM/AVG/MIN/MAX/STDEV(AGG([x]), -n, 0) → Moving*(Agg([x]), n)
+            // WINDOW_*(AGG([x]), -n, m)                     → Moving*(Agg([x]), n, m)
+            m = f.match(new RegExp('^WINDOW_(SUM|AVG|MIN|MAX|STDEV)\\s*\\(\\s*' + _TABLEAU_TC_AGG_EXPR + '\\s*,\\s*(-?\\d+)\\s*,\\s*(-?\\d+)\\s*\\)$', 'i'));
+            if (m) {
+                const back = parseInt(m[4], 10), fwd = parseInt(m[5], 10);
+                if (back <= 0 && fwd >= 0) {
+                    const movMap = { SUM: 'MovingSum', AVG: 'MovingAvg', MIN: 'MovingMin', MAX: 'MovingMax', STDEV: 'MovingStdDev' };
+                    const fn = movMap[m[1].toUpperCase()];
+                    const args = fwd === 0 ? String(-back) : (-back) + ', ' + fwd;
+                    return { formula: fn + '(' + _tableauTcAgg(m[2], m[3]) + ', ' + args + ')', kind: 'moving' };
+                }
+                return null; // offsets that don't span the current row — not validated
+            }
+
+            // RANK/RANK_DENSE/RANK_PERCENTILE(AGG([x])[, 'asc'|'desc'])
+            //   → Rank/RankDense/RankPercentile(Agg([x]), "desc")
+            m = f.match(new RegExp("^(RANK|RANK_DENSE|RANK_PERCENTILE|RANK_UNIQUE)\\s*\\(\\s*" + _TABLEAU_TC_AGG_EXPR + "\\s*(?:,\\s*['\"]?(asc|desc)['\"]?\\s*)?\\)$", 'i'));
+            if (m) {
+                const fnMap = { RANK: 'Rank', RANK_DENSE: 'RankDense', RANK_PERCENTILE: 'RankPercentile', RANK_UNIQUE: 'Rank' };
+                const fn = fnMap[m[1].toUpperCase()];
+                const dir = (m[4] || 'desc').toLowerCase();
+                const res = { formula: fn + '(' + _tableauTcAgg(m[2], m[3]) + ', "' + dir + '")', kind: 'rank' };
+                if (m[1].toUpperCase() === 'RANK_UNIQUE') {
+                    res.verify = true;
+                    res.note = 'RANK_UNIQUE breaks ties arbitrarily; Sigma Rank assigns equal ranks to ties — verify against Tableau.';
+                }
+                return res;
+            }
+
+            // INDEX() → RowNumber()
+            if (/^INDEX\s*\(\s*\)$/i.test(f)) return { formula: 'RowNumber()', kind: 'index' };
+
+            // LOOKUP(AGG([x]), -n) → Lag(Agg([x]), n);  LOOKUP(AGG([x]), n) → Lead(Agg([x]), n)
+            m = f.match(new RegExp('^LOOKUP\\s*\\(\\s*' + _TABLEAU_TC_AGG_EXPR + '\\s*,\\s*(-?\\d+)\\s*\\)$', 'i'));
+            if (m) {
+                const off = parseInt(m[3], 10);
+                const agg = _tableauTcAgg(m[1], m[2]);
+                if (off === 0) return { formula: agg, kind: 'lag', note: 'LOOKUP(expr, 0) is the identity — no window function needed.' };
+                return off < 0
+                    ? { formula: 'Lag(' + agg + ', ' + (-off) + ')', kind: 'lag' }
+                    : { formula: 'Lead(' + agg + ', ' + off + ')', kind: 'lead' };
+            }
+
+            return null;
+        }
+
         function tableauFormulaToSigma(formula, warnings) {
             if (!formula || !formula.trim()) return '';
             let f = formula.trim();
@@ -26971,45 +27107,36 @@ ${cleanedSql}`;
                 if (warnings) warnings.push('⚠ LOD expression not converted: ' + f.slice(0,60));
                 return '/* LOD: ' + f.replace(/\/\*/g,'').replace(/\*\//g,'') + ' */';
             }
-            // Table calcs — convert common patterns to Sigma window functions
-            if (/^(WINDOW_|RUNNING_|FIRST\(|LAST\(|INDEX\(|RANK\b|RANK_|LOOKUP\(|PREVIOUS_VALUE\()/i.test(f)) {
-                // RUNNING_SUM(SUM([x])) or RUNNING_SUM([x]) → CumulativeSum([x])
-                let tcMatch = f.match(/^RUNNING_SUM\s*\(\s*(?:SUM\s*\(\s*)?(\[[^\]]+\])\s*\)?\s*\)/i);
-                if (tcMatch) return 'CumulativeSum(' + tcMatch[1] + ')';
-
-                // RUNNING_AVG(SUM([x])) → CumulativeAvg([x])
-                tcMatch = f.match(/^RUNNING_AVG\s*\(\s*(?:SUM\s*\(\s*)?(\[[^\]]+\])\s*\)?\s*\)/i);
-                if (tcMatch) return 'CumulativeAvg(' + tcMatch[1] + ')';
-
-                // RUNNING_MIN/MAX
-                tcMatch = f.match(/^RUNNING_(MIN|MAX)\s*\(\s*(?:(?:SUM|MIN|MAX)\s*\(\s*)?(\[[^\]]+\])\s*\)?\s*\)/i);
-                if (tcMatch) return 'Cumulative' + tcMatch[1].charAt(0) + tcMatch[1].slice(1).toLowerCase() + '(' + tcMatch[2] + ')';
-
-                // RANK(SUM([x])) or RANK([x]) → Rank([x])
-                tcMatch = f.match(/^RANK\s*\(\s*(?:SUM\s*\(\s*)?(\[[^\]]+\])\s*\)?\s*\)/i);
-                if (tcMatch) return 'Rank(' + tcMatch[1] + ')';
-
-                // RANK_DENSE → DenseRank
-                tcMatch = f.match(/^RANK_DENSE\s*\(\s*(?:SUM\s*\(\s*)?(\[[^\]]+\])\s*\)?\s*\)/i);
-                if (tcMatch) return 'DenseRank(' + tcMatch[1] + ')';
-
-                // RANK_UNIQUE → Rank
-                tcMatch = f.match(/^RANK_UNIQUE\s*\(\s*(?:SUM\s*\(\s*)?(\[[^\]]+\])\s*\)?\s*\)/i);
-                if (tcMatch) return 'Rank(' + tcMatch[1] + ')';
-
-                // INDEX() → RowNumber()
-                if (/^INDEX\s*\(\s*\)/i.test(f)) return 'RowNumber()';
-
-                // WINDOW_SUM(SUM([x])) → GrandTotal(Sum([x]))
-                tcMatch = f.match(/^WINDOW_SUM\s*\(\s*(SUM|COUNT|AVG|MIN|MAX)\s*\(\s*(\[[^\]]+\])\s*\)\s*\)/i);
-                if (tcMatch) {
-                    const aggMap = { SUM: 'Sum', COUNT: 'Count', AVG: 'Avg', MIN: 'Min', MAX: 'Max' };
-                    return 'GrandTotal(' + (aggMap[tcMatch[1].toUpperCase()] || tcMatch[1]) + '(' + tcMatch[2] + '))';
+            // Table calcs — WINPROBE-validated mappings to Sigma window functions.
+            // CONTEXT CAVEAT: the emitted Sigma window functions are valid in CHART /
+            // grouped-workbook-element context ONLY — they silently error in DM element
+            // calc columns and workbook master calc columns. Never emit *Over functions
+            // (SumOver/MaxOver/CountOver = 'Unknown function' in spec contexts).
+            {
+                const winChart = tableauWindowToSigmaChart(f);
+                if (winChart) {
+                    if (warnings) warnings.push(
+                        'ℹ Table calc → ' + winChart.formula + ' — CHART/grouped-element context ONLY: place in a grouped workbook element (group by the viz dimensions); window functions silently error in data-model calc columns and workbook master calc columns.'
+                        + (winChart.note ? ' ' + winChart.note : ''));
+                    return winChart.formula;
                 }
-
-                // Couldn't parse — fall back to comment
-                if (warnings) warnings.push('⚠ Table calculation not converted: ' + f.slice(0,60));
-                return '/* table calc: ' + f.replace(/\/\*/g,'').replace(/\*\//g,'') + ' */';
+                const untrans = tableauWindowUntranslatable(f);
+                if (untrans) {
+                    if (warnings) warnings.push('⚠ Table calculation NOT converted — ' + untrans + '() has no Sigma equivalent. Untranslated fragment: ' + f.slice(0, 120));
+                    return '/* table calc: ' + f.replace(/\/\*/g,'').replace(/\*\//g,'') + ' */';
+                }
+                if (/^(WINDOW_|RUNNING_|FIRST\(|LAST\(|INDEX\(|RANK\b|RANK_|LOOKUP\(|TOTAL\s*\()/i.test(f)) {
+                    // WINDOW_SUM(AGG([x])) with no offsets → GrandTotal(Agg([x])) — DM-safe
+                    // (exact when the chart groups by a single dimension set).
+                    const gt = f.match(/^WINDOW_SUM\s*\(\s*(SUM|COUNT|AVG|MIN|MAX)\s*\(\s*(\[[^\]]+\])\s*\)\s*\)$/i);
+                    if (gt) {
+                        const aggMap = { SUM: 'Sum', COUNT: 'Count', AVG: 'Avg', MIN: 'Min', MAX: 'Max' };
+                        return 'GrandTotal(' + (aggMap[gt[1].toUpperCase()] || gt[1]) + '(' + gt[2] + '))';
+                    }
+                    // Anchored table calc we couldn't map — flag loudly, never emit silently.
+                    if (warnings) warnings.push('⚠ Table calculation not converted. Untranslated fragment: ' + f.slice(0, 120));
+                    return '/* table calc: ' + f.replace(/\/\*/g,'').replace(/\*\//g,'') + ' */';
+                }
             }
 
             // ZN([x]) → Coalesce([x], 0)
@@ -27105,6 +27232,13 @@ ${cleanedSql}`;
                 if (colName === colName.toLowerCase() || colName.includes(' ')) return match;
                 return '[' + sigmaDisplayName(colName) + ']';
             });
+
+            // Loud (never silent) flag for table-calc tokens embedded inside larger
+            // expressions that the anchored mapper could not claim — the leftover
+            // token would otherwise pass through as a silently-broken formula.
+            if (warnings && TABLEAU_TABLE_CALC_TOKEN_RE.test(f)) {
+                warnings.push('⚠ Table-calc function embedded in a larger expression — NOT translated in place. Untranslated fragment: ' + f.slice(0, 120));
+            }
 
             return f.trim();
         }
@@ -27596,6 +27730,40 @@ ${cleanedSql}`;
         function convertOneDatasource(ds, connectionId, dbOverride, schOverride, strategy, parameters) {
             const warnings = [], elements = [];
             const security = [];   // detected RLS — reported, not injected (architecture B)
+            // Window/table calcs whose faithful Sigma equivalent only works in CHART /
+            // grouped-workbook-element context — reported for the workbook builder, NOT
+            // injected as DM columns (window functions silently error there). Mirrors
+            // MCP src/tableau.ts workbookPatterns.
+            const workbookPatterns = [];
+
+            // Report a table calc as a ready-to-place chart-context formula (validated
+            // WINPROBE mapping) in workbookPatterns, or — when it has no Sigma
+            // equivalent — as a loud 'unsupported' entry naming the fragment. Returns
+            // false when the formula matched neither (caller decides what to do).
+            function _reportChartWindowPattern(caption, formula, why) {
+                const chartWin = tableauWindowToSigmaChart(formula);
+                if (chartWin) {
+                    const pat = {
+                        kind: chartWin.kind, name: caption, source: formula.trim(), formula: chartWin.formula,
+                        requires: 'GROUPED workbook element (group by the chart/viz dimensions) — NOT valid as a DM calc column or metric',
+                        note: why + '. Place the ready formula in a grouped workbook element (chart context); window functions silently error in DM element calc columns and workbook master calc columns.' + (chartWin.note ? ' ' + chartWin.note : ''),
+                    };
+                    if (chartWin.verify) pat.verify = true;
+                    workbookPatterns.push(pat);
+                    warnings.push('ℹ "' + caption + '": table calc → ready Sigma formula ' + chartWin.formula + ' in the workbook patterns — CHART/grouped-element context only (' + why + '); not emitted as a DM column.');
+                    return true;
+                }
+                const untrans = tableauWindowUntranslatable(formula);
+                if (untrans) {
+                    workbookPatterns.push({
+                        kind: 'unsupported', name: caption, source: formula.trim(),
+                        note: untrans + '() has no Sigma equivalent — recreate manually. Untranslated fragment: ' + formula.trim().slice(0, 160),
+                    });
+                    warnings.push('⚠ "' + caption + '": ' + untrans + '() has no Sigma equivalent — NOT translated. Untranslated fragment: ' + formula.trim().slice(0, 120));
+                    return true;
+                }
+                return false;
+            }
 
             const connection   = ds.connection;
                 const rootRelation = connection ? connection.querySelector(':scope > relation') : null;
@@ -27841,9 +28009,10 @@ ${cleanedSql}`;
 
                     // ── Window-calc helper-element registry (kind:sql) ───
                     // Window calcs (RUNNING_*, WINDOW_*, LOOKUP, RANK, INDEX,
-                    // FIRST, LAST, PREVIOUS_VALUE) cannot be expressed via
-                    // Sigma DM formulas — lower them to a kind:'sql' helper
-                    // element with explicit OVER clauses.
+                    // FIRST, LAST) cannot be expressed via Sigma DM formulas —
+                    // lower them to a kind:'sql' helper element with explicit
+                    // OVER clauses; patterns the SQL path can't express are
+                    // handed to the workbook layer as chart-context formulas.
                     const _winWsIndex = _tableauBuildWindowWorksheetIndex(ds.doc);
                     const _winHelpers = {};
                     const _winUsedAliases = new Set();
@@ -27934,7 +28103,7 @@ ${cleanedSql}`;
                                 overSql = fn + '(' + innerAlias + ') OVER (' + partBy + ')';
                                 break;
                             }
-                            case 'LOOKUP': case 'PREVIOUS_VALUE': {
+                            case 'LOOKUP': {
                                 if (!rec.orderDimAlias) return { ok: false, reason: 'no order dim' };
                                 const offset = (win.lookupOffset != null) ? win.lookupOffset : -1;
                                 const fn = offset < 0 ? 'LAG' : (offset > 0 ? 'LEAD' : '');
@@ -28287,7 +28456,11 @@ ${cleanedSql}`;
                                     partitionResolved.push(r);
                                 }
                                 if (!allP || partitionResolved.length === 0) {
-                                    warnings.push('⚠ Window calc "' + caption + '" — no partition dims resolved on base; skipped');
+                                    // No DM-safe SQL lowering possible — hand the validated chart-
+                                    // context mapping to the workbook layer instead of dropping it.
+                                    if (!_reportChartWindowPattern(caption, formula, 'SQL window lowering failed (no partition dims resolved on base)')) {
+                                        warnings.push('⚠ Window calc "' + caption + '" — no partition dims resolved on base; skipped. Untranslated fragment: ' + formula.trim().slice(0, 120));
+                                    }
                                     continue;
                                 }
                                 const relName = 'Window ' + partitionDimNames.join(', ') + (orderDimRaw ? (' ORDER ' + orderDimRaw + (orderDimDateTrunc ? '(' + orderDimDateTrunc + ')' : '')) : '');
@@ -28303,7 +28476,9 @@ ${cleanedSql}`;
                                 const winAlias = _winMakeAlias(caption);
                                 const emitRes = _emitWinOverClause(helperRes.rec, _winParsed, winAlias, innerAlias);
                                 if (!emitRes.ok) {
-                                    warnings.push('⚠ Window calc "' + caption + '" → ' + _winParsed.windowType + ': ' + emitRes.reason + '; skipped');
+                                    if (!_reportChartWindowPattern(caption, formula, 'SQL window lowering failed (' + _winParsed.windowType + ': ' + emitRes.reason + ')')) {
+                                        warnings.push('⚠ Window calc "' + caption + '" → ' + _winParsed.windowType + ': ' + emitRes.reason + '; skipped. Untranslated fragment: ' + formula.trim().slice(0, 120));
+                                    }
                                     continue;
                                 }
                                 const lastCol = helperRes.rec.element.columns[helperRes.rec.element.columns.length - 1];
@@ -28312,8 +28487,38 @@ ${cleanedSql}`;
                                 continue;
                             }
 
+                            // Table-calc patterns the SQL lowering can't express (moving
+                            // windows WINDOW_*(agg, -n, m), percent-of-total ratios,
+                            // RANK_PERCENTILE) — WINPROBE-validated Sigma window formulas
+                            // exist but are valid ONLY in chart/grouped-element context, so
+                            // report them in workbookPatterns (never as DM columns).
+                            // Untranslatable table calcs (WINDOW_MEDIAN/PERCENTILE/CORR/
+                            // COVAR, PREVIOUS_VALUE, SIZE) are flagged loudly here.
+                            if (_reportChartWindowPattern(caption, formula, 'no DM-safe SQL OVER lowering for this pattern')) continue;
+
                             const sigmaFormula = tableauFormulaToSigma(formula, warnings);
                             if (!sigmaFormula) continue;
+
+                            // Hard guard: chart-context-only window functions (or leftover
+                            // raw table-calc tokens embedded in a larger expression) must
+                            // NEVER land in a DM column/metric — they silently error there.
+                            if (typeof sigmaFormula === 'string' && !sigmaFormula.startsWith('/*')
+                                && (SIGMA_CHART_ONLY_WINDOW_RE.test(sigmaFormula) || TABLEAU_TABLE_CALC_TOKEN_RE.test(sigmaFormula))) {
+                                const clean = !TABLEAU_TABLE_CALC_TOKEN_RE.test(sigmaFormula);
+                                const pat = {
+                                    kind: clean ? 'window' : 'unsupported', name: caption, source: formula.trim(),
+                                    requires: 'GROUPED workbook element (group by the chart/viz dimensions) — NOT valid as a DM calc column or metric',
+                                    note: clean
+                                        ? 'Expression contains chart-context-only window functions — place in a grouped workbook element; not emitted as a DM column (window functions silently error there).'
+                                        : 'Table-calc fragment embedded in a larger expression — NOT fully translatable. Untranslated fragment: ' + formula.trim().slice(0, 160),
+                                };
+                                if (clean) pat.formula = sigmaFormula;
+                                workbookPatterns.push(pat);
+                                warnings.push(clean
+                                    ? 'ℹ "' + caption + '" → ' + sigmaFormula + ' — CHART/grouped-element context only; reported in the workbook patterns, not emitted as a DM column.'
+                                    : '⚠ "' + caption + '" embeds a table-calc fragment that could not be translated — NOT emitted as a DM column. Untranslated fragment: ' + formula.trim().slice(0, 120));
+                                continue;
+                            }
 
                             // ── LOD expression → kind:sql helper element + relationship ──
                             if (sigmaFormula && typeof sigmaFormula === 'object' && sigmaFormula._isLOD) {
@@ -28605,7 +28810,7 @@ ${cleanedSql}`;
                     if (el.relationships && el.relationships.length === 0) delete el.relationships;
                 });
 
-                return { elements, controls, warnings, security };
+                return { elements, controls, warnings, security, workbookPatterns };
         }
 
         // ── Main conversion function ──────────────────────────────────────
@@ -28644,17 +28849,18 @@ ${cleanedSql}`;
                 // Use the first connection's friendly-names setting
                 state.useFriendlyNames = isConnectionFriendly(toConvert[0].connectionId);
 
-                const allElements = [], allControls = [], allWarnings = [], allSecurity = [];
+                const allElements = [], allControls = [], allWarnings = [], allSecurity = [], allWorkbookPatterns = [];
                 { const fnWarn = friendlyNameWarning(); if (fnWarn) allWarnings.push(fnWarn); }
 
                 let firstControls = true;
                 for (const { ds, connectionId } of toConvert) {
-                    const { elements, controls, warnings, security } = convertOneDatasource(
+                    const { elements, controls, warnings, security, workbookPatterns } = convertOneDatasource(
                         ds, connectionId, dbOverride, schOverride, strategy, _tableauParsed.parameters
                     );
                     allElements.push(...elements);
                     allWarnings.push(...warnings);
                     allSecurity.push(...(security || []));
+                    allWorkbookPatterns.push(...(workbookPatterns || []));
                     // Parameters → controls are shared across all datasources; only add once
                     if (firstControls) { allControls.push(...controls); firstControls = false; }
                 }
@@ -28678,15 +28884,29 @@ ${cleanedSql}`;
                 // per-rule 🔐 warnings below carry the provisioning guidance.
                 window._tableauSecurity = allSecurity;
 
+                // Chart-context window/table-calc patterns — reported, NEVER injected
+                // into the spec (window functions silently error in DM calc columns/
+                // metrics). Exposed for tooling/tests; the 🧩 lines carry the ready
+                // formula + grouped-element placement note. Mirrors qlik's handoff.
+                window._tableauWorkbookPatterns = allWorkbookPatterns;
+                for (const p of allWorkbookPatterns) {
+                    allWarnings.push('🧩 Workbook pattern [' + p.kind + '] "' + p.name + '"' +
+                        (p.formula ? ' → ' + p.formula : '') +
+                        ' — ' + (p.kind === 'unsupported'
+                            ? p.note
+                            : 'build as a calculation in a GROUPED workbook element (group by the chart/viz dimensions)' + (p.verify ? '; VERIFY values against Tableau' : '') + '. ' + p.note));
+                }
+
                 const warnBox = document.getElementById('tableauWarningBox');
                 if (allWarnings.length) { warnBox.style.display = ''; warnBox.innerHTML = allWarnings.map(w => '<div>' + w + '</div>').join(''); }
                 else { warnBox.style.display = 'none'; }
 
-                const ec = allElements.length, cc = allControls.length, wc = allWarnings.length, sc = allSecurity.length;
+                const ec = allElements.length, cc = allControls.length, wc = allWarnings.length, sc = allSecurity.length, pc = allWorkbookPatterns.length;
                 document.getElementById('tableauOutputStats').innerHTML = [
                     '<span class="dbt-stat-badge">' + ec + ' element' + (ec !== 1 ? 's' : '') + '</span>',
                     cc ? '<span class="dbt-stat-badge" style="color:var(--accent);">' + cc + ' control' + (cc !== 1 ? 's' : '') + '</span>' : '',
                     sc ? '<span class="dbt-stat-badge" style="color:var(--warning);" title="Row-level security detected in the Tableau source — reported in the conversion notes, not injected into the spec. Provision the listed user attributes/teams in Sigma, then apply the boolean calc + element filter.">🔐 ' + sc + ' RLS rule' + (sc !== 1 ? 's' : '') + '</span>' : '',
+                    pc ? '<span class="dbt-stat-badge" style="color:var(--warning);" title="Tableau table calcs that translate to Sigma window formulas (Cumulative*/Moving*/Rank/PercentOfTotal/Lag/Lead) valid only in GROUPED workbook elements — reported in the conversion notes with ready formulas, not injected into the data model spec (window functions silently error in DM calc columns).">🧩 ' + pc + ' workbook pattern' + (pc !== 1 ? 's' : '') + '</span>' : '',
                     wc ? '<span class="dbt-stat-badge" style="color:var(--warning);">' + wc + ' warning' + (wc !== 1 ? 's' : '') + '</span>' : ''
                 ].filter(Boolean).join('');
 
@@ -32704,7 +32924,8 @@ models:
     <li><b>User functions / row-level security</b> → User-context functions are translated (<code>USERNAME()</code>→<code>CurrentUserEmail()</code>, <code>ISMEMBEROF('g')</code>→<code>CurrentUserInTeam("g")</code>, <code>USERATTRIBUTE('a')</code>→<code>CurrentUserAttributeText("a")</code>, <code>ISUSERNAME('u')</code>→<code>CurrentUserEmail() = "u"</code>). Calcs that test the viewer's identity (the classic Tableau RLS / data-source-filter pattern) are <b>detected and reported, not injected</b>: the converter emits a 🔐 conversion note (and an RLS-rules badge) carrying the translated boolean formula plus the user attributes/teams to provision — it does NOT add the calc column to the spec, because a converter can't provision Sigma user attributes/teams and an injected filter would fail-closed to 0 rows for everyone. After saving, provision the listed attribute(s)/team(s), then apply the boolean calc column + an element filter keeping only <code>True</code> rows.</li>
     <li><b>Parameters</b> → Sigma controls (list, date-range, number-range, text)</li>
     <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves.</li>
-    <li><b>Window / table calculations</b> (<code>RUNNING_SUM</code>, <code>RUNNING_AVG</code>, <code>RUNNING_MIN</code>, <code>RUNNING_MAX</code>, <code>WINDOW_SUM</code>, <code>WINDOW_AVG</code>, <code>WINDOW_MIN</code>, <code>WINDOW_MAX</code>, <code>WINDOW_COUNT</code>, <code>LOOKUP</code>, <code>PREVIOUS_VALUE</code>, <code>RANK</code>, <code>RANK_DENSE</code>, <code>RANK_UNIQUE</code>, <code>INDEX</code>, <code>FIRST</code>, <code>LAST</code>) → A <code>kind:sql</code> helper element with explicit Snowflake <code>OVER()</code> clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys are derived from worksheet <code>rows</code> shelves, order keys from time-truncated <code>cols</code> shelves. The DATE_TRUNC grain is derived from the cols-shelf prefix (<code>yr:</code>→year, <code>qr:</code>→quarter, <code>mn:</code>→month, <code>wk:</code>→week, <code>dy:</code>/<code>md:</code>→day; no prefix → no DATE_TRUNC wrapper). Explicit "Compute Using" addressing (<code>&lt;table-calculation&gt;</code> with <code>&lt;address&gt;</code> children, plus Table Across/Down direction) overrides the rows/cols heuristic. Multiple window calcs sharing the same partition+order signature are emitted as separate aliases on a single helper element.</li>
+    <li><b>Window / table calculations</b> (<code>RUNNING_SUM</code>, <code>RUNNING_AVG</code>, <code>RUNNING_MIN</code>, <code>RUNNING_MAX</code>, <code>WINDOW_SUM</code>, <code>WINDOW_AVG</code>, <code>WINDOW_MIN</code>, <code>WINDOW_MAX</code>, <code>WINDOW_COUNT</code>, <code>LOOKUP</code>, <code>RANK</code>, <code>RANK_DENSE</code>, <code>RANK_UNIQUE</code>, <code>INDEX</code>, <code>FIRST</code>, <code>LAST</code>) → A <code>kind:sql</code> helper element with explicit Snowflake <code>OVER()</code> clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys are derived from worksheet <code>rows</code> shelves, order keys from time-truncated <code>cols</code> shelves. The DATE_TRUNC grain is derived from the cols-shelf prefix (<code>yr:</code>→year, <code>qr:</code>→quarter, <code>mn:</code>→month, <code>wk:</code>→week, <code>dy:</code>/<code>md:</code>→day; no prefix → no DATE_TRUNC wrapper). Explicit "Compute Using" addressing (<code>&lt;table-calculation&gt;</code> with <code>&lt;address&gt;</code> children, plus Table Across/Down direction) overrides the rows/cols heuristic. Multiple window calcs sharing the same partition+order signature are emitted as separate aliases on a single helper element.</li>
+    <li><b>Table calcs the SQL lowering can't express → 🧩 workbook patterns</b> (reported with ready-to-place formulas, never injected as DM columns — Sigma window functions silently error in data-model calc columns and metrics). Validated mappings: <code>RUNNING_*(agg)</code>→<code>Cumulative*(agg)</code>; <code>WINDOW_AVG/SUM/MAX/MIN(agg, -n, 0)</code>→<code>Moving*(agg, n)</code> (and <code>(-n, m)</code>→<code>(agg, n, m)</code>); <code>WINDOW_STDEV</code>→<code>MovingStdDev</code>; <code>agg/WINDOW_SUM(agg)</code>→<code>PercentOfTotal(agg, "grand_total")</code>; <code>RUNNING_SUM(agg)/TOTAL(agg)</code>→<code>CumulativeSum(PercentOfTotal(…))</code>; <code>RANK/RANK_DENSE/RANK_PERCENTILE</code>→<code>Rank/RankDense/RankPercentile(agg, "desc")</code>; <code>INDEX()</code>→<code>RowNumber()</code>; <code>LOOKUP(agg, ±n)</code>→<code>Lag/Lead(agg, n)</code>. Place each formula in a GROUPED workbook element (group by the chart's dimensions). The converter never emits <code>*Over</code> functions (SumOver/CountOver resolve as 'Unknown function' in spec contexts).</li>
     <li><b>Sets</b> → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → <code>In([Field], ...)</code> column. Add a filter control on these columns in your Sigma workbook to replicate set-based filtering. If a set's formula references a related-element column (e.g. <code>In([Customer Segment], ...)</code> on a fact element where Customer Segment lives on a dim), the set column is automatically moved to the derived element and scrubbed from the source element's "Sets" folder so the model saves cleanly.</li>
     <li><b>Top N / Bottom N sets</b> (global, parameterized, partitioned) → A <code>kind:sql</code> RANK helper element + relationship from the base on the dim key (and partition cols, if any). The helper exposes <code>IS_TOP_N</code> as a boolean. For literal-N sets the boolean is computed in SQL (<code>(rnk &lt;= N) AS IS_TOP_N</code>); for parameter-driven N a Sigma calc col references both the local Rank column and a number control derived from the Tableau parameter. Bottom-N is the same with <code>ASC</code> ordering. Partitioned sets emit <code>PARTITION BY</code> in the OVER clause.</li>
     <li><b>Derived element</b> → For fact tables with relationships, a derived element is created that surfaces all own columns plus related dimension columns via <code>[FACT_TABLE/RELATIONSHIP_NAME/Col]</code> cross-element formulas — no manual wiring required</li>
@@ -32714,6 +32935,7 @@ models:
 <ul>
     <li><b>LOD INCLUDE/EXCLUDE without worksheet context</b> — When a calc field is not placed on any worksheet's rows/cols shelf, the converter cannot derive the view dimensions and the LOD is skipped with a warning. Place the calc on at least one worksheet so the converter can determine the effective grouping.</li>
     <li><b>Window calc Compute Using — Pane / Cell</b> — "Specific Dimensions" addressing and Table (Across/Down) direction are parsed from <code>&lt;table-calculation&gt;</code> in the TWB. Pane and Cell scopes (which require pane-bounds awareness) are not yet supported; the converter falls back to the rows/cols heuristic and emits a warning. Edit the helper SQL post-import if needed.</li>
+    <li><b>Untranslatable table calcs</b> — <code>WINDOW_MEDIAN</code>, <code>WINDOW_PERCENTILE</code>, <code>WINDOW_CORR</code>, <code>WINDOW_COVAR</code>, <code>PREVIOUS_VALUE</code> (self-referential — a LAG over the inner aggregate is NOT equivalent), and <code>SIZE()</code> have no Sigma equivalent. Each is flagged loudly with the untranslated fragment named in the conversion notes (and a 🧩 unsupported workbook-pattern entry) — never silently dropped, never faked. Table calcs embedded inside larger expressions are likewise flagged rather than emitted broken.</li>
     <li><b>Post-create validation</b> — After saving, call <code>GET /v2/dataModels/&#123;id&#125;/columns</code> and inspect for <code>type.type === "error"</code> entries. Both LOD and window helpers post as success even if a referenced column is missing; only this endpoint surfaces the column-level error.</li>
     <li><b>Cross-element calculated columns</b> — Tableau calculated fields that reference columns from related tables are automatically moved to the derived child element (Sigma calculated columns can only reference columns local to their element). Related dimension columns are accessible via the derived element using <code>[FACT/RELATIONSHIP/Col]</code> formulas.</li>
     <li><b>Role-playing dimensions</b> — Multiple relationships from a fact table to the same dimension are now supported. Each relationship gets a unique name including the join key (e.g. "DATE_DIM via Order Date Key"). Review the generated names for clarity.</li>
