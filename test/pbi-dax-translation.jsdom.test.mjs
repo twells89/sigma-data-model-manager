@@ -80,7 +80,7 @@ const RAW_DAX_BANNED =
   assert.equal(metrics['Selected Dept Label'],
     'If(CountDistinct([Department]) = 1, Min([Department]), "All Departments")',
     '9l2: IF(HASONEVALUE,SELECTEDVALUE,def) -> single-value If');
-  assert.equal(calcCols['Dept-Role Key'], '[Department] & " | " & [Role]', '9l2: COMBINEVALUES -> & concat');
+  assert.equal(calcCols['Dept-Role Key'], 'Text([Department]) & " | " & Text([Role])', '9l2: COMBINEVALUES -> & concat');
 
   // 9l2: wrong names must NOT appear
   for (const f of Object.values(metrics)) {

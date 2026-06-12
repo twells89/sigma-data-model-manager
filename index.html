@@ -30951,6 +30951,11 @@ ${cleanedSql}`;
             f = f.replace(/'[^']+'\[([^\]]+)\]/g, '[$1]');
             // Also handle unquoted: Table[Column] → [Column]
             f = f.replace(/\b[A-Za-z_]\w*\[([^\]]+)\]/g, '[$1]');
+            // DAX `&` auto-coerces operands to text; Sigma's `&` does NOT (errors at
+            // QUERY time on a numeric operand). Wrap bare column-ref operands in
+            // Text(): identity for text columns, the missing cast for numeric ones.
+            f = f.replace(/(\[[^\]]+\])(\s*&)/g, 'Text($1)$2');
+            f = f.replace(/(&\s*)(\[[^\]]+\])/g, '$1Text($2)');
             // Double-quote strings are fine in Sigma
             return f.trim();
         }
