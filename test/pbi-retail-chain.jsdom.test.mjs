@@ -93,3 +93,11 @@ test('relationship key coercion: ReportingPeriodID calc key is Number()-wrapped 
   assert.ok(rp, 'ReportingPeriodID calc column emitted');
   assert.match(String(rp.formula), /^Number\(/, `expected Number() wrap, got: ${rp.formula}`);
 });
+
+test('derived view: calc columns pass through (Store Type on SALES View, mcp #56)', async () => {
+  const { dm } = await convert();
+  const sv = dm.pages[0].elements.find(e => e.name === 'SALES View');
+  assert.ok(sv, 'SALES View exists');
+  const refs = (sv.columns || []).map(c => String(c.formula));
+  assert.ok(refs.some(f => f.includes('/Store Type')), `Store Type missing from SALES View refs: ${refs.join(', ')}`);
+});

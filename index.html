@@ -10478,8 +10478,12 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 (srcEl.columns || []).forEach(function(col) {
                     if (!col.formula || col.formula.startsWith('/*')) return;
                     var fm = col.formula.match(/^\[([^\]\/]+)\/([^\]]+)\]$/);
-                    if (!fm) return; // skip calc cols
-                    var dispName = fm[2];
+                    // CALC columns carry an explicit name — first-class columns of the
+                    // base element; pass through by name (mcp #56).
+                    var dispName;
+                    if (fm) dispName = fm[2];
+                    else if (col.name) dispName = String(col.name);
+                    else return;
                     // A "/" in the display name breaks Sigma's slash-delimited bracket ref — skip.
                     if (dispName.indexOf('/') !== -1) return;
                     var cId = sigmaShortId();
