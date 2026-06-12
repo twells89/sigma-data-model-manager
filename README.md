@@ -91,19 +91,25 @@ Converts Power BI models (`.pbit`, `.bim`, or `.json`) to Sigma data model JSON.
 - Calculated columns → Sigma calculated columns
 - Display folders → Sigma folders
 - Measures-only tables → Measures moved to the fact element
-- `CALCULATE` (simple) → `SumIf` / `CountIf` with correct argument order
+- `CALCULATE` conditional aggregates → `SumIf` / `AvgIf` / `MinIf` / `MaxIf` / `CountIf` / `CountDistinctIf`, including complex boolean predicates (`&&` / `||` / `NOT()` / `<>` / `ISBLANK`), multiple filter args (AND-combined), `KEEPFILTERS` unwrap, and `FILTER(Table, pred)` wrappers — rewritten in place so `DIVIDE`/`COALESCE` wrappers keep working
+- `IN {…}` lists → or-chains of equality (`NOT … IN {…}` → and-chain of `!=`) — Sigma has no `IsIn`
+- `FILTER(ALL(Table), pred)` → `GrandTotal(AggIf(…))`; whole-table `ALL`/`REMOVEFILTERS` → `GrandTotal(agg)`; single-column `ALL(T[col])` → `GrandTotal(…)` with a loud caveat (exact only when that column is the visual's sole grouping)
+- `USERELATIONSHIP` over an inactive relationship → activated as a distinctly-named alternate join path (`TOTABLE_VIA_FROMCOLUMN`); the derived view surfaces the alternate-keyed columns; inactive relationships no measure activates are skipped; metrics combining measures on different join paths are refused with a rebuild recipe
+- `EARLIER` window idioms in calc columns → SQL window helper elements: rank (`COUNTROWS(FILTER(…EARLIER…)) + 1` → `DENSE_RANK() OVER`), running totals (`<=/>= EARLIER` → `agg(col) OVER (… ORDER BY …)`), group share/total (`= EARLIER` → `agg(col) OVER (PARTITION BY …)`), peer counts (`COUNT(*) OVER`)
 - `DIVIDE` → Null-safe division with `If(den = 0, alt, num / den)`
 - Math functions → `LN`→`Ln`; `LOG10` and `LOG(x, [base])`→Sigma `Log(value, [base])` (base-10 default matches DAX); `CEILING/FLOOR(n, significance)`→`Ceiling(n / s) * s` / `Floor(n / s) * s` (Sigma's Ceiling/Floor have no significance argument)
 
 **DAX patterns that generate warnings:**
-- `CALCULATE` + `ALL` / `ALLEXCEPT` → Use groupings for different aggregation contexts
-- Iterators (`SUMX`, `AVERAGEX`) → Use groupings or calculated columns
+- `ALLEXCEPT` / `ALLSELECTED` / multi-column `ALL` → subtotal re-scopes with no faithful scalar metric; flagged with the original DAX preserved (recreate as a grouped workbook element)
+- Unrecognized `EARLIER` patterns → flagged with the original DAX preserved (recognized idioms: rank, running total, group share/total, peer count)
+- `CALCULATE` predicates comparing to a measure/aggregate → need a windowed comparison; flagged
+- Iterators with nested aggregates (`SUMX` over derived tables, `COUNTAX`, `CONCATENATEX`) → Use groupings or calculated columns
 - Time intelligence (`TOTALYTD`, `SAMEPERIODLASTYEAR`) → Use Period over Period feature
-- `VAR` / `RETURN` blocks → Break into multiple calculated columns
+- `VAR` / `RETURN` blocks that can't be inlined → Break into multiple calculated columns
 
 **Known limitations:**
 - M expression parsing — Works for common data sources (Snowflake, SQL Server, BigQuery, Databricks); complex Power Query with parameters or custom functions may not extract paths correctly
-- Complex DAX — `CALCULATE` with `ALL` / `ALLEXCEPT`, iterators, time intelligence, and `VAR` / `RETURN` generate warnings but are not auto-converted
+- Complex DAX — `CALCULATE` conditional aggregates, simple `VAR` / `RETURN` blocks, simple iterators, `USERELATIONSHIP` measures, and common `EARLIER` window idioms now auto-convert; `ALLEXCEPT`/`ALLSELECTED` subtotal re-scopes, iterators with nested aggregates, time intelligence, measure-compare predicates, and unrecognized `EARLIER` patterns still warn (preserving the original DAX)
 - Composite models — DirectQuery vs Import mode distinction not preserved
 - Calculation groups — Not converted
 - Row-level security — Simple equality filters (e.g. `[Region] = "East"`) converted to Sigma RLS using `CurrentUserAttributeText()`; complex DAX filter expressions generate a warning
@@ -324,17 +330,18 @@ Converts ThoughtSpot Modeling Language (TML) files — worksheets and models exp
 **What gets converted:**
 - `tables[]` → One Sigma warehouse-table element per table, with database/schema from TML or overrides
 - `worksheet_columns` / `columns` → Sigma columns (ATTRIBUTE/DATE types) and metrics (MEASURE type with aggregation)
-- `formulas[]` → Sigma calculated columns; `if/then/else`, `sum()`, `count_distinct()`, `safe_divide()`, `isnull()`, `date_diff()`, and `in {}` converted to Sigma syntax
+- `formulas[]` → Sigma calculated columns; `if/then/else`, `sum()`, `count_distinct()`, `unique count()`, `median()`, `safe_divide()`, `isnull()`, `date_diff()`, and `in {}` converted to Sigma syntax (single-quoted TML string literals become double-quoted)
+- Window functions (`cumulative_sum`/`running_total`, `moving_average`, `rank`/`rank_desc`, `lag`/`lead`, `first`/`last`, …) → an auto-built grouped child element carrying the Sigma window calc (`CumulativeSum`, `MovingAvg`, `Rank`, `Lag`, …) plus a flagged Null placeholder column on the host element — Sigma window functions silently error in data-model calc columns, so they only ever land in grouped elements; cross-element dims group on the host's derived join view
 - Date functions (`start_of_week/month/quarter/year`→`DateTrunc`, `month_number`/`quarter_number`/`day_of_week`→`Month`/`Quarter`/`Weekday`), math/string (`pow/sqrt/round/concat/substr/strlen/upper/lower/…`), and `ifnull`/`coalesce`→`Coalesce`
 - Conditional aggregates → `sum_if(cond, measure)`→`SumIf(measure, cond)` (condition moves to the 2nd arg; same for `avg_if`/`max_if`/`min_if`/`unique_count_if`), `count_if(cond)`→`CountIf(cond)`
 - `joins[]` → Sigma `N:1` relationships; join key columns matched by physical name
 - `table_paths[]` → Resolves `ALIAS::Column` column_ids to actual table names
-- Aggregations: SUM → Sum, COUNT → Count, COUNT_DISTINCT → CountDistinct, AVERAGE → Avg, MAX → Max, MIN → Min, STD_DEVIATION → StdDev, VARIANCE → Variance
+- Aggregations: SUM → Sum, COUNT → Count, COUNT_DISTINCT / `unique count` → CountDistinct, AVERAGE → Avg, MAX → Max, MIN → Min, MEDIAN → Median, STD_DEVIATION → StdDev, VARIANCE → Variance
 
 **Known limitations:**
 - Complex nested join paths resolved to leaf table only — intermediate logic not preserved
 - Row-level security rules and access control expressions are not converted
-- `cumulative_sum` / running window functions map to `CumulativeSum` but may need partition/order adjustments
+- Window functions embedded in a larger expression (e.g. `cumulative_sum(x, d) / 100`) can't be decomposed into one grouped element — they degrade to a flagged Null column with the original expression in its description for manual re-authoring
 - Formula columns with no resolvable `formula_id` or `column_id` are skipped with a warning
 
 **Expression conversion:**
@@ -343,7 +350,13 @@ Converts ThoughtSpot Modeling Language (TML) files — worksheets and models exp
 |---|---|
 | `if (cond) then X else Y` | `If(cond, X, Y)` |
 | `sum(Revenue)` | `Sum([Revenue])` |
-| `count_distinct(CustomerID)` | `CountDistinct([CustomerID])` |
+| `count_distinct(CustomerID)` / `unique count (CustomerID)` | `CountDistinct([CustomerID])` |
+| `median(Revenue)` | `Median([Revenue])` |
+| `'literal'` | `"literal"` |
+| `cumulative_sum(m, dim)` | grouped element with `CumulativeSum([m])` + Null placeholder on host |
+| `moving_average(m, 2, 1, dim)` | grouped element with `MovingAvg([m], 2, 1)` |
+| `rank_desc(sum(m), dim)` | grouped element with `Rank([base], "desc")` |
+| `lag(m, dim, 1)` | grouped element with `Lag([m], 1)` |
 | `safe_divide(a, b)` | `If(IsNull(b) or b = 0, null, a / b)` |
 | `col in {A, B, C}` | `In([col], List(A, B, C))` |
 | `isnull(x)` | `IsNull(x)` |
@@ -411,6 +424,8 @@ Converts Qlik Sense data model metadata (from the REST API or Engine API) to Sig
 - Master Measures → Sigma metrics with formula conversion (bare/unbracketed field refs are bracketed and mapped to display names)
 - Master Dimensions (calculated) → Sigma calculated columns
 - Range / binning functions → `RangeSum`→`Coalesce(a,0)+…`, `RangeAvg`→fixed-denominator mean, `RangeMin/Max`→`Least/Greatest`, `Class(field, n[, label, start])`→`Floor((field - start) / n) * n + start` (numeric lower bound of each bin)
+- Inter-record / window functions (`Rank`, `Above`, `Below`, `Previous`, `Peek('F', -n)`, rolling `RangeSum(Above(expr, 0, n))`) → reported as 🧩 **workbook patterns** with ready Sigma `Rank`/`Lag`/`Lead` formulas to place in a GROUPED workbook element (window functions silently error as DM metrics/columns, so they are never injected into the spec); `HRank`/`VRank`/`Before`/`After`/`Top`/`Bottom` (pivot column-axis) and script-time `Peek` forms are flagged, not dropped
+- `FirstSortedValue(value, -weight[, n])` → Custom-SQL `QUALIFY ROW_NUMBER()` helper element + `Min([Fsv Value])` metric (single-table form), else the `If(Rank(weight, "desc") = n, value, Null)` workbook pattern (verify-me)
 - System tables and fields ($ prefix, %synthetic keys) → Skipped automatically
 
 **How to get the metadata:**
@@ -440,13 +455,14 @@ To include master measures and master dimensions, use the extended format:
 }
 ```
 
-**Expression conversion:** Most Qlik functions share Sigma's syntax directly. Notable mappings: `Only([Field])` → `[Field]`, `Text([Field])` → `ToString([Field])`, `IsNum([Field])` → `IsNumber([Field])`, `Log([x])` → `Ln([x])`, `Fmod(a, b)` → `Mod(a, b)`. Set Analysis expressions generate a warning — use `SumIf` / `CountIf` in Sigma instead.
+**Expression conversion:** Most Qlik functions share Sigma's syntax directly. Notable mappings: `Only([Field])` → `[Field]`, `Text([Field])` → `ToString([Field])`, `IsNum([Field])` → `IsNumber([Field])`, `Log([x])` → `Ln([x])`, `Fmod(a, b)` → `Mod(a, b)`. Multi-clause Set Analysis translates to conditional aggregation (`Sum({<Year={2024}>} Sales)` → `Sum(If([Year]=2024, [Sales], 0))`); exotic forms (wildcards, alternate states, `$()` macros in the set) are dropped with a specific warning.
 
 **Known limitations:**
 - Source paths — REST API metadata does not include database or schema; use the Database / Schema override fields
 - Synthetic keys — `%SyntheticKey%` bridge tables are filtered out; review relationships manually for complex many-to-many joins
 - Master items — Not returned by `/data/metadata`; use the extended JSON format above
-- Set Analysis — Skipped with a warning; no direct Sigma equivalent
+- Set Analysis (exotic forms) — wildcard searches, alternate states, and `$()` macros in the set are skipped with a warning; the common multi-clause forms translate
+- Inter-record / window calcs — never emitted into the data model (they silently error there); delivered as workbook patterns to rebuild in a GROUPED workbook element, so they need a manual placement + verification step
 
 **Useful resources:** [Qlik Cloud REST API](https://qlik.dev/apis/rest/apps/) · [Qlik Engine API](https://qlik.dev/apis/engine/)
 
