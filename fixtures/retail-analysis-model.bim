@@ -1,0 +1,1486 @@
+{
+ "compatibilityLevel": 1400,
+ "model": {
+  "annotations": [
+   {
+    "name": "__PBI_TimeIntelligenceEnabled",
+    "value": "1"
+   }
+  ],
+  "culture": "en-US",
+  "relationships": [
+   {
+    "name": "3eef198b-ca6c-4ee3-a0bd-9e35b5c725b8",
+    "fromColumn": "DistrictID",
+    "fromTable": "Store",
+    "toColumn": "DistrictID",
+    "toTable": "District"
+   },
+   {
+    "name": "4e8a6ba0-ddf4-46af-996a-c4b2b4dbe2bf",
+    "fromColumn": "LocationID",
+    "fromTable": "Sales",
+    "toColumn": "LocationID",
+    "toTable": "Store"
+   },
+   {
+    "name": "e16ca2b4-d139-4ef8-9a00-5b7616ecc5ac",
+    "fromColumn": "ItemID",
+    "fromTable": "Sales",
+    "toColumn": "ItemID",
+    "toTable": "Item"
+   },
+   {
+    "name": "d3e1e755-e88f-4569-bd13-f1041030ae98",
+    "fromColumn": "ReportingPeriodID",
+    "fromTable": "Sales",
+    "toColumn": "ReportingPeriodID",
+    "toTable": "Time"
+   }
+  ],
+  "tables": [
+   {
+    "name": "Store",
+    "annotations": [
+     {
+      "name": "PBI_Id",
+      "value": "c86d858d-0145-488e-bad2-f66f0e723f44"
+     },
+     {
+      "name": "LinkedQueryName",
+      "value": "Store"
+     }
+    ],
+    "columns": [
+     {
+      "name": "LocationID",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "isHidden": true,
+      "isKey": true,
+      "sourceColumn": "LocationID",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "City Name",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataCategory": "City",
+      "dataType": "string",
+      "isHidden": true,
+      "sourceColumn": "City Name",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "Territory",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataCategory": "StateOrProvince",
+      "dataType": "string",
+      "sourceColumn": "Territory",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "PostalCode",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataCategory": "PostalCode",
+      "dataType": "string",
+      "sourceColumn": "PostalCode",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "OpenDate",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"DateTimeGeneralPattern\"><DateTimes><DateTime LCID=\"1033\" Group=\"GeneralDateTimeLong\" FormatString=\"G\" /></DateTimes></Format>"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "DateTime#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "dateTime",
+      "formatString": "General Date",
+      "sourceColumn": "OpenDate",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "SellingAreaSize",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "sourceColumn": "SellingAreaSize",
+      "summarizeBy": "sum"
+     },
+     {
+      "name": "DistrictName",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "isHidden": true,
+      "sourceColumn": "DistrictName",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "Name",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "sourceColumn": "Name",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "StoreNumberName",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "isDefaultLabel": true,
+      "sourceColumn": "StoreNumberName",
+      "summarizeBy": "none",
+      "tableDetailPosition": 0
+     },
+     {
+      "name": "StoreNumber",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "sourceColumn": "StoreNumber",
+      "summarizeBy": "sum"
+     },
+     {
+      "name": "City",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataCategory": "City",
+      "dataType": "string",
+      "isDataTypeInferred": true,
+      "summarizeBy": "none",
+      "sourceColumn": "City"
+     },
+     {
+      "name": "Chain",
+      "annotations": [
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "sourceColumn": "Chain",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "DM",
+      "annotations": [
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "sourceColumn": "DM",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "DM_Pic",
+      "annotations": [
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataCategory": "ImageUrl",
+      "dataType": "string",
+      "sourceColumn": "DM_Pic",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "DistrictID",
+      "annotations": [
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       }
+      ],
+      "dataType": "int64",
+      "sourceColumn": "DistrictID",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "Open Year",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "isDataTypeInferred": true,
+      "summarizeBy": "sum",
+      "sourceColumn": "Open Year"
+     },
+     {
+      "name": "Store Type",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "isDataTypeInferred": true,
+      "summarizeBy": "none",
+      "sourceColumn": "Store Type"
+     },
+     {
+      "name": "Open Month No",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "isDataTypeInferred": true,
+      "summarizeBy": "sum",
+      "sourceColumn": "Open Month No"
+     },
+     {
+      "name": "Open Month",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "isDataTypeInferred": true,
+      "sortByColumn": "Open Month No",
+      "summarizeBy": "none",
+      "sourceColumn": "Open Month"
+     }
+    ],
+    "measures": [
+     {
+      "name": "Average Selling Area Size",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"NumberWhole\" ThousandSeparator=\"True\" />"
+       }
+      ],
+      "expression": "AVERAGE([SellingAreaSize])",
+      "formatString": "#,0"
+     },
+     {
+      "name": "New Stores",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       }
+      ],
+      "expression": "CALCULATE(COUNTA([Store Type]), FILTER(ALL(Store), [Store Type]=\"New Store\"))"
+     },
+     {
+      "name": "New Stores Target",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       }
+      ],
+      "expression": "14"
+     },
+     {
+      "name": "Total Stores",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"NumberWhole\" />"
+       }
+      ],
+      "expression": "COUNTA([StoreNumberName])",
+      "formatString": "0"
+     },
+     {
+      "name": "Open Store Count",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"NumberWhole\" />"
+       }
+      ],
+      "expression": "COUNTA([OpenDate])",
+      "formatString": "0"
+     },
+     {
+      "name": "Count of OpenDate",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       }
+      ],
+      "expression": "COUNTA('Store'[OpenDate])"
+     }
+    ],
+    "partitions": [
+     {
+      "name": "Store",
+      "source": {
+       "dataSource": "aaa2c60d-7d24-4396-96cb-1db7eefba0ba",
+       "query": "SELECT [Store].* FROM [Store]",
+       "type": "query"
+      }
+     }
+    ]
+   },
+   {
+    "name": "Sales",
+    "annotations": [
+     {
+      "name": "PBI_Id",
+      "value": "fedada05-2adf-4199-82ad-2a12f15adb42"
+     },
+     {
+      "name": "LinkedQueryName",
+      "value": "Sales"
+     }
+    ],
+    "columns": [
+     {
+      "name": "MonthID",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "isHidden": true,
+      "sourceColumn": "MonthID",
+      "summarizeBy": "count"
+     },
+     {
+      "name": "ItemID",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "isHidden": true,
+      "sourceColumn": "ItemID",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "LocationID",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "isHidden": true,
+      "sourceColumn": "LocationID",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "Sum_GrossMarginAmount",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Double#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "double",
+      "isHidden": true,
+      "sourceColumn": "Sum_GrossMarginAmount",
+      "summarizeBy": "sum"
+     },
+     {
+      "name": "Sum_Regular_Sales_Dollars",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Double#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "double",
+      "isHidden": true,
+      "sourceColumn": "Sum_Regular_Sales_Dollars",
+      "summarizeBy": "sum"
+     },
+     {
+      "name": "Sum_Markdown_Sales_Dollars",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Double#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "double",
+      "isHidden": true,
+      "sourceColumn": "Sum_Markdown_Sales_Dollars",
+      "summarizeBy": "sum"
+     },
+     {
+      "name": "ScenarioID",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "isHidden": true,
+      "sourceColumn": "ScenarioID",
+      "summarizeBy": "count"
+     },
+     {
+      "name": "ReportingPeriodID",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "isDataTypeInferred": true,
+      "isHidden": true,
+      "summarizeBy": "none",
+      "sourceColumn": "ReportingPeriodID"
+     },
+     {
+      "name": "Sum_Regular_Sales_Units",
+      "annotations": [
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Double#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "double",
+      "isHidden": true,
+      "sourceColumn": "Sum_Regular_Sales_Units",
+      "summarizeBy": "sum"
+     },
+     {
+      "name": "Sum_Markdown_Sales_Units",
+      "annotations": [
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Double#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "double",
+      "isHidden": true,
+      "sourceColumn": "Sum_Markdown_Sales_Units",
+      "summarizeBy": "sum"
+     }
+    ],
+    "isHidden": true,
+    "measures": [
+     {
+      "name": "Regular_Sales_Dollars",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       }
+      ],
+      "expression": "SUM([Sum_Regular_Sales_Dollars])"
+     },
+     {
+      "name": "Markdown_Sales_Dollars",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       }
+      ],
+      "expression": "SUM([Sum_Markdown_Sales_Dollars])"
+     },
+     {
+      "name": "TotalSales",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       }
+      ],
+      "expression": "[Regular_Sales_Dollars]+[Markdown_Sales_Dollars]"
+     },
+     {
+      "name": "TotalSalesLY",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\"><Currency LCID=\"1033\" DisplayName=\"$ English (United States)\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "CALCULATE([TotalSales], Sales[ScenarioID]=2)",
+      "formatString": "\\$#,0;(\\$#,0);\\$#,0"
+     },
+     {
+      "name": "Gross Margin This Year",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\"><Currency LCID=\"1033\" DisplayName=\"$ English (United States)\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "CALCULATE(SUM([Sum_GrossMarginAmount]), Sales[ScenarioID]=1)",
+      "formatString": "\\$#,0;(\\$#,0);\\$#,0"
+     },
+     {
+      "name": "Gross Margin This Year %",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Percentage\" Accuracy=\"2\" />"
+       }
+      ],
+      "expression": "[Gross Margin This Year]/[TotalSalesTY]",
+      "formatString": "0.00 %;-0.00 %;0.00 %"
+     },
+     {
+      "name": "Gross Margin Last Year",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\"><Currency LCID=\"1033\" DisplayName=\"$ English (United States)\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "CALCULATE(SUM([Sum_GrossMarginAmount]), Sales[ScenarioID]=2)",
+      "formatString": "\\$#,0;(\\$#,0);\\$#,0"
+     },
+     {
+      "name": "Gross Margin Last Year %",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Percentage\" Accuracy=\"2\" />"
+       }
+      ],
+      "expression": "[Gross Margin Last Year]/[TotalSalesLY]",
+      "formatString": "0.00 %;-0.00 %;0.00 %"
+     },
+     {
+      "name": "Regular_Sales_Units",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       }
+      ],
+      "expression": "SUM([Sum_Regular_Sales_Units])"
+     },
+     {
+      "name": "Markdown_Sales_Units",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       }
+      ],
+      "expression": "SUM([Sum_Markdown_Sales_Units])"
+     },
+     {
+      "name": "TotalUnits",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       }
+      ],
+      "expression": "[Regular_Sales_Units]+[Markdown_Sales_Units]"
+     },
+     {
+      "name": "Total Units Last Year",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\"><Currency LCID=\"1033\" DisplayName=\"$ English (United States)\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "CALCULATE([TotalUnits], Sales[ScenarioID]=2)",
+      "formatString": "\\$#,0;(\\$#,0);\\$#,0"
+     },
+     {
+      "name": "Total Units This Year",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\"><Currency LCID=\"1033\" DisplayName=\"$ English (United States)\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "CALCULATE([TotalUnits], Sales[ScenarioID]=1)",
+      "formatString": "\\$#,0;(\\$#,0);\\$#,0"
+     },
+     {
+      "name": "Avg $/Unit TY",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\" Accuracy=\"2\"><Currency LCID=\"1033\" DisplayName=\"$ English (United States)\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "IF([Total Units This Year]<>0, [TotalSalesTY]/[Total Units This Year], BLANK())",
+      "formatString": "\\$#,0.00;(\\$#,0.00);\\$#,0.00"
+     },
+     {
+      "name": "Avg $/Unit LY",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\" Accuracy=\"2\"><Currency LCID=\"1033\" DisplayName=\"$ English (United States)\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "IF([Total Units Last Year]<>0, [TotalSalesLY]/[Total Units Last Year], BLANK())",
+      "formatString": "\\$#,0.00;(\\$#,0.00);\\$#,0.00"
+     },
+     {
+      "name": "Total Sales Var",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\"><Currency LCID=\"1033\" DisplayName=\"$ English (United States)\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "[TotalSalesTY]-[TotalSalesLY]",
+      "formatString": "\\$#,0;(\\$#,0);\\$#,0"
+     },
+     {
+      "name": "Total Sales Var %",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Percentage\" Accuracy=\"2\" />"
+       }
+      ],
+      "expression": "IF([TotalSalesLY]<>0, [Total Sales Var]/[TotalSalesLY], BLANK())",
+      "formatString": "0.00 %;-0.00 %;0.00 %"
+     },
+     {
+      "name": "Sales Per Sq Ft",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\" Accuracy=\"2\" ThousandSeparator=\"True\"><Currency LCID=\"1033\" DisplayName=\"$\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "([TotalSalesTY]/(DISTINCTCOUNT([MonthID])*SUM(Store[SellingAreaSize])))*12",
+      "formatString": "\\$#,0.00;(\\$#,0.00);\\$#,0.00"
+     },
+     {
+      "name": "Last Year Sales",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\" ThousandSeparator=\"True\"><Currency LCID=\"1033\" DisplayName=\"$\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "[TotalSalesLY]",
+      "formatString": "\\$#,0;(\\$#,0);\\$#,0"
+     },
+     {
+      "name": "Total Sales Variance",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\" ThousandSeparator=\"True\"><Currency LCID=\"1033\" DisplayName=\"$\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "[Total Sales Var]",
+      "formatString": "\\$#,0;(\\$#,0);\\$#,0"
+     },
+     {
+      "name": "Total Sales Variance %",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Percentage\" Accuracy=\"2\" />"
+       }
+      ],
+      "expression": "[Total Sales Var %]",
+      "formatString": "0.00 %;-0.00 %;0.00 %"
+     },
+     {
+      "name": "Store Count",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"NumberWhole\" />"
+       }
+      ],
+      "expression": "DISTINCTCOUNT([LocationID])",
+      "formatString": "0"
+     },
+     {
+      "name": "Average Unit Price",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\" Accuracy=\"2\" ThousandSeparator=\"True\"><Currency LCID=\"1033\" DisplayName=\"$\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "[Avg $/Unit TY]",
+      "formatString": "\\$#,0.00;(\\$#,0.00);\\$#,0.00"
+     },
+     {
+      "name": "Average Unit Price Last Year",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\" Accuracy=\"2\"><Currency LCID=\"1033\" DisplayName=\"$ English (United States)\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "[Avg $/Unit LY]",
+      "formatString": "\\$#,0.00;(\\$#,0.00);\\$#,0.00"
+     },
+     {
+      "name": "TotalSalesTY",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\"><Currency LCID=\"1033\" DisplayName=\"$ English (United States)\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "CALCULATE([TotalSales], Sales[ScenarioID]=1)",
+      "formatString": "\\$#,0;(\\$#,0);\\$#,0",
+      "kpi": {
+       "annotations": [
+        {
+         "name": "GoalType",
+         "value": "Measure"
+        },
+        {
+         "name": "KpiStatusType",
+         "value": "Linear"
+        },
+        {
+         "name": "KpiThresholdType",
+         "value": "Percentage"
+        },
+        {
+         "name": "KpiThresholdOrdering",
+         "value": "Ascending"
+        },
+        {
+         "name": "KpiThresholdCount",
+         "value": "2"
+        },
+        {
+         "name": "KpiThreshold_0",
+         "value": "95"
+        },
+        {
+         "name": "KpiThreshold_1",
+         "value": "100"
+        }
+       ],
+       "statusExpression": [
+        "var x='Sales'[TotalSalesTY]/'Sales'[_TotalSalesTY Goal] return",
+        "if(ISBLANK(x),BLANK(),",
+        "        If(x<0.95,-1,",
+        "\t    If(x<1,0,1)",
+        "    )",
+        ")",
+        ""
+       ],
+       "statusGraphic": "Traffic Light - Single",
+       "targetExpression": "'Sales'[TotalSalesLY]",
+       "targetFormatString": "\\$#,0;(\\$#,0);\\$#,0"
+      }
+     },
+     {
+      "name": "This Year Sales",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"CurrencyCustom\" ThousandSeparator=\"True\"><Currency LCID=\"1033\" DisplayName=\"$\" Symbol=\"$\" PositivePattern=\"0\" NegativePattern=\"0\" /></Format>"
+       }
+      ],
+      "expression": "[TotalSalesTY]",
+      "formatString": "\\$#,0;(\\$#,0);\\$#,0",
+      "kpi": {
+       "annotations": [
+        {
+         "name": "GoalType",
+         "value": "Measure"
+        },
+        {
+         "name": "KpiStatusType",
+         "value": "Linear"
+        },
+        {
+         "name": "KpiThresholdType",
+         "value": "Percentage"
+        },
+        {
+         "name": "KpiThresholdOrdering",
+         "value": "Ascending"
+        },
+        {
+         "name": "KpiThresholdCount",
+         "value": "2"
+        },
+        {
+         "name": "KpiThreshold_0",
+         "value": "95"
+        },
+        {
+         "name": "KpiThreshold_1",
+         "value": "100"
+        }
+       ],
+       "statusExpression": [
+        "var x='Sales'[This Year Sales]/'Sales'[_This Year Sales Goal] return",
+        "if(ISBLANK(x),BLANK(),",
+        "        If(x<0.95,-1,",
+        "\t    If(x<1,0,1)",
+        "    )",
+        ")",
+        ""
+       ],
+       "statusGraphic": "Traffic Light - Single",
+       "targetExpression": "'Sales'[Last Year Sales]",
+       "targetFormatString": "\\$#,0;(\\$#,0);\\$#,0"
+      }
+     }
+    ],
+    "partitions": [
+     {
+      "name": "Sales",
+      "source": {
+       "dataSource": "6a9a5ce8-bf98-4dd3-b183-0554d3fa10d0",
+       "query": "SELECT [Sales].* FROM [Sales]",
+       "type": "query"
+      }
+     }
+    ]
+   },
+   {
+    "name": "Item",
+    "annotations": [
+     {
+      "name": "PBI_Id",
+      "value": "a8ae52ff-ef23-4a7d-aff2-df7ea73111b3"
+     },
+     {
+      "name": "LinkedQueryName",
+      "value": "Item"
+     }
+    ],
+    "columns": [
+     {
+      "name": "ItemID",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "isHidden": true,
+      "sourceColumn": "ItemID",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "Segment",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "sourceColumn": "Segment",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "Category",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "sourceColumn": "Category",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "Buyer",
+      "annotations": [
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "sourceColumn": "Buyer",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "FamilyNane",
+      "annotations": [
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "sourceColumn": "FamilyNane",
+      "summarizeBy": "none"
+     }
+    ],
+    "partitions": [
+     {
+      "name": "Item",
+      "source": {
+       "dataSource": "d248a912-c195-4306-a898-1e7a320e0d0a",
+       "query": "SELECT [Item].* FROM [Item]",
+       "type": "query"
+      }
+     }
+    ]
+   },
+   {
+    "name": "Time",
+    "annotations": [
+     {
+      "name": "PBI_Id",
+      "value": "1e29c47b-6cb2-4b5c-b145-998ec45acf29"
+     },
+     {
+      "name": "LinkedQueryName",
+      "value": "Time"
+     }
+    ],
+    "columns": [
+     {
+      "name": "ReportingPeriodID",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "isHidden": true,
+      "sourceColumn": "ReportingPeriodID",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "Period",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "sourceColumn": "Period",
+      "summarizeBy": "sum"
+     },
+     {
+      "name": "FiscalYear",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataCategory": "Year",
+      "dataType": "int64",
+      "sourceColumn": "FiscalYear",
+      "summarizeBy": "sum"
+     },
+     {
+      "name": "FiscalMonth",
+      "annotations": [
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataCategory": "Month",
+      "dataType": "string",
+      "sortByColumn": "Period",
+      "sourceColumn": "FiscalMonth",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "Month",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"DateTimeCustom\"><DateTimes><DateTime LCID=\"1033\" Group=\"ShortDate\" FormatString=\"M/d/yy\" /></DateTimes></Format>"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "DateTime#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "dateTime",
+      "formatString": "M/d/yy",
+      "isKey": true,
+      "sourceColumn": "Month",
+      "summarizeBy": "none"
+     }
+    ],
+    "dataCategory": "Time",
+    "partitions": [
+     {
+      "name": "Time",
+      "source": {
+       "dataSource": "11042aef-f468-4220-adc3-fdeba99bf6f2",
+       "query": "SELECT [Time].* FROM [Time]",
+       "type": "query"
+      }
+     }
+    ]
+   },
+   {
+    "name": "District",
+    "annotations": [
+     {
+      "name": "PBI_Id",
+      "value": "1c63b162-51d5-48f5-bcfe-6ed962b0d9c5"
+     },
+     {
+      "name": "LinkedQueryName",
+      "value": "District"
+     }
+    ],
+    "columns": [
+     {
+      "name": "DistrictID",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "sourceColumn": "DistrictID",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "District",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "sourceColumn": "District",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "DM",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "string",
+      "isDefaultLabel": true,
+      "isKey": true,
+      "keepUniqueRows": true,
+      "sourceColumn": "DM",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "DM_Pic",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"Text\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "String#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataCategory": "ImageUrl",
+      "dataType": "string",
+      "sourceColumn": "DM_Pic",
+      "summarizeBy": "none"
+     },
+     {
+      "name": "BusinessUnitID",
+      "annotations": [
+       {
+        "name": "Format",
+        "value": "<Format Format=\"General\" />"
+       },
+       {
+        "name": "DataTypeAtRefresh",
+        "value": "Int64#####not a type"
+       },
+       {
+        "name": "SummarizationSetBy",
+        "value": "Automatic"
+       }
+      ],
+      "dataType": "int64",
+      "sourceColumn": "BusinessUnitID",
+      "summarizeBy": "none"
+     }
+    ],
+    "partitions": [
+     {
+      "name": "District",
+      "source": {
+       "dataSource": "62f8ae38-1929-4e01-80e6-8eab92bcc3b5",
+       "query": "SELECT [District].* FROM [District]",
+       "type": "query"
+      }
+     }
+    ]
+   }
+  ]
+ }
+}
