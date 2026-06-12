@@ -177,12 +177,12 @@ grep -nE "relationships?\b|name:\s*['\"].* to " <changed-file>
 Inspect any `relationships[].name` assignment in the dbt converter (or any converter that builds dbt-style joins).
 
 **C. Custom SQL elements (`source.kind === 'sql'`)**
-- Element-level `name` field MUST be omitted entirely (not present, not `null`, not `undefined`). Sigma auto-titles SQL elements; an explicit `name` breaks them.
-- Column formulas must use the bare `[Display Name]` form for snake_case SQL identifiers (Sigma fuzzy-matches), NOT the qualified `[Custom SQL/Display Name]` form. The qualified form only works if the SQL emits double-quoted aliases that exactly match the display name — which our converters do not guarantee.
+- Default rule (most converters): element-level `name` omitted; column formulas use the bare `[Display Name]` form for snake_case SQL identifiers (Sigma fuzzy-matches).
+- **LookML exception (2026-06 layered mirror, matches MCP main, live-E2E verified):** the LookML converter names every element (label || sigmaDisplayName(viewName)) and uses the SOURCE-qualified `[Custom SQL/COL]` form — the SQL source is always named "Custom SQL" regardless of the element's display name, and a bare sibling ref to an unnamed passthrough on a NAMED sql element compiles to type "error". The lookml regression corpus (8 fixtures, live POST + error-column scan) gates this shape.
 ```
 grep -nE "kind:\s*['\"]sql['\"]|\[Custom SQL/" <changed-file>
 ```
-If a SQL-element branch sets `name:` on the element, or if column formulas embed `[Custom SQL/...]`, FAIL.
+If a NON-LookML SQL-element branch sets `name:` on the element or embeds `[Custom SQL/...]` without the live-E2E evidence above, FAIL. For the LookML view-build loop, verify `colRef()` is used consistently instead.
 
 **D. Cross-element column references — relationship-name form**
 References from one element to a column on a related element must use `[ELEMENT_NAME/REL_NAME/Field]`. The dash-link form `[ELEMENT_NAME/FK_COL - link/Field]` does NOT work via the API — it parses in the browser but POSTs are silently rejected or render as broken refs.
