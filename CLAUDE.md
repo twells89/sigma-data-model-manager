@@ -39,7 +39,7 @@ These bug classes have shipped to production and broken Sigma POSTs. `/review-co
 
 1. **`schemaVersion: 1` at the model root** — required for `/v2/dataModels/spec` to accept POSTs.
 2. **dbt-style relationship `name`** = uppercase target warehouse-table name (e.g., `CUSTOMER_DIM`), NOT a sigmaDisplayName phrase like `"Order Fact to Customer Dim"`. Relationship name is also the middle segment of cross-element formulas `[SRC/REL/Col]`.
-3. **Custom SQL elements** (`source.kind === 'sql'`): omit the element-level `name` field entirely, and use bare `[Display Name]` column formulas (NOT `[Custom SQL/Display]` unless the SQL emits matching double-quoted aliases).
+3. **Custom SQL elements** (`source.kind === 'sql'`): most converters omit the element-level `name` field and use bare `[Display Name]` column formulas. **LookML exception (2026-06, mirrors MCP live-E2E):** the LookML converter names every element (label || sigmaDisplayName(viewName)) and uses SOURCE-qualified `[Custom SQL/COL]` refs — the SQL source is always named "Custom SQL" regardless of the element name, and a bare sibling ref to an unnamed passthrough on a NAMED sql element compiles to type "error" (verified: `[IS_RETURNED] = 1` errored, `[Custom SQL/IS_RETURNED] = 1` resolved; full lookml regression corpus green with this shape).
 4. **Cross-element refs** use `[ELEMENT_NAME/REL_NAME/Field]`. The dash-link form `[ELEMENT/FK - link/Field]` does NOT work via the API.
 5. **Union elements** use `sources: [{ kind:'table', elementId }, ...]` + `matches: [{ outputColumnName, sourceColumns:['[Display]'] }, ...]` + column formulas `[Union of N Sources/Col]`. The older `inputs: [...]` shape silently fails.
 
@@ -54,10 +54,12 @@ These bug classes have shipped to production and broken Sigma POSTs. `/review-co
    raw column instead of a boolean expression; check `yesnoExprMap` coverage
 5. `is premium customer [IS PREMIUM CUSTOMER]` not found — means Pattern 1c failed
    for a bracket-form IN expression
-6. `[Custom SQL/COLUMN_NAME]` in LookML derived-table column formulas — means
-   `colRef()` helper isn't being used. Derived table (SQL element) columns must use
-   bare `[COL]` refs, not `[Custom SQL/COL]`. Check `colRef` is used everywhere in
-   the view-build loop for Custom SQL elements.
+6. Inconsistent custom-SQL column refs in the LookML view-build loop — means
+   `colRef()` helper isn't being used. Since the 2026-06 layered-LookML mirror,
+   LookML SQL elements are NAMED and `colRef` emits the SOURCE-qualified
+   `[Custom SQL/COL]` form for them (bare `[COL]` sibling refs error on named
+   sql elements — see spec rule 3). Check `colRef` is used everywhere in the
+   view-build loop for Custom SQL elements.
 7. `syntax error … unexpected 'WHERE'` from a derived table SQL element — likely an
    incremental PDT with a leading-comma CTE (`,cte_name AS (`), possibly preceded by `--`
    comment lines. Step 1b of the derived-table pre-processor auto-corrects this by
@@ -68,13 +70,17 @@ These bug classes have shipped to production and broken Sigma POSTs. `/review-co
    rewriting the `col` after the path colon (`:`) to a function call, producing invalid
    `f.value:TRY_TO_DATE(TO_VARCHAR(col))`. Fixed: added `:` to the step 2 negative lookbehind
    so path-accessed identifiers (`(?<!['"\\:])`) are not rewritten.
-8. `${view.SQL_TABLE_NAME}` where that view is itself a PDT — the converter now automatically
-   creates a separate Custom SQL element for the referenced PDT and replaces the reference
-   with `sigma_element('Name')`. PDT sub-elements are prepended to `allElements` so they
-   appear before the element that references them. The `lookConvertView` function takes an
-   optional `pdtElementsMap` parameter (Map of refViewName → result); the SQL_TABLE_NAME
-   resolution uses a two-pass approach (async loop to populate the map, then synchronous
-   `.replace()`) because `String.prototype.replace` callbacks cannot be async.
+8. `${view.SQL_TABLE_NAME}` where that view is itself a PDT — the referenced PDT's SQL is
+   inlined as a WITH CTE (recursive, depth-first/topological order via the shared `cteMap`;
+   `pdtStack` is the cycle guard). Regular-view refs resolve to the literal warehouse path.
+   Unresolved/circular refs and fragment deps emit a `LOOKER_SCRATCH.<VIEW>` placeholder
+   table + LOUD 🔶 warning — never a bare `/* TODO */` comment in FROM position. CTE-
+   continuation fragments (leading ", name AS (") are completed by the CTE prelude or
+   WITH-promoted when nothing was inlined; a statement already starting with WITH is merged.
+   The SQL_TABLE_NAME resolution uses a two-pass approach (async loop to populate the
+   replacement map, then synchronous `.replace()`) because `String.prototype.replace`
+   callbacks cannot be async. (The older `sigma_element('Name')` approach is parked until
+   the /spec API supports it — see TODO comments in `lookConvertView`.)
 
 ## In-tool documentation locations
 - **Help modal content**: `HELP_CONTENT` JS object (~line 16830). One key per converter tab:

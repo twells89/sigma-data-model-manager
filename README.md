@@ -122,20 +122,24 @@ Converts Power BI models (`.pbit`, `.bim`, or `.json`) to Sigma data model JSON.
 
 ### LookML
 
-Converts LookML projects (multiple `.lkml` files) to Sigma data model JSON. Drop multiple files at once — explores and their joined views are resolved across files automatically.
+Converts LookML projects (multiple `.lkml` files) to Sigma data model JSON. Drop multiple files at once — explores and their joined views are resolved across files automatically. View-only input works too: with no `.model.lkml`/explore uploaded, the auto-selected "All views" option converts every view as a standalone element.
 
 **What gets converted:**
-- Views with `sql_table_name` → Sigma elements with warehouse paths
-- Derived tables (SQL) → Sigma custom SQL elements; PDT views referenced via `${view.SQL_TABLE_NAME}` are auto-converted into their own Custom SQL element and referenced via `sigma_element('Name')`
+- Views with `sql_table_name` → Sigma elements with warehouse paths; every element carries an explicit name (`label` wins, else the view name) and derived/cross-element refs resolve via the element name
+- View-only mode (no model file) → Every uploaded view converts as a standalone element; cross-view `${view.SQL_TABLE_NAME}` references still resolve across the uploaded files
+- Derived tables (SQL) → Sigma custom SQL elements; derived views referenced via `${view.SQL_TABLE_NAME}` are inlined as WITH CTEs (recursively, cycle-guarded); regular-view refs resolve to the literal warehouse path; unresolved/circular refs emit a `LOOKER_SCRATCH.<VIEW>` placeholder table + loud 🔶 warning
+- CTE-continuation fragments (SQL starting with `, name AS (`) → completed by the inlined-CTE prelude, or promoted to `WITH` when nothing was inlined
 - Dimensions → Sigma columns with formula conversion; complex SQL expressions auto-converted
 - Tier dimensions → Bucketed `If()` calculated columns (e.g. "0 to 99", "100 to 499")
-- Yesno dimensions → Boolean calculated columns with "(T/F)" suffix
+- Yesno dimensions → Boolean calculated columns with "(T-F)" suffix (no "/" in display names) using source-qualified refs (e.g. `[Custom SQL/IS_RETURNED] = 1`)
 - Measures → Sigma metrics (`sum`, `count`, `count_distinct`, `average`, `min`, `max`, `median`, `percentile`); `type:percentile` → `Percentile([Col], p/100)` using the measure's `percentile:` param
+- TO_CHAR display-mask measures → `TO_CHAR(SUM(col), '$999,999,990.00')` becomes a numeric metric + Sigma column format translated from the mask; unparseable (date/text) masks stay on a loud ⚠ warning path
+- `date` / `date_time` / `time` measures → `MAX(${group_raw})` / `MIN(…)` become `Max([Col])` / `Min([Col])` metrics (never an aggregate calculated column)
 - Ratio / computed measures → A `type:number` measure whose `sql:` references other measures (e.g. `1.0 * ${total_revenue} / NULLIF(${order_count}, 0)`) is emitted as a metric: each `${measure}` is substituted with that measure's Sigma aggregate formula and SQL funcs are mapped (`NULLIF→NullIf`, `COALESCE/NVL/IFNULL→Coalesce`, `IFF/IIF→If`) — no longer split into a phantom physical column (which turned `1.0` into `0`)
 - Legacy `case: { when … else }` dimensions → Nested `If(cond, "label", If(…))` calculated columns (previously a passthrough to a nonexistent physical column)
 - Explore joins → Sigma relationships + a derived explore element surfacing base-view and directly-joined-view fields together (including named/computed joined columns such as dimension_group DateTrunc timeframes and CASE dims, referenced by display name); snowflake joins (FK on another joined view) wire to the correct intermediate element and are reachable via the relationship graph
 - All Explores mode → Batch-converts all explores into one combined data model; shared views are deduplicated
-- Dimension groups (type:time) → One column per timeframe (DateTrunc / DatePart), grouped into a folder
+- Dimension groups (type:time) → One column per timeframe (DateTrunc / DatePart), grouped into a folder; never clobbers a physical column owned by a dimension/another group, timeframe lists without `raw` still emit the physical column, `${group}`/`${group_raw}` measure refs resolve, and `CAST(${TABLE}.col AS TYPE)` group sql is treated as a plain column ref
 - Dimension groups (type:duration) → `DateDiff()` columns per interval (day, week, month, etc.), grouped into a folder
 - `datatype: epoch` → `DateFromUnix()` wrapper applied automatically
 - `percent_of_total` → `Sum([Col]) / GrandTotal(Sum([Col]))`
@@ -161,6 +165,7 @@ Converts LookML projects (multiple `.lkml` files) to Sigma data model JSON. Drop
 - Cross-element columns — Calculated columns referencing joined view columns are automatically moved to the derived explore element; metrics with cross-element refs must be added manually in Sigma UI
 - Fiscal timeframes — Skipped with a warning (require `fiscal_month_offset` from model-level config)
 - Access filters — `access_filter` blocks converted to Sigma RLS using `CurrentUserAttributeText()`; `access_grant` blocks not converted
+- PDT persistence (`datagroup_trigger` / `persist_for` / `sql_trigger_value` / `increment_key`) — never carried over silently: each emits a warning mapping it to Sigma scheduled materialization; `{% incrementcondition %}` Liquid is replaced with a valid `1=1` predicate
 - Trailing comma before SQL keywords, incremental PDT leading-comma CTEs, Snowflake `::TYPE` cast shorthand — All automatically corrected with warnings
 - Snowflake (multi-hop) joins — Wired correctly to the intermediate element, but second-hop columns are not surfaced in the single flat derived explore element (reach them via the relationship graph or that element's own derived view)
 
