@@ -31290,7 +31290,13 @@ ${cleanedSql}`;
                                 });
                                 const colId = sigmaShortId();
                                 tableColMap[tableName][c.name] = colId;
-                                pbiToSigmaName[c.name] = c.name; // calc cols keep their name
+                                pbiToSigmaName[c.name] = c.name;
+                        // Honor the calc column's DECLARED type: DAX coerces a concat back
+                        // to the declared numeric type; Sigma keeps it text and the
+                        // relationship keyed on it errors at query time. (mcp #54)
+                        if (['int64', 'double', 'decimal'].includes(String(c.dataType)) && /&|^\s*(Text|Concat|Format)\s*\(/i.test(sigmaFormula)) {
+                            sigmaFormula = `Number(${sigmaFormula})`;
+                        } // calc cols keep their name
                                 const _pbiFmt = _inferSigmaFormat(sigmaFormula, c.name);
                                 const _pbiCol = { id: colId, formula: sigmaFormula, name: c.name };
                                 if (_pbiFmt) _pbiCol.format = _pbiFmt;
