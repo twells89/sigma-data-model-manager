@@ -15070,8 +15070,8 @@ views:
         function _cubeEnsureFilterCols(sql, colIdMap, sourceTable, isCustomSql, addCol) {
             if (!sql) return;
             const cols = new Set();
-            for (const m of sql.matchAll(/\$\{CUBE\}\.(\w+)/g)) cols.add(m[1].toUpperCase());
-            for (const m of sql.matchAll(/\$\{CUBE\.(\w+)\}/g)) cols.add(m[1].toUpperCase());
+            for (const m of sql.matchAll(/\$?\{CUBE\}\.(\w+)/g)) cols.add(m[1].toUpperCase());
+            for (const m of sql.matchAll(/\$?\{CUBE\.(\w+)\}/g)) cols.add(m[1].toUpperCase());
             for (const col of cols) {
                 if (colIdMap[col]) continue;
                 const formula = isCustomSql ? `[${sigmaDisplayName(col)}]` : sigmaColFormula(sourceTable, col);
@@ -15082,14 +15082,14 @@ views:
         function _cubeIsSimpleColumnRef(sql) {
             if (!sql) return false;
             const s = sql.trim();
-            return /^\$\{CUBE\}\.\w+$/.test(s) || /^\$\{CUBE\.\w+\}$/.test(s) || /^\w+$/.test(s);
+            return /^\$?\{CUBE\}\.\w+$/.test(s) || /^\$?\{CUBE\.\w+\}$/.test(s) || /^\w+$/.test(s);
         }
 
         function _cubeExtractColumnName(sql) {
             if (!sql) return null;
             const s = sql.trim();
-            let m = s.match(/^\$\{CUBE\}\.(\w+)$/); if (m) return m[1];
-            m = s.match(/^\$\{CUBE\.(\w+)\}$/);     if (m) return m[1];
+            let m = s.match(/^\$?\{CUBE\}\.(\w+)$/); if (m) return m[1];
+            m = s.match(/^\$?\{CUBE\.(\w+)\}$/);     if (m) return m[1];
             m = s.match(/^(\w+)$/);                 if (m) return m[1];
             return null;
         }
@@ -15097,13 +15097,13 @@ views:
         function _cubeTranslateFormula(sql, tableName, isCustomSql) {
             if (!sql || typeof sql !== 'string') return null;
             let expr = sql.trim();
-            expr = expr.replace(/\$\{CUBE\}\.(\w+)/g, (_, col) =>
+            expr = expr.replace(/\$?\{CUBE\}\.(\w+)/g, (_, col) =>
                 isCustomSql ? `[${sigmaDisplayName(col)}]` : `[${tableName}/${sigmaDisplayName(col)}]`);
-            expr = expr.replace(/\$\{CUBE\.(\w+)\}/g, (_, col) =>
+            expr = expr.replace(/\$?\{CUBE\.(\w+)\}/g, (_, col) =>
                 isCustomSql ? `[${sigmaDisplayName(col)}]` : `[${tableName}/${sigmaDisplayName(col)}]`);
-            expr = expr.replace(/\$\{(\w+)\.(\w+)\}/g, (_, _o, field) => `[${sigmaDisplayName(field)}]`);
-            expr = expr.replace(/\$\{(\w+)\}\.(\w+)/g, (_, _o, field) => `[${sigmaDisplayName(field)}]`);
-            expr = expr.replace(/\$\{(\w+)\}/g, (_, field) => `[${sigmaDisplayName(field)}]`);
+            expr = expr.replace(/\$?\{(\w+)\.(\w+)\}/g, (_, _o, field) => `[${sigmaDisplayName(field)}]`);
+            expr = expr.replace(/\$?\{(\w+)\}\.(\w+)/g, (_, _o, field) => `[${sigmaDisplayName(field)}]`);
+            expr = expr.replace(/\$?\{(\w+)\}/g, (_, field) => `[${sigmaDisplayName(field)}]`);
 
             expr = expr.replace(/(\[[^\]]+\]|\w+)\s*::\s*(\w+)/gi, (_, val, typ) => {
                 const t = typ.toUpperCase();
@@ -15127,11 +15127,11 @@ views:
 
         function _cubeTranslateMeasureExpr(sql) {
             let expr = sql.trim();
-            expr = expr.replace(/\$\{CUBE\}\.(\w+)/g, (_, col) => `[${sigmaDisplayName(col)}]`);
-            expr = expr.replace(/\$\{CUBE\.(\w+)\}/g, (_, col) => `[${sigmaDisplayName(col)}]`);
-            expr = expr.replace(/\$\{(\w+)\.(\w+)\}/g, (_, _o, f) => `[${sigmaDisplayName(f)}]`);
-            expr = expr.replace(/\$\{(\w+)\}\.(\w+)/g, (_, _o, f) => `[${sigmaDisplayName(f)}]`);
-            expr = expr.replace(/\$\{(\w+)\}/g, (_, m) => `[${sigmaDisplayName(m)}]`);
+            expr = expr.replace(/\$?\{CUBE\}\.(\w+)/g, (_, col) => `[${sigmaDisplayName(col)}]`);
+            expr = expr.replace(/\$?\{CUBE\.(\w+)\}/g, (_, col) => `[${sigmaDisplayName(col)}]`);
+            expr = expr.replace(/\$?\{(\w+)\.(\w+)\}/g, (_, _o, f) => `[${sigmaDisplayName(f)}]`);
+            expr = expr.replace(/\$?\{(\w+)\}\.(\w+)/g, (_, _o, f) => `[${sigmaDisplayName(f)}]`);
+            expr = expr.replace(/\$?\{(\w+)\}/g, (_, m) => `[${sigmaDisplayName(m)}]`);
             expr = expr.replace(/'([^']*)'/g, '"$1"');
             expr = _cubeSqlCaseToIf(expr);
             expr = expr.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\s*(?=\()/g,
@@ -15141,10 +15141,10 @@ views:
 
         function _cubeTranslateRawSql(sql, cubeName) {
             return sql
-                .replace(/\$\{CUBE\}/g, cubeName)
-                .replace(/\$\{CUBE\.(\w+)\}/g, `${cubeName}.$1`)
-                .replace(/\$\{(\w+)\.(\w+)\}/g, '$1.$2')
-                .replace(/\$\{(\w+)\}/g, '$1');
+                .replace(/\$?\{CUBE\}/g, cubeName)
+                .replace(/\$?\{CUBE\.(\w+)\}/g, `${cubeName}.$1`)
+                .replace(/\$?\{(\w+)\.(\w+)\}/g, '$1.$2')
+                .replace(/\$?\{(\w+)\}/g, '$1');
         }
 
         function _cubeWrapAgg(type, inner) {
@@ -15226,7 +15226,7 @@ views:
 
         function _cubeParseJoinSqlRefs(sql, fromCube, toCube) {
             if (!sql) return null;
-            const refPattern = /\$\{(\w+)(?:\.(\w+))?\}(?:\.(\w+))?/g;
+            const refPattern = /\$?\{(\w+)(?:\.(\w+))?\}(?:\.(\w+))?/g;
             const refs = []; let m;
             while ((m = refPattern.exec(sql)) !== null) {
                 const col = m[2] || m[3];
