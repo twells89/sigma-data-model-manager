@@ -85,3 +85,11 @@ test('cross-table guard: Sales Per Sq Ft drops loudly, not as a silent error met
     'cross-table metric must not be emitted on the SALES element');
   assert.match(warningsText, /Sales Per Sq Ft/, 'must warn about the dropped cross-table measure');
 });
+
+test('relationship key coercion: ReportingPeriodID calc key is Number()-wrapped (mcp #55)', async () => {
+  const { dm } = await convert();
+  const sales = dm.pages[0].elements.find(e => e.name === 'SALES');
+  const rp = (sales.columns || []).find(c => c.name === 'ReportingPeriodID');
+  assert.ok(rp, 'ReportingPeriodID calc column emitted');
+  assert.match(String(rp.formula), /^Number\(/, `expected Number() wrap, got: ${rp.formula}`);
+});
