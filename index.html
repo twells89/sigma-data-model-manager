@@ -31202,6 +31202,12 @@ ${cleanedSql}`;
                     const pbiToSigmaName = {}; // PBI column name → Sigma display name (for formula rewriting)
                     for (const c of (t.columns || [])) {
                         if (c.type === 'rowNumber' || c.type === 'calculated' || c.isGenerated) continue;
+                        // Binary columns (embedded assets) have no warehouse/Sigma
+                        // representation — refs to them fail the POST. (bead xe7r)
+                        if (c.dataType === 'binary') {
+                            warnings.push(`⚠ Table "${tableName}": binary column "${c.name}" skipped — no warehouse/Sigma representation (embedded asset).`);
+                            continue;
+                        }
                         const sourceCol = c.sourceColumn || c.name;
                         const displayName = sigmaDisplayName(sourceCol);
                         const colId = sigmaShortId();
