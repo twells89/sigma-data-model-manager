@@ -29196,6 +29196,227 @@ ${cleanedSql}`;
         }
 
         // ── Main conversion function ──────────────────────────────────────
+        // ── Data blend support (mirror of MCP tryBuildBlendModel; see feedback_sigma_blend_pattern, bead beads-sigma-zsbt) ──
+        // A Tableau data blend links two+ datasources on shared dims (workbook-level
+        // <datasource-relationships>) and aggregates each source INDEPENDENTLY at the
+        // link grain. Sigma relationships are many-to-one LOOKUPS (a row-grain many-to-many
+        // key returns NULL, not fan-out), so the secondary MUST be pre-grouped to the link
+        // grain and the looked-up value surfaced with a NON-ADDITIVE aggregate (Max), never Sum.
+        function tableauBlendColumns(connection) {
+            const out = [], seen = new Set();
+            const push = (raw, isMeasure) => {
+                const W = (raw || '').replace(/^\[|\]$/g, '').replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+                if (!W || seen.has(W)) return; seen.add(W);
+                out.push({ wh: W, display: sigmaDisplayName(W), isMeasure });
+            };
+            const mrs = connection ? connection.querySelectorAll(':scope > metadata-records > metadata-record') : [];
+            for (const mr of mrs) {
+                const cls = mr.getAttribute('class') || '';
+                const remote = (mr.querySelector(':scope > remote-name')?.textContent || '').trim();
+                if (!remote) continue;
+                const agg = (mr.querySelector(':scope > aggregation')?.textContent || '').trim();
+                const ltype = (mr.querySelector(':scope > local-type')?.textContent || '').trim().toLowerCase();
+                const isMeasure = cls === 'measure' || (['integer', 'real'].includes(ltype) && !!agg && agg !== 'Count');
+                push(remote, isMeasure);
+            }
+            if (out.length === 0 && connection) {
+                const rel = connection.querySelector(':scope > relation');
+                if (rel) for (const col of rel.querySelectorAll(':scope > columns > column')) {
+                    const dt = (col.getAttribute('datatype') || '').toLowerCase();
+                    push(col.getAttribute('name'), ['integer', 'real'].includes(dt));
+                }
+            }
+            return out;
+        }
+        function tableauBlendFieldName(qualified) {
+            const parts = (qualified || '').split('].[');
+            let last = (parts[parts.length - 1] || qualified || '').replace(/^\[|\]$/g, '');
+            const seg = last.split(':');
+            if (seg.length >= 3) last = seg.slice(1, -1).join(':');
+            return last.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+        }
+        // Returns { name, elements, warnings } or null when the workbook has no blend block.
+        function tableauTryBuildBlend(datasources, dbOverride, schOverride, connId) {
+            if (!datasources || datasources.length === 0) return null;
+            const doc = datasources[0].doc;
+            const block = doc ? doc.querySelector('workbook > datasource-relationships') : null;
+            if (!block) return null;
+            const blendRels = Array.from(block.querySelectorAll(':scope > datasource-relationship'));
+            if (blendRels.length === 0) return null;
+
+            const warnings = [];
+            const dsById = {};
+            for (const d of datasources) dsById[d.element.getAttribute('name')] = d;
+            const primaryId = blendRels[0].getAttribute('source');
+            const primary = dsById[primaryId];
+            if (!primary) return null;
+            const primaryRel = primary.connection ? primary.connection.querySelector(':scope > relation') : null;
+            if (!primaryRel) return null;
+
+            const links = [];
+            for (const br of blendRels) {
+                if (br.getAttribute('source') !== primaryId) continue;
+                const secId = br.getAttribute('target');
+                const sec = dsById[secId];
+                const secRel = sec && sec.connection ? sec.connection.querySelector(':scope > relation') : null;
+                if (!sec || !secRel) { warnings.push('⚠ Blend secondary \'' + secId + '\' has no warehouse table — skipped (publish/repoint it to a warehouse to include)'); continue; }
+                const pairs = [];
+                for (const m of br.querySelectorAll(':scope > column-mapping > map')) {
+                    const p = tableauBlendFieldName(m.getAttribute('key')), s = tableauBlendFieldName(m.getAttribute('value'));
+                    if (p && s) pairs.push({ p, s });
+                }
+                if (pairs.length === 0) { warnings.push('⚠ Blend to \'' + secId + '\' has no column mapping — skipped'); continue; }
+                links.push({ sec, secId, secRel, pairs });
+            }
+            if (links.length === 0) return null;
+
+            const elements = [];
+            const pPath = tableauExtractPath(primaryRel, dbOverride, schOverride);
+            const pTable = pPath[pPath.length - 1] || 'PRIMARY';
+            const pCols = tableauBlendColumns(primary.connection);
+            const pColId = {};
+            const pBase = { id: sigmaShortId(), kind: 'table', name: pTable,
+                source: { connectionId: connId, kind: 'warehouse-table', path: pPath },
+                columns: [], order: [], relationships: [] };
+            for (const c of pCols) {
+                const id = sigmaInodeId(c.wh);
+                pBase.columns.push({ id, formula: '[' + pTable + '/' + c.display + ']', name: c.display });
+                pBase.order.push(id); pColId[c.wh] = { id, display: c.display };
+            }
+            elements.push(pBase);
+
+            const pDims = pCols.filter(c => !c.isMeasure);
+            const pMeasures = pCols.filter(c => c.isMeasure);
+            const secMeasureDisplay = {};
+
+            for (const link of links) {
+                const sPath = tableauExtractPath(link.secRel, dbOverride, schOverride);
+                const sTable = sPath[sPath.length - 1] || 'SECONDARY';
+                const sCols = tableauBlendColumns(link.sec.connection);
+                const sLinkWh = new Set(link.pairs.map(p => p.s));
+                const sMeasures = sCols.filter(c => c.isMeasure && !sLinkWh.has(c.wh));
+                if (sMeasures.length === 0) { warnings.push('⚠ Blend secondary ' + sTable + ' has no measures to aggregate — skipped'); continue; }
+
+                const sBase = { id: sigmaShortId(), kind: 'table', name: sTable,
+                    source: { connectionId: connId, kind: 'warehouse-table', path: sPath },
+                    columns: [], order: [] };
+                const sColId = {};
+                for (const c of sCols) {
+                    const id = sigmaInodeId(c.wh);
+                    sBase.columns.push({ id, formula: '[' + sTable + '/' + c.display + ']', name: c.display });
+                    sBase.order.push(id); sColId[c.wh] = id;
+                }
+                const sumIds = [], sumMeta = [];
+                for (const m of sMeasures) {
+                    const total = 'Total ' + m.display, id = sigmaShortId();
+                    sBase.columns.push({ id, formula: 'Sum([' + sTable + '/' + m.display + '])', name: total });
+                    sBase.order.push(id); sumIds.push(id); sumMeta.push({ display: m.display, total, srcWh: m.wh });
+                }
+                const sGroupId = sigmaShortId();
+                sBase.groupings = [{ id: sGroupId, groupBy: link.pairs.map(p => sColId[p.s]).filter(Boolean), calculations: sumIds }];
+                elements.push(sBase);
+
+                const sGrp = { id: sigmaShortId(), kind: 'table', name: sTable + '_BY_LINK',
+                    source: { kind: 'table', elementId: sBase.id, groupingId: sGroupId }, columns: [], order: [] };
+                const sGrpLinkId = {};
+                for (const p of link.pairs) {
+                    const disp = (sCols.find(c => c.wh === p.s) || {}).display || sigmaDisplayName(p.s);
+                    const id = sigmaShortId();
+                    sGrp.columns.push({ id, formula: '[' + sTable + '/' + disp + ']', name: disp });
+                    sGrp.order.push(id); sGrpLinkId[p.s] = id;
+                }
+                for (const sm of sumMeta) {
+                    const id = sigmaShortId();
+                    sGrp.columns.push({ id, formula: '[' + sTable + '/' + sm.total + ']', name: sm.total });
+                    sGrp.order.push(id);
+                }
+                elements.push(sGrp);
+
+                const keys = link.pairs
+                    .map(p => ({ sourceColumnId: pColId[p.p] && pColId[p.p].id, targetColumnId: sGrpLinkId[p.s] }))
+                    .filter(k => k.sourceColumnId && k.targetColumnId);
+                if (keys.length !== link.pairs.length) warnings.push('⚠ Blend ' + pTable + '→' + sTable + ': some link columns not found on both sides — relationship may be incomplete');
+                pBase.relationships.push({ id: sigmaShortId(), targetElementId: sGrp.id, keys, name: sTable });
+                link._sumMeta = sumMeta; link._sTable = sTable;
+            }
+
+            const pLookup = { id: sigmaShortId(), kind: 'table', name: pTable + '_BLEND_DETAIL',
+                source: { kind: 'table', elementId: pBase.id }, columns: [], order: [] };
+            const calcIds = [];
+            for (const d of pDims) {
+                const id = sigmaShortId();
+                pLookup.columns.push({ id, formula: '[' + pTable + '/' + d.display + ']', name: d.display });
+                pLookup.order.push(id);
+            }
+            const groupByIds = pLookup.order.slice();
+            for (const m of pMeasures) {
+                const id = sigmaShortId();
+                pLookup.columns.push({ id, formula: 'Sum([' + pTable + '/' + m.display + '])', name: 'Total ' + m.display });
+                pLookup.order.push(id); calcIds.push(id);
+            }
+            for (const link of links) {
+                const sTable = link._sTable, sumMeta = link._sumMeta || [];
+                for (const sm of sumMeta) {
+                    const lookId = sigmaShortId(), lookName = sm.display + ' (lookup)';
+                    pLookup.columns.push({ id: lookId, formula: '[' + pTable + '/' + sTable + '/' + sm.total + ']', name: lookName });
+                    pLookup.order.push(lookId);
+                    const maxId = sigmaShortId();
+                    pLookup.columns.push({ id: maxId, formula: 'Max([' + lookName + '])', name: sm.display });
+                    pLookup.order.push(maxId); calcIds.push(maxId);
+                    secMeasureDisplay[sm.srcWh] = sm.display;
+                }
+            }
+
+            const secIds = new Set(links.map(l => l.secId));
+            for (const col of Array.from(primary.element.querySelectorAll(':scope > column'))) {
+                const calc = col.querySelector(':scope > calculation'); if (!calc) continue;
+                const formula = calc.getAttribute('formula'); if (!formula) continue;
+                const caption = (col.getAttribute('caption') || col.getAttribute('name') || '').replace(/^\[|\]$/g, '');
+                const refsSec = (secIds.size > 0 && Array.from(secIds).some(id => formula.includes(id))) ||
+                    links.some(l => formula.includes('[' + l.sec.element.getAttribute('caption') + ']'));
+                if (!refsSec) continue;
+                const m = formula.match(/^\s*SUM\(\s*\[([^\]]+)\]\s*\)\s*([-+*/])\s*SUM\(\s*\[([^\]]+)\]\.\[([^\]]+)\]\s*\)\s*$/i);
+                let translated = null;
+                if (m) {
+                    const localWh = m[1].replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+                    const secWh = m[4].replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+                    const localM = pMeasures.find(x => x.wh === localWh);
+                    const secDisp = secMeasureDisplay[secWh];
+                    if (localM && secDisp) translated = '[Total ' + localM.display + '] ' + m[2] + ' [' + secDisp + ']';
+                }
+                if (translated) {
+                    const id = sigmaShortId();
+                    pLookup.columns.push({ id, formula: translated, name: caption });
+                    pLookup.order.push(id); calcIds.push(id);
+                    warnings.push('ℹ Cross-source calc "' + caption + '" → ' + translated + ' (blended grain)');
+                } else {
+                    warnings.push('⚠ Cross-source calc "' + caption + '" not auto-translated — recreate manually: ' + formula.trim().slice(0, 140));
+                }
+            }
+
+            pLookup.groupings = [{ id: sigmaShortId(), groupBy: groupByIds, calculations: calcIds }];
+            const pGroupId = pLookup.groupings[0].id;
+            elements.push(pLookup);
+
+            const pFinal = { id: sigmaShortId(), kind: 'table', name: pTable + '_BLENDED',
+                source: { kind: 'table', elementId: pLookup.id, groupingId: pGroupId }, columns: [], order: [] };
+            for (const d of pDims) {
+                const id = sigmaShortId();
+                pFinal.columns.push({ id, formula: '[' + pLookup.name + '/' + d.display + ']', name: d.display });
+                pFinal.order.push(id);
+            }
+            for (const cid of calcIds) {
+                const src = pLookup.columns.find(c => c.id === cid); if (!src) continue;
+                const id = sigmaShortId();
+                pFinal.columns.push({ id, formula: '[' + pLookup.name + '/' + src.name + ']', name: src.name });
+                pFinal.order.push(id);
+            }
+            elements.push(pFinal);
+
+            warnings.unshift('ℹ Data blend detected: primary "' + primary.name + '" + ' + links.length + ' secondary source(s) → merged data model (' + elements.length + ' elements). Secondary measures pre-aggregated to link grain (Sigma relationships are many-to-one lookups); query the "' + pTable + '_BLENDED" element.');
+            return { name: primary.name, elements, warnings };
+        }
+
         function runTableauConversion() {
             phTrack('conversion_run', { converter: 'tableau' });
             if (!_tableauParsed || _tableauParsed.datasources.length === 0) {
@@ -29234,24 +29455,36 @@ ${cleanedSql}`;
                 const allElements = [], allControls = [], allWarnings = [], allSecurity = [], allWorkbookPatterns = [];
                 { const fnWarn = friendlyNameWarning(); if (fnWarn) allWarnings.push(fnWarn); }
 
-                let firstControls = true;
-                for (const { ds, connectionId } of toConvert) {
-                    const { elements, controls, warnings, security, workbookPatterns } = convertOneDatasource(
-                        ds, connectionId, dbOverride, schOverride, strategy, _tableauParsed.parameters
-                    );
-                    allElements.push(...elements);
-                    allWarnings.push(...warnings);
-                    allSecurity.push(...(security || []));
-                    allWorkbookPatterns.push(...(workbookPatterns || []));
-                    // Parameters → controls are shared across all datasources; only add once
-                    if (firstControls) { allControls.push(...controls); firstControls = false; }
+                // Data blend: a workbook-level <datasource-relationships> block means
+                // build ONE merged model (secondary pre-grouped to link grain, many-to-one
+                // lookup) instead of converting only the selected datasource.
+                const blendModel = tableauTryBuildBlend(_tableauParsed.datasources, dbOverride, schOverride, toConvert[0].connectionId);
+
+                let modelName;
+                if (blendModel) {
+                    allElements.push(...blendModel.elements);
+                    allWarnings.push(...blendModel.warnings);
+                    modelName = blendModel.name;
+                } else {
+                    let firstControls = true;
+                    for (const { ds, connectionId } of toConvert) {
+                        const { elements, controls, warnings, security, workbookPatterns } = convertOneDatasource(
+                            ds, connectionId, dbOverride, schOverride, strategy, _tableauParsed.parameters
+                        );
+                        allElements.push(...elements);
+                        allWarnings.push(...warnings);
+                        allSecurity.push(...(security || []));
+                        allWorkbookPatterns.push(...(workbookPatterns || []));
+                        // Parameters → controls are shared across all datasources; only add once
+                        if (firstControls) { allControls.push(...controls); firstControls = false; }
+                    }
+
+                    buildDerivedElementsAndMoveCalcs(allElements, allWarnings);
+
+                    modelName = toConvert.length === 1
+                        ? toConvert[0].ds.name
+                        : toConvert.map(t => t.ds.name).join(' + ');
                 }
-
-                buildDerivedElementsAndMoveCalcs(allElements, allWarnings);
-
-                const modelName = toConvert.length === 1
-                    ? toConvert[0].ds.name
-                    : toConvert.map(t => t.ds.name).join(' + ');
 
                 const outputJson = {
                     schemaVersion: 1,
@@ -33435,6 +33668,7 @@ models:
     <li><b>Sets</b> → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → <code>In([Field], ...)</code> column. Add a filter control on these columns in your Sigma workbook to replicate set-based filtering. If a set's formula references a related-element column (e.g. <code>In([Customer Segment], ...)</code> on a fact element where Customer Segment lives on a dim), the set column is automatically moved to the derived element and scrubbed from the source element's "Sets" folder so the model saves cleanly.</li>
     <li><b>Top N / Bottom N sets</b> (global, parameterized, partitioned) → A <code>kind:sql</code> RANK helper element + relationship from the base on the dim key (and partition cols, if any). The helper exposes <code>IS_TOP_N</code> as a boolean. For literal-N sets the boolean is computed in SQL (<code>(rnk &lt;= N) AS IS_TOP_N</code>); for parameter-driven N a Sigma calc col references both the local Rank column and a number control derived from the Tableau parameter. Bottom-N is the same with <code>ASC</code> ordering. Partitioned sets emit <code>PARTITION BY</code> in the OVER clause.</li>
     <li><b>Derived element</b> → For fact tables with relationships, a derived element is created that surfaces all own columns plus related dimension columns via <code>[FACT_TABLE/RELATIONSHIP_NAME/Col]</code> cross-element formulas — no manual wiring required</li>
+    <li><b>Data blends</b> (workbook-level <code>&lt;datasource-relationships&gt;</code> linking two+ sources on shared dimensions) → ONE merged data model. The secondary is pre-grouped to the link grain so the relationship is <code>many_to_one</code> — <b>required</b> because Sigma relationships are lookups: a row-grain many-to-many key returns <code>NULL</code> (the blended measure is silently lost), not a fan-out join. The looked-up secondary measure is surfaced with a <b>non-additive</b> aggregate (<code>Max</code>) since it is constant per link key (<code>Sum</code> would fan it out by primary-row count). Cross-source calcs like <code>SUM([Sales])-SUM([Target])</code> auto-translate to the blended grain; more complex cross-source formulas are flagged in the notes. Query the <code>&lt;PRIMARY&gt;_BLENDED</code> element.</li>
 </ul>
 
 <h3>Known Limitations</h3>
@@ -33448,7 +33682,7 @@ models:
     <li><b>Bins</b> — Converted to bucketed <code>Floor()</code> calculated columns.</li>
     <li><b>Custom SQL data sources</b> — Converted to Sigma custom SQL elements. The raw SQL is passed through as-is. Tableau-specific SQL syntax may need manual adjustment.</li>
     <li><b>Extracts (.hyper)</b> — Extract-only fields and extract filters are not converted. The converter reads the logical model definition, not the physical extract.</li>
-    <li><b>Data blending</b> — Multi-connection blended data sources are not supported. Each data source is converted independently.</li>
+    <li><b>Data blending</b> — Same-warehouse blends (workbook-level <code>&lt;datasource-relationships&gt;</code>) are converted to one merged model (see "What Gets Converted"). Limitations: a published/unpublished secondary with no warehouse table is skipped with a warning (repoint it to a warehouse first); a 3+-source blend is handled as one primary plus N secondaries that each link to it (arbitrary connected-component graphs are not yet decomposed); when the primary is grouped by dimensions finer than the link key, the secondary value repeats across the finer groups (faithful to Tableau, but verify column totals).</li>
     <li><b>Parameters with calculations</b> — Parameter values are captured but formulas that reference parameters using Tableau's parameter syntax may not convert correctly.</li>
 </ul>
 
