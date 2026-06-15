@@ -27072,6 +27072,8 @@ ${cleanedSql}`;
             'AVG': 'Avg', 'MAX': 'Max', 'MIN': 'Min', 'MEDIAN': 'Median',
             'SUM': 'Sum', 'ABS': 'Abs', 'CEILING': 'Ceiling', 'FLOOR': 'Floor',
             'ROUND': 'Round', 'SQRT': 'Sqrt', 'POWER': 'Power',
+            // scalar math (verified resolve in Sigma 2026-06-15; Tableau LOG default base 10 == Sigma Log default base 10)
+            'LN': 'Ln', 'LOG': 'Log', 'EXP': 'Exp', 'MOD': 'Mod', 'SIGN': 'Sign', 'PI': 'Pi',
             'STR': 'Text', 'INT': 'Int', 'FLOAT': 'Number',
             'LEN': 'Len', 'UPPER': 'Upper', 'LOWER': 'Lower',
             'TRIM': 'Trim', 'LTRIM': 'Ltrim', 'RTRIM': 'Rtrim',
@@ -27085,7 +27087,7 @@ ${cleanedSql}`;
             'DATE': 'Date', 'DATETIME': 'Datetime', 'MAKEDATE': 'MakeDate',
             'REGEXP_EXTRACT': 'RegexpExtract', 'REGEXP_REPLACE': 'RegexpReplace', 'REGEXP_MATCH': 'RegexpMatch',
             'STDEV': 'StdDev', 'VAR': 'Variance', 'VARP': 'VariancePop',
-            'PERCENTILE': 'PercentileCont', 'SPLIT': 'SplitPart',
+            'PERCENTILE': 'PercentileCont', 'CORR': 'Corr', 'SPLIT': 'SplitPart',
         };
 
         // ── Tableau LOD Expression Parser ──────────────────────────────────
@@ -27521,6 +27523,12 @@ ${cleanedSql}`;
                 }
             }
 
+            // COVAR/COVARP have no Sigma equivalent — flag loudly, never emit silently
+            // (Sigma has Corr but no covariance function; verified 2026-06-15).
+            if (/\bCOVARP?\s*\(/i.test(f)) {
+                if (warnings) warnings.push('⚠ COVAR/COVARP has no Sigma equivalent — not converted. Fragment: ' + f.slice(0, 120));
+                return '/* no Sigma equivalent: ' + f.replace(/\/\*/g, '').replace(/\*\//g, '') + ' */';
+            }
             // ZN([x]) → Coalesce([x], 0)
             f = f.replace(/\bZN\s*\(([^)]+)\)/gi, 'Coalesce($1, 0)');
             // IFNULL/IFERROR → Coalesce
@@ -27670,7 +27678,7 @@ ${cleanedSql}`;
         }
 
         function tableauIsAggregate(formula) {
-            return /\b(SUM|AVG|COUNT|COUNTD|MAX|MIN|MEDIAN|STDEV|STDEVP|VAR|VARP|PERCENTILE|ATTR)\s*\(/i.test(formula);
+            return /\b(SUM|AVG|COUNT|COUNTD|MAX|MIN|MEDIAN|STDEV|STDEVP|VAR|VARP|PERCENTILE|CORR|ATTR)\s*\(/i.test(formula);
         }
 
         // A Tableau calc is row-level security if it tests the viewer's identity/membership.
@@ -33659,7 +33667,8 @@ models:
     <li><b>Joins/Relationships</b> → Sigma relationships on the fact element. <b>Tableau 2020.2+ relationship model ("noodles")</b>: Tableau resolves join type and granularity at viz time — the converter maps these directly to Sigma relationships (which are also lazy / resolved at query time), so no semantic information is lost. Cardinality hints (1:1, 1:N, N:1, N:N) are preserved when present and default to <code>N:1</code> (the dominant fact-to-dim pattern) when Tableau leaves them unspecified. <b>Pre-2020.2 physical joins</b> (older Tableau Server on-prem versions, including 2018.x and 2019.x): handled via the Join Strategy dropdown — Auto routes <code>many_to_one</code> joins to relationships and others to physical joins; Force Relationships keeps everything lazy; Force Physical Joins keeps everything eager. Both code paths produce valid Sigma data models.</li>
     <li><b>Calculated fields</b> → Sigma calculated columns with formula conversion</li>
     <li><b>Simple aggregates</b> → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)</li>
-    <li><b>Statistical / regex / date-construction functions</b> → <code>STDEV</code>→<code>StdDev</code>, <code>VAR</code>→<code>Variance</code>, <code>VARP</code>→<code>VariancePop</code>, <code>STDEVP</code>→<code>Sqrt(VariancePop(…))</code>, <code>PERCENTILE</code>→<code>PercentileCont</code>, <code>REGEXP_EXTRACT/MATCH/REPLACE</code>→<code>Regexp*</code>, <code>SPLIT</code>→<code>SplitPart</code>, <code>MAKEDATE</code>→<code>MakeDate</code>, and <code>DATEPARSE(fmt, str)</code>→<code>DateParse(str, "&lt;strftime&gt;")</code> (Tableau's arg order is reversed and its Java date tokens are rewritten to strftime — review the pattern).</li>
+    <li><b>Scalar math functions</b> → <code>LN</code>→<code>Ln</code>, <code>LOG</code>→<code>Log</code> (both default base 10), <code>EXP</code>→<code>Exp</code>, <code>MOD</code>→<code>Mod</code>, <code>SIGN</code>→<code>Sign</code>, <code>PI</code>→<code>Pi</code> (plus <code>ABS/CEILING/FLOOR/ROUND/POWER/SQRT</code>).</li>
+    <li><b>Statistical / regex / date-construction functions</b> → <code>STDEV</code>→<code>StdDev</code>, <code>VAR</code>→<code>Variance</code>, <code>VARP</code>→<code>VariancePop</code>, <code>STDEVP</code>→<code>Sqrt(VariancePop(…))</code>, <code>PERCENTILE</code>→<code>PercentileCont</code>, <code>CORR</code>→<code>Corr</code> (routed to a metric), <code>REGEXP_EXTRACT/MATCH/REPLACE</code>→<code>Regexp*</code>, <code>SPLIT</code>→<code>SplitPart</code>, <code>MAKEDATE</code>→<code>MakeDate</code>, and <code>DATEPARSE(fmt, str)</code>→<code>DateParse(str, "&lt;strftime&gt;")</code> (Tableau's arg order is reversed and its Java date tokens are rewritten to strftime — review the pattern). <code>COVAR</code>/<code>COVARP</code> have no Sigma equivalent and are flagged, not emitted.</li>
     <li><b>User functions / row-level security</b> → User-context functions are translated (<code>USERNAME()</code>→<code>CurrentUserEmail()</code>, <code>ISMEMBEROF('g')</code>→<code>CurrentUserInTeam("g")</code>, <code>USERATTRIBUTE('a')</code>→<code>CurrentUserAttributeText("a")</code>, <code>ISUSERNAME('u')</code>→<code>CurrentUserEmail() = "u"</code>). Calcs that test the viewer's identity (the classic Tableau RLS / data-source-filter pattern) are <b>detected and reported, not injected</b>: the converter emits a 🔐 conversion note (and an RLS-rules badge) carrying the translated boolean formula plus the user attributes/teams to provision — it does NOT add the calc column to the spec, because a converter can't provision Sigma user attributes/teams and an injected filter would fail-closed to 0 rows for everyone. After saving, provision the listed attribute(s)/team(s), then apply the boolean calc column + an element filter keeping only <code>True</code> rows.</li>
     <li><b>Parameters</b> → Sigma controls (list, date-range, number-range, text)</li>
     <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves.</li>
