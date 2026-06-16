@@ -539,6 +539,8 @@ Converts a SAP BusinessObjects **universe** (the semantic layer) to Sigma data m
 - Object expressions (functions, CASE, concatenation) → Sigma calculated columns
 - Joins → Sigma relationships; FK/PK keys parsed from the join `Table.col = Table.col` SQL; tables with outgoing joins also get a denormalized **View** element exposing own + joined columns
 
+**Target-layer remap (restructured / platinum layer):** if the warehouse was restructured vs. the universe (renamed tables, or several dimensions consolidated into one — e.g. a "platinum" layer), use the optional **Target-layer remap** box to repoint the output at the new physical names *before* conversion. `tableMap` maps `OLD_TABLE` → `NEW_TABLE` (or `{ table, database, schema }` to relocate); many old tables may map to one (consolidation). `columnMap` maps `"OLD_TABLE.OLD_COL"` (or `"*.OLD_COL"` for any table) → a new column name; business names are preserved. Unmatched keys are surfaced as warnings (typo guard). The remap repoints **names** only — it does not perform the platinum-layer **remodeling** (grain consolidation, star-schema collapse); treat the output as a first draft to enrich on top.
+
 **Expression conversion:**
 
 | BusinessObjects | Sigma formula |
