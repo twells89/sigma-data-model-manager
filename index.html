@@ -25916,6 +25916,23 @@ ${cleanedSql}`;
             const isCustomSql = (tableName === 'Custom SQL');
             const colLabel = (physCol) => isCustomSql ? physCol : sigmaDisplayName(physCol);
 
+            // Physical-column display names of this view. A bare `[Display]` ref to
+            // one self-collides when a calc dimension shares the column's name
+            // (e.g. discount_pct = ${TABLE}.DISCOUNT_PCT/100 → "Discount Pct" calc
+            // referencing bare [Discount Pct] = itself → type "error"). The complex-
+            // SQL path qualifies via lookSqlToSigmaRules(sql, tableName); the case:
+            // path uses lookConvertExpression (no tableName), so qualifyPhysRefs()
+            // rewrites its bare phys refs to [<table>/Display]. Mirrors MCP src/lookml.ts.
+            const physColDisplays = new Set();
+            {
+                const dd = view.dimension ? (Array.isArray(view.dimension) ? view.dimension : [view.dimension]) : [];
+                const dg = view.dimension_group ? (Array.isArray(view.dimension_group) ? view.dimension_group : [view.dimension_group]) : [];
+                const scan = (sql) => { const re=/\$\{TABLE\}\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)/gi; let m; while ((m=re.exec(sql||''))!==null) physColDisplays.add(colLabel(m[1].toUpperCase())); };
+                dd.forEach(d => { scan(d && d.sql); if (d && d.case) scan(JSON.stringify(d.case)); });
+                dg.forEach(g => { if (!g) return; scan(g.sql); scan(g.sql_start); scan(g.sql_end); });
+            }
+            const qualifyPhysRefs = (formula) => (formula || '').replace(/\[([^\]\/]+)\]/g, (m, disp) => physColDisplays.has(disp) ? `[${tableName}/${disp}]` : m);
+
             const yesnoExprMap   = new Map();
             const fieldDisplayMap = new Map();
             // dimension name (lowercase) → physical column (UPPER). Resolves
@@ -26017,7 +26034,7 @@ ${cleanedSql}`;
                     for (let i = whens.length - 1; i >= 0; i--) {
                         const w = whens[i];
                         if (typeof w !== 'object' || !w.sql) continue;
-                        formula = `If(${toCond(w.sql)}, "${String(w.label ?? w._name ?? '')}", ${formula})`;
+                        formula = `If(${qualifyPhysRefs(toCond(w.sql))}, "${String(w.label ?? w._name ?? '')}", ${formula})`;
                     }
                     const caseColId = sigmaShortId();
                     colIdMap[colName] = caseColId;
@@ -26165,6 +26182,7 @@ ${cleanedSql}`;
 
                     const isHiddenDim = d.hidden === true || d.hidden === 'yes';
                     if (sigmaFormula) {
+                        sigmaFormula = qualifyPhysRefs(sigmaFormula);
                         const _lkCalcName = d.label || sigmaDisplayName(d._name);
                         const _lkCalcFmt = (d.value_format_name ? _lookFormatNameToSigma(d.value_format_name) : null)
                             || (d.value_format ? _excelFormatToSigma(d.value_format) : null)
