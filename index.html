@@ -3869,10 +3869,10 @@ How it works:
                              ondragleave="this.classList.remove('drag-over')"
                              ondrop="handleBobjDrop(event)">
                             <div style="font-size: 28px; margin-bottom: 8px;">🏛️</div>
-                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop a universe JSON file here</div>
-                            <div style="font-size: 11px; color: var(--text-muted);">RWS /sl/v1/universes/{id} export · or paste below</div>
+                            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop a universe JSON or SDK-XML file here</div>
+                            <div style="font-size: 11px; color: var(--text-muted);">RWS JSON (outline) · or SL-SDK / IDT XML (columns + SELECTs) · or paste below</div>
                         </div>
-                        <input type="file" id="bobjFileInput" accept=".json" multiple style="display:none" onchange="handleBobjFileInput(event)">
+                        <input type="file" id="bobjFileInput" accept=".json,.xml" multiple style="display:none" onchange="handleBobjFileInput(event)">
 
                         <div id="bobjFileList" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;"></div>
 
@@ -3902,12 +3902,15 @@ How it works:
                         <div class="dbt-badge-row" id="bobjInputStats"></div>
 
                         <textarea id="bobjJsonInput" style="flex: 1; min-height: 80px; font-size: 11px; resize: none;"
-                                  placeholder="Or paste BusinessObjects universe JSON here...
+                                  placeholder="Or paste a BusinessObjects universe here (JSON or XML — auto-detected)...
 
-Supported shapes (RWS /sl/v1/universes/{id}):
+RWS JSON (GET /sl/v1/universes/{id}) — business OUTLINE only:
 • { universe: { classes: [ { name, objects: [...] } ], joins, filters } }
-• nested outline/items folders
-• flat { objects: [...], tables, joins }"></textarea>
+• nested outline/items folders · flat { objects, tables, joins }
+
+SL-SDK / IDT XML — adds physical columns + object SELECTs:
+• <universe><dataFoundation><tables>/<joins> + <businessLayer> ...
+  (RWS REST does NOT expose SELECTs/tables — use an SDK export for those)"></textarea>
 
                         <div class="dbt-convert-row">
                             <button class="btn btn-primary" style="flex: 1;" id="bobjConvertBtn" onclick="runBobjConversion()">
@@ -21017,6 +21020,133 @@ views:
             return f;
         }
 
+        // ── SL-SDK / IDT export ingest: XML → IR (feeds the same conversion core) ──
+        // The RWS REST endpoint (GET /sl/v1/universes/{id}) returns only the business
+        // OUTLINE — object names, datatypes, folders — NOT the relational bindings
+        // (each object's SELECT/WHERE) nor the data foundation (physical tables,
+        // columns, joins). To migrate the actual warehouse columns + calculations you
+        // need a Semantic Layer SDK / IDT export of the data foundation + business
+        // layer; this ingest parses that XML into the SAME IR _bobjNormalize produces.
+        // Kept in lock-step with the MCP (src/bobj.ts) + skill (converters/bobj.mjs).
+        function _bobjIngestXml(xml) {
+            const doc = _bobjParseXml(xml);
+            const uni = _bobjFindFirst(doc, ['universe', 'unx', 'businessuniverse']) || doc;
+            const name = uni.attrs.name || _bobjTextOf(_bobjFindFirst(uni, ['name', 'universename'])) || 'BusinessObjects Universe';
+            const dfScope = _bobjFindFirst(uni, ['datafoundation', 'data-foundation', 'df']) || uni;
+            const blScope = _bobjFindFirst(uni, ['businesslayer', 'business-layer', 'bl']) || uni;
+            const tableMap = new Map();
+            for (const t of _bobjFindAll(dfScope, n => n.tag === 'table')) {
+                const raw = t.attrs.name || t.attrs.tablename || _bobjTextOf(_bobjFindFirst(t, ['name']));
+                if (!raw) continue;
+                const key = _bobjTableKey(raw);
+                if (!tableMap.has(key)) tableMap.set(key, { name: key,
+                    database: t.attrs.catalog || t.attrs.database || undefined,
+                    schema: t.attrs.schema || t.attrs.owner || undefined });
+            }
+            const joins = [];
+            for (const j of _bobjFindAll(dfScope, n => n.tag === 'join')) {
+                const expression = _bobjTextOf(_bobjFindFirst(j, ['expression', 'statement', 'sql', 'definition'])) ||
+                    j.attrs.expression || j.attrs.statement || _bobjTextOf(j) || undefined;
+                joins.push({ left: j.attrs.left || j.attrs.lefttable || j.attrs.table1 || undefined,
+                    right: j.attrs.right || j.attrs.righttable || j.attrs.table2 || undefined,
+                    expression, cardinality: j.attrs.cardinality || _bobjTextOf(_bobjFindFirst(j, ['cardinality'])) || undefined });
+            }
+            const objects = [];
+            const _walkBl = (nodes, parentClass) => {
+                for (const node of nodes) {
+                    if (/^(folder|class|businessfolder|subclass)$/.test(node.tag)) { _walkBl(node.children, node.attrs.name || parentClass); continue; }
+                    const binding = _bobjFindFirst(node, ['relationalbinding', 'binding']);
+                    const selectNode = (binding && _bobjFindFirst(binding, ['select', 'selectclause', 'expression'])) || _bobjFindFirst(node, ['select', 'selectclause']);
+                    const select = _bobjTextOf(selectNode) || node.attrs.select || node.attrs.selectclause || '';
+                    const tagIsObj = /^(item|object|businessobject|dimension|measure|attribute|detail)$/.test(node.tag);
+                    if (select || (tagIsObj && node.attrs.name)) {
+                        let q = (node.attrs.qualification || node.attrs.type || node.attrs.kind || '').toLowerCase();
+                        if (!q && /^(dimension|measure|attribute|detail)$/.test(node.tag)) q = node.tag;
+                        let kind = 'dimension';
+                        if (/measure/.test(q)) kind = 'measure'; else if (/detail|attribute/.test(q)) kind = 'detail';
+                        objects.push({ name: node.attrs.name || node.attrs.objectname || _bobjTextOf(_bobjFindFirst(node, ['name'])) || 'Object',
+                            className: parentClass, kind, select,
+                            aggregation: node.attrs.aggregation || node.attrs.aggregationfunction || node.attrs.projectionfunction || node.attrs.function || undefined,
+                            description: node.attrs.description || node.attrs.help || _bobjTextOf(_bobjFindFirst(node, ['description', 'help'])) || undefined });
+                        continue;
+                    }
+                    if (node.children.length) _walkBl(node.children, parentClass);
+                }
+            };
+            _walkBl(blScope.children, undefined);
+            const filters = [];
+            for (const f of _bobjFindAll(blScope, n => /^(filter|condition|predefinedfilter)$/.test(n.tag))) {
+                const where = _bobjTextOf(_bobjFindFirst(f, ['where', 'whereclause', 'expression', 'sql', 'definition'])) || f.attrs.where || undefined;
+                if (!where && !f.attrs.name) continue;
+                filters.push({ name: f.attrs.name || _bobjTextOf(_bobjFindFirst(f, ['name'])) || 'Filter', where });
+            }
+            for (const o of objects) for (const tk of _bobjTokens(o.select)) {
+                const key = _bobjTableKey(tk.table);
+                if (!tableMap.has(key)) tableMap.set(key, { name: key });
+            }
+            return { name, objects, tables: [...tableMap.values()], joins, filters };
+        }
+        // Minimal dependency-free XML parser (tolerant of declarations, comments,
+        // CDATA, self-closing tags, and `>` inside quoted attribute values).
+        function _bobjParseXml(xml) {
+            const s = xml.replace(/^﻿/, '');
+            const root = { tag: '#root', attrs: {}, children: [], text: '' };
+            const stack = [root];
+            const top = () => stack[stack.length - 1];
+            const n = s.length; let i = 0;
+            while (i < n) {
+                const lt = s.indexOf('<', i);
+                if (lt < 0) { _bobjAddText(top(), s.slice(i)); break; }
+                if (lt > i) _bobjAddText(top(), s.slice(i, lt));
+                if (s.startsWith('<!--', lt)) { const e = s.indexOf('-->', lt + 4); i = e < 0 ? n : e + 3; continue; }
+                if (s.startsWith('<![CDATA[', lt)) { const e = s.indexOf(']]>', lt + 9); top().text += s.slice(lt + 9, e < 0 ? n : e); i = e < 0 ? n : e + 3; continue; }
+                if (s.startsWith('<?', lt)) { const e = s.indexOf('?>', lt + 2); i = e < 0 ? n : e + 2; continue; }
+                if (s.startsWith('<!', lt)) { const e = s.indexOf('>', lt + 2); i = e < 0 ? n : e + 1; continue; }
+                const gt = _bobjTagEnd(s, lt + 1);
+                if (gt < 0) break;
+                let raw = s.slice(lt + 1, gt).trim();
+                if (raw.startsWith('/')) { if (stack.length > 1) stack.pop(); i = gt + 1; continue; }
+                const selfClose = raw.endsWith('/');
+                if (selfClose) raw = raw.slice(0, -1).trim();
+                const node = _bobjParseTag(raw);
+                top().children.push(node);
+                if (!selfClose) stack.push(node);
+                i = gt + 1;
+            }
+            return root;
+        }
+        function _bobjTagEnd(s, from) {
+            let q = '';
+            for (let j = from; j < s.length; j++) { const c = s[j];
+                if (q) { if (c === q) q = ''; } else if (c === '"' || c === "'") q = c; else if (c === '>') return j; }
+            return -1;
+        }
+        function _bobjParseTag(raw) {
+            const m = raw.match(/^([^\s/>]+)\s*([\s\S]*)$/);
+            const tag = (m ? m[1] : raw).toLowerCase();
+            const attrs = {}; const rest = m ? m[2] : '';
+            const re = /([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g; let a;
+            while ((a = re.exec(rest))) attrs[a[1].toLowerCase()] = _bobjDecodeEntities(a[2] !== undefined ? a[2] : a[3]);
+            return { tag, attrs, children: [], text: '' };
+        }
+        function _bobjAddText(node, chunk) { const t = _bobjDecodeEntities(chunk); if (t.trim()) node.text += t; }
+        function _bobjDecodeEntities(s) {
+            return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+                .replace(/&#x([0-9a-fA-F]+);/g, (_m, h) => String.fromCharCode(parseInt(h, 16)))
+                .replace(/&#(\d+);/g, (_m, d) => String.fromCharCode(parseInt(d, 10))).replace(/&amp;/g, '&');
+        }
+        function _bobjFindFirst(node, tags) {
+            for (const c of node.children) if (tags.includes(c.tag)) return c;
+            for (const c of node.children) { const r = _bobjFindFirst(c, tags); if (r) return r; }
+            return null;
+        }
+        function _bobjFindAll(node, pred, out) {
+            out = out || [];
+            for (const c of node.children) { if (pred(c)) out.push(c); else _bobjFindAll(c, pred, out); }
+            return out;
+        }
+        function _bobjTextOf(node) { return node ? (node.text || '').trim() : ''; }
+
         function _bobjNormalize(input) {
             const root = (input && input.universe) || input || {};
             const name = root.name || root.universeName || (input && input.name) || 'BusinessObjects Universe';
@@ -21179,12 +21309,17 @@ views:
         function runBobjConversion() {
             phTrack('conversion_run', { converter: 'bobj' });
             const raw = document.getElementById('bobjJsonInput').value.trim();
-            if (!raw) { showToast('Paste or drop a BusinessObjects universe JSON first', 'warning'); return; }
+            if (!raw) { showToast('Paste or drop a BusinessObjects universe (RWS JSON or SL-SDK XML) first', 'warning'); return; }
             const btn = document.getElementById('bobjConvertBtn');
             btn.disabled = true; btn.textContent = '⏳ Converting…';
             try {
+                // Auto-detect input: a leading `<` is a Semantic-Layer SDK / IDT
+                // XML export (data foundation + business layer); otherwise RWS JSON.
+                const isXml = raw.startsWith('<');
                 let input;
-                try { input = JSON.parse(raw); } catch (e) { showToast('Invalid JSON: ' + e.message, 'error'); return; }
+                if (!isXml) {
+                    try { input = JSON.parse(raw); } catch (e) { showToast('Invalid JSON: ' + e.message, 'error'); return; }
+                }
                 _usedIds.clear();
                 const connectionId = document.getElementById('bobjConnectionId').value.trim() || '<CONNECTION_ID>';
                 state.useFriendlyNames = isConnectionFriendly(connectionId);
@@ -21193,7 +21328,7 @@ views:
                 const warnings = [];
                 { const fnWarn = friendlyNameWarning(); if (fnWarn) warnings.push(fnWarn); }
 
-                let uni = _bobjNormalize(input);
+                let uni = isXml ? _bobjIngestXml(raw) : _bobjNormalize(input);
 
                 // Optional target-layer remap (restructured / platinum layer).
                 const remapRaw = (document.getElementById('bobjRemapJson')?.value || '').trim();
@@ -34554,7 +34689,18 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
 
             bobj: `
 <h3>SAP BusinessObjects Universe Converter</h3>
-<p>Converts a SAP BusinessObjects <b>universe</b> (the semantic layer) to Sigma data model JSON. The expected input is the universe metadata returned by the BI <b>RESTful Web Service</b> (RWS) — <code>GET /biprws/sl/v1/universes/{id}</code> — running on your on-prem BO 4.x server. The ingest is tolerant of the common RWS shape variants (nested outline/items folders, class/objects, or a flat <code>objects[]</code> array).</p>
+<p>Converts a SAP BusinessObjects <b>universe</b> (the semantic layer) to Sigma data model JSON. Two input formats are accepted and <b>auto-detected</b> (a leading <code>&lt;</code> means XML):</p>
+<ul>
+    <li><b>RWS JSON</b> — the universe outline from the BI <b>RESTful Web Service</b>, <code>GET /biprws/sl/v1/universes/{id}</code>. Tolerant of the common shape variants (nested outline/items folders, class/objects, or a flat <code>objects[]</code> array).</li>
+    <li><b>SL-SDK / IDT XML</b> — a Semantic Layer SDK / Information Design Tool export of the <b>data foundation + business layer</b> (<code>&lt;universe&gt;&lt;dataFoundation&gt;&lt;tables&gt;/&lt;joins&gt; … &lt;businessLayer&gt;</code>). Tolerant of tag/attribute variants.</li>
+</ul>
+
+<h3 style="color:#c0392b;">⚠ Which format do I need? (the warehouse-columns gap)</h3>
+<p>The RWS REST endpoint returns only the business <b>outline</b> — object names, datatypes, folders. It does <b>NOT</b> return each object's <b>SELECT/WHERE</b> (the actual calculation) or the <b>data foundation</b> (physical tables, columns, joins). That is an SAP design limit, not a converter gap — even the latest 4.3 REST API stops at the outline. So:</p>
+<ul>
+    <li>If your RWS JSON looks empty of real columns/SQL, that's expected. Use it for <b>inventory/discovery</b>.</li>
+    <li>To migrate the actual <b>columns + calculations</b>, feed an <b>SL-SDK / IDT XML export</b> instead. The skill ships a Semantic Layer SDK extractor recipe (<code>scripts/extract-universe-sdk.groovy</code>) that walks each object's <code>RelationalBinding</code> (<code>getSelect()/getWhere()/getTables()</code>) plus the data foundation and emits this XML (or the equivalent JSON).</li>
+</ul>
 
 <h3>What Gets Converted</h3>
 <ul>
@@ -34575,11 +34721,17 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
 <p><b>Note:</b> the tool reproduces the universe structure 1:1; the remap repoints names but does not itself perform the platinum-layer remodeling (consolidating grain, collapsing star schemas). Treat the output as a first draft to enrich on top — translate → enrich/combine → validate.</p>
 
 <h3>How to Export from BusinessObjects</h3>
+<p><b>Path A — RWS JSON (outline; fastest, no tools):</b></p>
 <ol>
     <li>Authenticate: <code>POST /biprws/logon/long</code> → returns a logon token</li>
     <li>List universes: <code>GET /biprws/sl/v1/universes</code></li>
     <li>Fetch one universe's metadata: <code>GET /biprws/sl/v1/universes/{id}</code> (request JSON via the <code>Accept: application/json</code> header)</li>
     <li>Drop the resulting <code>.json</code> into the converter, or paste it</li>
+</ol>
+<p><b>Path B — SL-SDK / IDT XML (columns + SELECTs; required for real migration):</b></p>
+<ol>
+    <li>Run the Semantic Layer SDK extractor (<code>scripts/extract-universe-sdk.groovy</code> in the <code>businessobjects-to-sigma</code> skill) on a machine with the BO Client Tools / SemanticLayer SDK installed, OR export the data foundation + business layer from the Information Design Tool.</li>
+    <li>Drop the resulting <code>.xml</code> into the converter, or paste it. The leading <code>&lt;</code> auto-routes to the XML ingest.</li>
 </ol>
 
 <h3>Expression Conversion</h3>
@@ -34595,7 +34747,8 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
 <ul>
     <li><b>Predefined filters / conditions</b> — emitted as warnings only. These are report-time WHERE clauses with no data-model equivalent; re-create them as Sigma filters or controls.</li>
     <li><b>Universe @-functions</b> — <code>@Prompt()</code>, <code>@Select()</code>, <code>@Variable()</code>, <code>@Aggregate_Aware()</code>, <code>@Where()</code> are flagged with a warning. <code>@Aggregate_Aware</code> keeps its first aggregate branch; the others need a manual control/parameter or inlined SELECT.</li>
-    <li><b>Contexts &amp; derived tables</b> — RWS metadata is light on join contexts and derived-table SQL. A full Semantic-Layer-SDK XML export is needed for that fidelity (planned Phase 2 — same converter core).</li>
+    <li><b>RWS JSON has no SELECTs/tables</b> — the REST outline carries no relational bindings or data foundation, so columns and calculations cannot be migrated from it. Use an SL-SDK / IDT XML export (auto-detected) for those — same converter core.</li>
+    <li><b>Contexts</b> — join contexts (alternate join paths) are not yet modeled; relationships are emitted from the join graph. Verify multi-fact routing.</li>
     <li><b>Multi-table object SELECTs</b> — an object whose SELECT spans more than one table is placed on its first table with a warning; verify the cross-table references.</li>
     <li><b>Crystal Reports / Web Intelligence</b> — this converter handles the universe (semantic layer) only, not the report/document layer.</li>
 </ul>
