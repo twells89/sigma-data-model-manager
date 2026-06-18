@@ -162,7 +162,7 @@ Converts LookML projects (multiple `.lkml` files) to Sigma data model JSON. Drop
 | `${TABLE}.col_name` | `[Col Name]` |
 
 **Known limitations:**
-- Liquid templating — `{% %}` and `{{ }}` blocks are stripped with warnings. `html:`, `sql_on:`, `sql_where:`, `sql_table_name:`, and `sql_trigger_value:` blocks are pre-extracted alongside `sql:` before tokenizing, so Liquid `%}` inside an `html:` block no longer desyncs the parser and silently drops subsequent fields
+- Liquid templating — Parameter-driven dimensions (Liquid `{% if param._parameter_value == 'x' %}` field-pickers, and `${parameter}` substitution in `sql:`) are resolved to the parameter's DEFAULT branch/value (the state Looker renders unfiltered), so the field becomes a real, queryable column with a 🔶 handoff note instead of a dropped/error column — add a Sigma parameter control + `Switch()`/`If()` to reproduce the dynamic dropdown. Other Liquid (`{{ }}`, `_user_attributes`, nested `{% if %}`) is still stripped with warnings. `html:`, `sql_on:`, `sql_where:`, `sql_table_name:`, and `sql_trigger_value:` blocks are pre-extracted alongside `sql:` before tokenizing, so Liquid `%}` inside an `html:` block no longer desyncs the parser and silently drops subsequent fields
 - Cross-element columns — Calculated columns referencing joined view columns are automatically moved to the derived explore element; metrics with cross-element refs must be added manually in Sigma UI
 - Fiscal timeframes — Skipped with a warning (require `fiscal_month_offset` from model-level config)
 - Access filters — `access_filter` blocks converted to Sigma RLS using `CurrentUserAttributeText()`; `access_grant` blocks not converted

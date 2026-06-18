@@ -25724,6 +25724,63 @@ ${cleanedSql}`;
         //   circular ${a.SQL_TABLE_NAME} ↔ ${b.SQL_TABLE_NAME} chains. A ref that is
         //   already on the stack becomes a LOOKER_SCRATCH placeholder + loud warning
         //   instead of recursing forever. Mirrors resolveSqlTableNameRefs (MCP).
+        // ── Parameter-driven dimension resolution (mirrors MCP lookml.ts) ───────
+        // A LookML dimension can switch its SQL on a `parameter` via Liquid
+        // ({% if param._parameter_value == 'x' %}) or direct ${param} substitution.
+        // These can't be evaluated statically at query time, but Looker's UNFILTERED
+        // default state renders the parameter DEFAULT — so the faithful static
+        // conversion resolves to that default branch/value instead of dropping the
+        // field (which previously emitted a broken, error-typed column). Dynamic
+        // switching itself still needs a Sigma parameter control (handoff warning).
+        function lookResolveLiquidIf(sql, paramDefaults) {
+            if (!/\{%-?\s*if\b/i.test(sql)) return { sql, resolved: false };
+            const ifCount = (sql.match(/\{%-?\s*if\b/gi) || []).length;
+            if (ifCount !== 1) return { sql, resolved: false };   // refuse nested ifs
+            const m = sql.match(/\{%-?\s*if\b([\s\S]*?)\{%-?\s*endif\s*-?%\}/i);
+            if (!m) return { sql, resolved: false };
+            const before = sql.slice(0, m.index);
+            const after = sql.slice(m.index + m[0].length);
+            const body = '{% if' + m[1];
+            const markers = body.match(/\{%-?\s*(elsif|else if|else|if)\b([^%]*?)-?%\}/gi) || [];
+            const branches = [];
+            let rest = body;
+            for (let i = 0; i < markers.length; i++) {
+                const marker = markers[i];
+                const start = rest.indexOf(marker);
+                const bodyStart = start + marker.length;
+                const nextMarker = markers[i + 1];
+                const bodyEnd = nextMarker ? rest.indexOf(nextMarker, bodyStart) : rest.length;
+                const text = rest.slice(bodyStart, bodyEnd).trim();
+                const isElse = /\{%-?\s*else\s*-?%\}/i.test(marker);
+                const cond = isElse ? null
+                    : marker.replace(/\{%-?\s*(elsif|else if|if)\b/i, '').replace(/-?%\}/i, '').trim();
+                branches.push({ cond, text });
+            }
+            const evalCond = (cond) => {
+                const cm = cond.match(/([A-Za-z_][A-Za-z0-9_.]*?)(?:\._parameter_value)?\s*(==|!=)\s*['"]?([^'"]*)['"]?\s*$/);
+                if (!cm) return false;
+                const pname = cm[1].split('.').pop().toLowerCase();
+                const dv = paramDefaults.get(pname);
+                if (dv === undefined) return false;
+                return cm[2] === '==' ? dv === cm[3].trim() : dv !== cm[3].trim();
+            };
+            let chosen = branches.find(b => b.cond !== null && evalCond(b.cond))
+                || branches.find(b => b.cond === null) || branches[0];
+            if (!chosen) return { sql, resolved: false };
+            const out = (before + ' ' + chosen.text + ' ' + after).replace(/\s+/g, ' ').trim();
+            if (/\{%/.test(out)) return { sql, resolved: false };   // leftover Liquid
+            return { sql: out, resolved: true };
+        }
+        function lookResolveParamSubst(sql, paramDefaults) {
+            let changed = false;
+            const out = sql.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (full, name) => {
+                const dv = paramDefaults.get(name.toLowerCase());
+                if (dv !== undefined) { changed = true; return dv; }
+                return full;
+            });
+            return { sql: out, resolved: changed };
+        }
+
         async function lookConvertView(viewName, displayAlias, connectionId, warnings, cteMap = null, isTopLevel = true, pdtStack = null) {
             // In CTE mode, create a fresh map at the top level so each element gets its own CTE chain.
             if (isTopLevel && cteMap === null) {
@@ -26152,9 +26209,40 @@ ${cleanedSql}`;
                 ? (Array.isArray(view.dimension) ? view.dimension : [view.dimension])
                 : [];
 
+            // Parameter default-value map for static resolution of parameter-driven
+            // dimensions (Liquid {% if %} field-pickers / ${param} substitution).
+            const paramDefaults = new Map();
+            {
+                const params = view.parameter ? (Array.isArray(view.parameter) ? view.parameter : [view.parameter]) : [];
+                for (const p of params) {
+                    if (p && p._name && p.default_value != null && p.default_value !== '') {
+                        paramDefaults.set(p._name.toLowerCase(), String(p.default_value));
+                    }
+                }
+            }
+
             for (const d of dims) {
                 if (!d._name) continue;
                 const colName = d._name.toUpperCase();
+
+                // Statically resolve parameter-driven SQL to the parameter DEFAULT
+                // (Looker's unfiltered default state) so the field becomes a real,
+                // queryable column instead of a dropped/error column. Dynamic
+                // switching needs a Sigma parameter control — emit a 🔶 handoff.
+                if (d.sql && /\{%-?\s*if\b/i.test(d.sql)) {
+                    const liq = lookResolveLiquidIf(d.sql, paramDefaults);
+                    if (liq.resolved) {
+                        d.sql = liq.sql;
+                        warnings.push(`🔶 "${d._name}": Liquid {% if %} field-picker resolved to the parameter DEFAULT branch (→ ${liq.sql.replace(/\s+/g, ' ').trim().slice(0, 60)}). To reproduce the dynamic dropdown, add a Sigma parameter control and a Switch()/If() over its value.`);
+                    }
+                }
+                if (d.sql && !/\$\{TABLE\}/i.test(d.sql)) {
+                    const sub = lookResolveParamSubst(d.sql, paramDefaults);
+                    if (sub.resolved) {
+                        d.sql = sub.sql;
+                        warnings.push(`🔶 "${d._name}": LookML parameter \${...} substituted with its DEFAULT value (→ ${sub.sql.replace(/\s+/g, ' ').trim().slice(0, 60)}). To reproduce the dynamic behavior, add a Sigma parameter control.`);
+                    }
+                }
 
                 // ── legacy `case: { when: {sql,label}... else }` → nested If() ──
                 // A dimension with a legacy case block is a calculated column, NOT a
@@ -34025,7 +34113,7 @@ models:
 
 <h3>Known Limitations</h3>
 <ul>
-    <li><b>Liquid templating</b> — <code>{% %}</code> and <code>{{ }}</code> blocks are <b>stripped entirely</b> with warnings. Any dimension or measure that depends on Liquid conditionals (e.g. <code>{% if _user_attributes['region'] %}</code>) will produce incorrect formulas. Review all Liquid warnings carefully after conversion. Note: <code>html:</code>, <code>sql_on:</code>, <code>sql_where:</code>, <code>sql_table_name:</code>, and <code>sql_trigger_value:</code> blocks are now pre-extracted alongside <code>sql:</code> before tokenizing, so Liquid <code>%}</code> inside an <code>html:</code> block no longer desyncs the parser and silently drops subsequent fields.</li>
+    <li><b>Liquid templating</b> — Parameter-driven dimensions (Liquid <code>{% if param._parameter_value == 'x' %}</code> field-pickers, and <code>${parameter}</code> substitution in <code>sql:</code>) are now <b>resolved to the parameter's DEFAULT branch/value</b> — the same state Looker renders unfiltered — so the field becomes a real, queryable column with a 🔶 handoff note instead of a dropped/error column. To reproduce the dynamic dropdown, add a Sigma parameter control and a <code>Switch()</code>/<code>If()</code> over its value. Other Liquid (<code>{{ }}</code>, <code>_user_attributes</code>, multi-level/nested <code>{% if %}</code>) is still stripped with warnings — review carefully. Note: <code>html:</code>, <code>sql_on:</code>, <code>sql_where:</code>, <code>sql_table_name:</code>, and <code>sql_trigger_value:</code> blocks are pre-extracted alongside <code>sql:</code> before tokenizing, so Liquid <code>%}</code> inside an <code>html:</code> block no longer desyncs the parser and silently drops subsequent fields.</li>
     <li><b>Cross-view refs (<code>\${view_name.field}</code>)</b> — Dimensions whose <code>sql:</code> references fields from another view (e.g. <code>\${orders.customer_id}</code>) are automatically converted to <code>Lookup()</code> formulas using the explore's relationship keys. If a relationship exists and FK/PK columns are resolved, the full Lookup is emitted and a <code>✅</code> confirmation appears in the warnings panel. If the relationship can't be resolved, a partial <code>[TABLE/Col]</code> reference is emitted with a <code>⚠</code> warning to update it manually.</li>
     <li><b>PDT materializations</b> — Persistent Derived Tables are recognized and converted to Custom SQL elements. The materialization strategy (trigger, datagroup, sql_trigger_value) does not carry over — a 🔶/ℹ warning maps each hint to Sigma scheduled materialization. When a derived table's SQL references another PDT via <code>${'{'}view.SQL_TABLE_NAME{'}'}</code>, the referenced PDT's SQL is inlined as a WITH CTE (cycle-guarded); upload all referenced view files at once to enable full auto-resolution — missing views become <code>LOOKER_SCRATCH.&lt;VIEW&gt;</code> placeholder tables with a loud warning.</li>
     <li><b>Incremental PDTs</b> — <code>{% incrementcondition %} col {% endincrementcondition %}</code> Liquid is replaced with a valid <code>1=1</code> predicate (Sigma always runs the full SQL) and <code>increment_key</code>/<code>increment_offset</code> emit a 🔶 warning recommending Sigma scheduled materialization for the refresh cadence — never silent, never a syntax error where the WHERE predicate was.</li>
