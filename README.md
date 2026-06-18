@@ -524,13 +524,15 @@ Converts Oracle Analytics Cloud semantic models exported from the Semantic Model
 
 ### SAP BusinessObjects Universe
 
-Converts a SAP BusinessObjects **universe** (the semantic layer) to Sigma data model JSON. Input is the universe metadata from the BI RESTful Web Service (RWS) — `GET /biprws/sl/v1/universes/{id}` on an on-prem BO 4.x server. The ingest is tolerant of the common RWS shape variants (nested outline/items folders, class/objects, or a flat `objects[]` array).
+Converts a SAP BusinessObjects **universe** (the semantic layer) to Sigma data model JSON. Two input formats are accepted and **auto-detected** (a leading `<` means XML):
+- **RWS JSON** — `GET /biprws/sl/v1/universes/{id}`. Tolerant of the common shape variants (nested outline/items folders, class/objects, or a flat `objects[]` array).
+- **SL-SDK / IDT XML** — a Semantic Layer SDK / Information Design Tool export of the **data foundation + business layer**.
+
+**⚠ Which format do I need? (the warehouse-columns gap):** the RWS REST endpoint returns only the business **outline** — object names, datatypes, folders. It does **NOT** return each object's SELECT/WHERE (the calculation) or the data foundation (physical tables, columns, joins). That is an SAP design limit — even 4.3 stops at the outline. Use RWS JSON for **inventory/scoping**; to migrate the actual **columns + calculations**, feed an **SL-SDK / IDT XML export** (the `businessobjects-to-sigma` skill ships an `extract-universe-sdk.groovy` recipe that walks each object's `RelationalBinding` plus the data foundation).
 
 **How to export from BusinessObjects:**
-1. Authenticate: `POST /biprws/logon/long` → logon token
-2. List universes: `GET /biprws/sl/v1/universes`
-3. Fetch one universe's metadata: `GET /biprws/sl/v1/universes/{id}` (with `Accept: application/json`)
-4. Drop the resulting `.json` into the converter (or paste it)
+- *RWS JSON (outline; fastest):* `POST /biprws/logon/long` → token, `GET /biprws/sl/v1/universes` → list, `GET /biprws/sl/v1/universes/{id}` (with `Accept: application/json`), drop the `.json` in.
+- *SL-SDK / IDT XML (columns + SELECTs):* run the Semantic Layer SDK extractor on a machine with the BO Client Tools / SDK installed (or export the data foundation + business layer from the IDT), then drop the `.xml` in — the leading `<` auto-routes to the XML ingest.
 
 **What gets converted:**
 - Physical tables → Sigma elements (one per table); warehouse path from the table name, with optional Database / Schema overrides
@@ -557,7 +559,8 @@ Converts a SAP BusinessObjects **universe** (the semantic layer) to Sigma data m
 **Known limitations:**
 - Predefined filters / conditions — emitted as warnings only (report-time WHERE clauses, no data-model equivalent); re-create as Sigma filters/controls
 - Universe `@`-functions (`@Prompt`, `@Select`, `@Variable`, `@Aggregate_Aware`, `@Where`) — flagged with a warning; `@Aggregate_Aware` keeps its first branch, the rest need a manual control or inlined SELECT
-- Contexts & derived tables — RWS metadata is light here; a full Semantic-Layer-SDK XML export is needed for that fidelity (planned Phase 2, same converter core)
+- RWS JSON has no SELECTs/tables — the REST outline carries no relational bindings or data foundation, so columns and calculations can't come from it; use an SL-SDK / IDT XML export (auto-detected) for those, same converter core
+- Contexts (alternate join paths) — not yet modeled; relationships come from the join graph, verify multi-fact routing
 - Multi-table object SELECTs — placed on the first table with a warning; verify cross-table references
 - Crystal Reports / Web Intelligence — this converter handles the universe (semantic layer) only, not the report/document layer
 

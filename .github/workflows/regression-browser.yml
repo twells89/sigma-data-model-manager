@@ -29,6 +29,11 @@ jobs:
           repository: twells89/sigma-data-model-mcp
           ref: main
           path: mcp-checkout
+          # sigma-data-model-mcp is private; the default GITHUB_TOKEN is scoped
+          # to this repo only and cannot read it ("Repository not found"). Use a
+          # token with read access to the MCP repo. TODO: replace with a
+          # fine-grained read-only (Contents) PAT scoped to sigma-data-model-mcp.
+          token: ${{ secrets.MCP_CHECKOUT_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
