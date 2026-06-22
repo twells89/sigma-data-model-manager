@@ -6079,7 +6079,13 @@ PRODUCT_NAME
                         const errText = await r.text();
                         let msg = `HTTP ${r.status}`;
                         try { msg = JSON.parse(errText).message || msg; } catch(e) {}
-                        throw new Error(msg);
+                        const err = new Error(msg);
+                        // Preserve the raw API response so the import log can show the
+                        // full error — the spec API often returns nested validation
+                        // detail (offending column/element) that `.message` drops.
+                        err.detail = errText;
+                        err.status = r.status;
+                        throw err;
                     }
 
                     const connNote = connectionIdOverride ? ' [conn overridden]' : '';
@@ -6090,7 +6096,7 @@ PRODUCT_NAME
                     const msg = e.message === 'Failed to fetch'
                         ? 'Network error (possible rate limit — retries exhausted)'
                         : e.message;
-                    addBulkLog(`❌ ${meta.name}: ${msg}`, 'error');
+                    addBulkLog(`❌ ${meta.name}: ${msg}`, 'error', e.detail);
                 }
 
                 // Pace requests to avoid triggering API rate limits
@@ -6137,12 +6143,34 @@ PRODUCT_NAME
             document.getElementById('bulkProgressLabel').textContent = `${done} / ${total} — ${label}`;
         }
 
-        function addBulkLog(msg, type) {
+        function addBulkLog(msg, type, detail) {
             const log = document.getElementById('bulkProgressLog');
             const line = document.createElement('div');
             line.style.color = type === 'error' ? '#f87171' : type === 'success' ? '#4ade80' : 'var(--text-secondary)';
             line.textContent = msg;
             log.appendChild(line);
+
+            // When the caller passes the raw error body (detail) — distinct from the
+            // short summary already in `msg` — surface it in a collapsible block and
+            // pretty-print JSON responses so the full API error is recoverable.
+            if (detail && String(detail).trim() && String(detail).trim() !== msg) {
+                let pretty = String(detail);
+                try { pretty = JSON.stringify(JSON.parse(detail), null, 2); } catch (e) {}
+                const det = document.createElement('details');
+                det.style.cssText = 'margin:2px 0 6px 18px;color:var(--text-secondary);';
+                const sum = document.createElement('summary');
+                sum.textContent = 'Show full error';
+                sum.style.cssText = 'cursor:pointer;font-size:11px;color:var(--text-secondary);';
+                const pre = document.createElement('pre');
+                pre.textContent = pretty;
+                pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;font-size:11px;'
+                    + 'background:var(--bg-tertiary);border-radius:4px;padding:6px 8px;margin:4px 0 0;'
+                    + 'max-height:200px;overflow:auto;color:var(--text-primary);';
+                det.appendChild(sum);
+                det.appendChild(pre);
+                log.appendChild(det);
+            }
+
             log.scrollTop = log.scrollHeight;
         }
 
