@@ -28078,6 +28078,71 @@ ${cleanedSql}`;
             return [db, schema, tableName].filter(Boolean);
         }
 
+        // ── Encapsulated-legacy object-model helpers (DOM variants) ───────
+        // Tableau 2021.1+ ("Object Model / EncapsulateLegacy") no longer emits a
+        // plain <relation>/<object-graph>; it emits feature-flag-namespaced tags
+        // whose literal name is e.g. `_.fcp.ObjectModelEncapsulateLegacy.true...relation`
+        // (+ a `.false...` legacy twin). The DOM keeps that full string as the
+        // tagName, so `querySelector(':scope > relation')` matches nothing and the
+        // datasource silently yields 0 tables/columns — the empty-DM bug on modern
+        // .twb. We can't pass these names to a CSS selector (they contain dots), so
+        // we filter children by tagName instead.
+
+        // Resolve a connection's <relation>(s): prefer bare <relation>, then the
+        // `.true...` (encapsulated object-model) variant, then any `...relation`.
+        function tableauConnRelations(conn) {
+            if (!conn) return [];
+            const bare = Array.from(conn.children).filter(c => c.tagName.toLowerCase() === 'relation');
+            if (bare.length) return bare;
+            const ns = Array.from(conn.children).filter(c => c.tagName.toLowerCase().endsWith('...relation'));
+            if (!ns.length) return [];
+            const truthy = ns.filter(c => c.tagName.includes('.true...'));
+            return truthy.length ? truthy : ns;
+        }
+
+        // Resolve the (single) connection root relation, namespace-aware.
+        function tableauRootRelation(conn) {
+            return tableauConnRelations(conn)[0] || null;
+        }
+
+        // Resolve a possibly feature-flag-namespaced CHILD element. e.g. the object
+        // graph is `_.fcp.ObjectModelEncapsulateLegacy.true...object-graph` and a
+        // column's owning object is under `...object-id`. Prefer the bare child,
+        // then a `.true...` variant, then any `...<suffix>` child.
+        function tableauNsChild(el, suffix) {
+            if (!el) return null;
+            const kids = Array.from(el.children);
+            const bare = kids.find(c => c.tagName.toLowerCase() === suffix.toLowerCase());
+            if (bare) return bare;
+            const matches = kids.filter(c => c.tagName.toLowerCase().endsWith('...' + suffix.toLowerCase()));
+            if (!matches.length) return null;
+            return matches.find(c => c.tagName.includes('.true...')) || matches[0];
+        }
+
+        // getAttribute() that also matches a feature-flag-namespaced ATTRIBUTE, e.g.
+        // a relationship join op stored as `_.fcp.RelationshipCalculations.true...op`
+        // instead of `op`. Prefers the bare attribute, then the `.true...` variant
+        // (bracketed column refs), then any namespaced match.
+        function tableauNsAttr(node, key) {
+            if (!node) return '';
+            const bare = node.getAttribute(key);
+            if (bare != null && bare !== '') return bare;
+            const attrs = Array.from(node.attributes || []);
+            const lk = '...' + key.toLowerCase();
+            const matches = attrs.filter(a => a.name.toLowerCase().endsWith(lk));
+            if (!matches.length) return '';
+            const pick = matches.find(a => a.name.includes('.true...')) || matches[0];
+            return pick.value || '';
+        }
+
+        // Namespace-aware child <relation> filter (used for collection trees).
+        function tableauChildRelations(el) {
+            return Array.from(el.children).filter(c => {
+                const t = c.tagName.toLowerCase();
+                return t === 'relation' || t.endsWith('...relation');
+            });
+        }
+
         // ── Build elements from Tableau relation tree ─────────────────────
         function tableauBuildElements(rootRel, connection, connectionId, dbOverride, schOverride, strategy, elements, warnings, guidIndex) {
             const relType = rootRel.getAttribute('type') || 'table';
@@ -28116,7 +28181,7 @@ ${cleanedSql}`;
                 // Tableau 2020.2+ relationship model (virtual connections).
                 // All columns live in <metadata-record class='column'> elements, not in the inline <columns> block.
                 // Joins are defined in <datasource><object-graph><relationships>.
-                const childRels = Array.from(rootRel.children).filter(c => c.tagName.toLowerCase() === 'relation');
+                const childRels = tableauChildRelations(rootRel);
                 if (childRels.length === 0) {
                     warnings.push('⚠ Collection datasource has no child relations — skipped');
                     return;
@@ -28124,15 +28189,44 @@ ${cleanedSql}`;
 
                 // Build UUID→caption map keyed by FULL object-id (with hex hash) so role-playing
                 // dimensions (two instances of the same table) remain distinguishable.
-                const metaByObjId = {};
+                // ALSO key by parent-name: the encapsulated-legacy object model (most modern
+                // .twb, incl. multi-custom-SQL workbooks) leaves <object-id> absent on the
+                // metadata-record and instead carries `parent-name` ("[Custom SQL Query1]")
+                // — which maps 1:1 to the child relation NAME — plus the object id under the
+                // namespaced `_.fcp.…true...object-id`. Grouping only by object-id collapsed
+                // every column onto the first element (the empty-stub-elements bug); group by
+                // parent-name so each of the N relations gets its own columns.
+                const stripBrackets = s => (s || '').replace(/^\[|\]$/g, '');
+                const GUID_ONLY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                const metaByObjId = {};   // objId → [{ uuid, caption, objId }]
+                const metaByParent = {};  // parent-name → [{ uuid, caption, objId }]
                 for (const mr of connection.querySelectorAll('metadata-records > metadata-record')) {
                     if ((mr.getAttribute('class') || '') !== 'column') continue;
-                    const uuid     = (mr.querySelector('remote-name')?.textContent || '').trim();
-                    const cap      = (mr.querySelector('caption')?.textContent     || '').trim();
-                    const objIdRaw = (mr.querySelector('object-id')?.textContent   || '').replace(/^\[|\]$/g, '');
-                    if (!uuid || !cap || !objIdRaw) continue;
-                    if (!metaByObjId[objIdRaw]) metaByObjId[objIdRaw] = [];
-                    metaByObjId[objIdRaw].push({ uuid, caption: cap });
+                    const uuid = (mr.querySelector('remote-name')?.textContent || '').trim();
+                    // caption is often absent on the encapsulated model — fall back to the
+                    // remote alias / local-name / remote-name so columns still get a name.
+                    const cap = ((mr.querySelector('caption')?.textContent
+                        || mr.querySelector('remote-alias')?.textContent
+                        || stripBrackets(mr.querySelector('local-name')?.textContent || '')
+                        || uuid) || '').trim();
+                    // object-id may be bare OR under the namespaced `…object-id` child.
+                    const objIdRaw = stripBrackets((
+                        (mr.querySelector('object-id')?.textContent || '')
+                        || (tableauNsChild(mr, 'object-id')?.textContent || '')
+                    ).trim());
+                    const parentRaw = stripBrackets((mr.querySelector('parent-name')?.textContent || '').trim());
+                    if (!uuid || !cap) continue;
+                    // Skip a record whose only available name is a raw Tableau GUID (no
+                    // caption/alias/local-name resolved to anything else). Such a "column"
+                    // is an internal field id, not a real warehouse column — emitting it
+                    // yields a `[TABLE/<guid>]` ref that can't resolve ("dependency not
+                    // found" at POST). The pre-encapsulation path skipped these implicitly
+                    // by requiring an object-id; relaxing that for the encapsulated variant
+                    // let them leak in, so filter them explicitly.
+                    if (GUID_ONLY_RE.test(cap)) continue;
+                    const entry = { uuid, caption: cap, objId: objIdRaw || null };
+                    if (objIdRaw) (metaByObjId[objIdRaw] = metaByObjId[objIdRaw] || []).push(entry);
+                    if (parentRaw) (metaByParent[parentRaw] = metaByParent[parentRaw] || []).push(entry);
                 }
 
                 const elementMap = {}; // fullName → { element, colIdMap, cleanName }
@@ -28156,7 +28250,14 @@ ${cleanedSql}`;
                             matchingObjId = cands[idx];
                         }
                     }
-                    const metaCols   = matchingObjId ? metaByObjId[matchingObjId] : [];
+                    let metaCols = matchingObjId ? (metaByObjId[matchingObjId] || []) : [];
+                    // Encapsulated-legacy / multi-custom-SQL: object-id is absent on the
+                    // metadata-record, so the object-id match above finds nothing — match by
+                    // parent-name, which equals the child relation name.
+                    if (!metaCols.length) metaCols = metaByParent[fullName] || [];
+                    // Adopt the object-id these columns carry so relationship wiring (keyed on
+                    // object-ids from the object-graph) can resolve back to THIS element.
+                    const relObjId = matchingObjId || (metaCols.find(c => c.objId) || {}).objId || null;
 
                     for (const { uuid, caption } of metaCols) {
                         const cleanCaption = caption.replace(/\s*\(.*\)$/, '').trim(); // strip disambiguation
@@ -28189,13 +28290,18 @@ ${cleanedSql}`;
                     const el = { id: sigmaShortId(), kind: 'table',
                         source: { connectionId, kind: 'warehouse-table', path },
                         columns, metrics: [], order };
-                    elementMap[fullName] = { element: el, colIdMap, cleanName, objId: matchingObjId || null };
+                    elementMap[fullName] = { element: el, colIdMap, cleanName, objId: relObjId };
                     elements.push(el);
                 }
 
-                // Wire relationships from <object-graph><relationships>
+                // Wire relationships from <object-graph><relationships>. The graph may be
+                // bare `object-graph` OR the namespaced encapsulated-legacy variant, so we
+                // can't reach it through a plain CSS selector — resolve via tableauNsChild.
                 const dsEl  = connection.parentElement || rootRel.parentElement?.parentElement;
-                const relsEl = dsEl ? dsEl.querySelector('object-graph > relationships, relationships') : null;
+                const objGraphEl = dsEl ? tableauNsChild(dsEl, 'object-graph') : null;
+                const relsEl = objGraphEl
+                    ? (Array.from(objGraphEl.children).find(c => c.tagName.toLowerCase() === 'relationships') || null)
+                    : (dsEl ? dsEl.querySelector('relationships') : null);
 
                 if (relsEl) {
                     // Resolve object-id to an elementMap entry.
@@ -28231,26 +28337,6 @@ ${cleanedSql}`;
                         const secondEntry = findEntry(secondEp.getAttribute('object-id') || '');
                         if (!firstEntry || !secondEntry || firstEntry === secondEntry) continue;
 
-                        const exprs = rel.querySelectorAll('expression > expression');
-                        if (exprs.length < 2) continue;
-
-                        const srcOpRaw = exprs[0].getAttribute('op') || '';
-                        const tgtOpRaw = exprs[1].getAttribute('op') || '';
-                        const srcKey = parseOpRef(srcOpRaw);
-                        const tgtKey = parseOpRef(tgtOpRaw);
-                        if (!srcKey || !tgtKey) continue;
-
-                        // A join key wrapped in a function (e.g. DATE([order_date])) is a computed
-                        // key, not a plain physical column. Sigma relationships join on physical
-                        // columns only; emitting one keyed on a derived value yields a dangling join
-                        // whose cross-element refs all error-type. Route to manual authoring.
-                        const isFnWrappedKey = (op) =>
-                            /^[A-Za-z_]\w*\(\s*\[?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\]?\s*\)$/i.test(op.trim());
-                        if (isFnWrappedKey(srcOpRaw) || isFnWrappedKey(tgtOpRaw)) {
-                            warnings.push('⚠ Relationship ' + firstEntry.cleanName + ' → ' + secondEntry.cleanName + ' joins on a computed key (' + (srcOpRaw || tgtOpRaw).slice(0, 40) + '); Sigma joins on physical columns only — skipped, needs manual authoring.');
-                            continue;
-                        }
-
                         const ensureCol = (entry, key) => {
                             let id = entry.colIdMap[key] || entry.colIdMap[key.replace(/-/g, '_')];
                             if (!id) {
@@ -28273,17 +28359,61 @@ ${cleanedSql}`;
                             return id;
                         };
 
-                        const srcColId = ensureCol(firstEntry,  srcKey);
-                        const tgtColId = ensureCol(secondEntry, tgtKey);
+                        // The join condition is either a single equality (expression[op="="])
+                        // or a composite AND/OR of several equalities (expression[op="AND"] >
+                        // expression[op="="] × N). Flatten to the leaf equalities. The `op`
+                        // attribute may be namespaced (`_.fcp.RelationshipCalculations.true...op`).
+                        const collectEqs = (expr, acc) => {
+                            const op   = tableauNsAttr(expr, 'op');
+                            const kids = Array.from(expr.children).filter(c => c.tagName.toLowerCase() === 'expression');
+                            if (op === '=' && kids.length >= 2) { acc.push(expr); return; }
+                            for (const k of kids) collectEqs(k, acc); // AND / OR / nested
+                        };
+                        const eqExprs = [];
+                        for (const oe of Array.from(rel.children).filter(c => c.tagName.toLowerCase() === 'expression')) {
+                            collectEqs(oe, eqExprs);
+                        }
+                        if (eqExprs.length === 0) continue;
+
+                        // A side is a plain physical column iff its op is a bare bracketed ref
+                        // `[COL]`. Anything else — an IF/DATETRUNC formula (stored under the
+                        // namespaced RelationshipCalculations op), DATE([uuid]), a concatenation —
+                        // is a computed key Sigma can't join on. Wire physical equalities as keys;
+                        // drop computed ones (warn); skip the whole relationship if NONE are
+                        // physical (never fake a join on a synthetic "=" column).
+                        const isPhysical = op => /^\[[^\]]+\]$/.test((op || '').trim());
+                        const keys = [];
+                        let skippedComputed = 0;
+                        for (const eq of eqExprs) {
+                            const inner = Array.from(eq.children).filter(c => c.tagName.toLowerCase() === 'expression');
+                            if (inner.length < 2) continue;
+                            const srcOpRaw = tableauNsAttr(inner[0], 'op') || '';
+                            const tgtOpRaw = tableauNsAttr(inner[1], 'op') || '';
+                            if (!isPhysical(srcOpRaw) || !isPhysical(tgtOpRaw)) { skippedComputed++; continue; }
+                            const srcKey = parseOpRef(srcOpRaw), tgtKey = parseOpRef(tgtOpRaw);
+                            if (!srcKey || !tgtKey) continue;
+                            keys.push({
+                                sourceColumnId: ensureCol(firstEntry,  srcKey),
+                                targetColumnId: ensureCol(secondEntry, tgtKey)
+                            });
+                        }
+
+                        if (keys.length === 0) {
+                            warnings.push('⚠ Relationship ' + firstEntry.cleanName + ' → ' + secondEntry.cleanName + ' joins only on computed key(s) (e.g. IF/DATETRUNC expression); Sigma joins on physical columns only — NOT wired. Needs a computed join column or manual authoring.');
+                            continue;
+                        }
+                        if (skippedComputed > 0) {
+                            warnings.push('⚠ Relationship ' + firstEntry.cleanName + ' → ' + secondEntry.cleanName + ': wired ' + keys.length + ' physical key(s); ' + skippedComputed + ' computed condition(s) dropped — verify join grain in Sigma.');
+                        }
 
                         if (!firstEntry.element.relationships) firstEntry.element.relationships = [];
                         firstEntry.element.relationships.push({
                             id: sigmaShortId(),
                             targetElementId: secondEntry.element.id,
-                            keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
+                            keys,
                             name: secondEntry.cleanName
                         });
-                        warnings.push('ℹ Relationship ' + firstEntry.cleanName + ' → ' + secondEntry.cleanName + ' on ' + srcKey + ' = ' + tgtKey);
+                        warnings.push('ℹ Relationship ' + firstEntry.cleanName + ' → ' + secondEntry.cleanName + ' wired on ' + keys.length + ' physical key(s).');
                     }
                 } else {
                     warnings.push('ℹ Collection datasource: no <relationships> element — elements created without joins');
@@ -28496,7 +28626,9 @@ ${cleanedSql}`;
             }
 
             const connection   = ds.connection;
-                const rootRelation = connection ? connection.querySelector(':scope > relation') : null;
+                // Namespace-aware: encapsulated-legacy (.true...relation) tags don't match a
+                // plain CSS `:scope > relation` selector.
+                const rootRelation = tableauRootRelation(connection);
 
                 // ── Virtual-connection GUID resolution index ─────────────────────
                 // In a Tableau 2020.2+ "virtual connection" (relation type='collection')
@@ -28547,7 +28679,7 @@ ${cleanedSql}`;
                 // <columns> (the physical fact table). Dimension relations are bare.
                 let factRelName = null;
                 if (rootRelation && (rootRelation.getAttribute('type') || '') === 'collection') {
-                    const _childRels = Array.from(rootRelation.children).filter(c => c.tagName.toLowerCase() === 'relation');
+                    const _childRels = tableauChildRelations(rootRelation);
                     const _factChild = _childRels.find(r => r.querySelectorAll(':scope > columns > column').length > 0);
                     factRelName = _factChild ? (_factChild.getAttribute('name') || _factChild.getAttribute('table') || null) : null;
                 }
@@ -28566,9 +28698,9 @@ ${cleanedSql}`;
                                 derivedRelColGuids.add(gm[0].toLowerCase());
                             }
                         }
-                        for (const child of Array.from(r.children).filter(c => c.tagName.toLowerCase() === 'relation')) scanRel(child);
+                        for (const child of tableauChildRelations(r)) scanRel(child);
                     };
-                    for (const rel of connection.querySelectorAll(':scope > relation')) scanRel(rel);
+                    for (const rel of tableauConnRelations(connection)) scanRel(rel);
                 }
 
                 // Rewrite bare [GUID] references in a Tableau formula to [Caption] so the
@@ -29568,7 +29700,7 @@ ${cleanedSql}`;
                 push(remote, isMeasure);
             }
             if (out.length === 0 && connection) {
-                const rel = connection.querySelector(':scope > relation');
+                const rel = tableauRootRelation(connection);
                 if (rel) for (const col of rel.querySelectorAll(':scope > columns > column')) {
                     const dt = (col.getAttribute('datatype') || '').toLowerCase();
                     push(col.getAttribute('name'), ['integer', 'real'].includes(dt));
@@ -29598,7 +29730,7 @@ ${cleanedSql}`;
             const primaryId = blendRels[0].getAttribute('source');
             const primary = dsById[primaryId];
             if (!primary) return null;
-            const primaryRel = primary.connection ? primary.connection.querySelector(':scope > relation') : null;
+            const primaryRel = tableauRootRelation(primary.connection);
             if (!primaryRel) return null;
 
             const links = [];
@@ -29606,7 +29738,7 @@ ${cleanedSql}`;
                 if (br.getAttribute('source') !== primaryId) continue;
                 const secId = br.getAttribute('target');
                 const sec = dsById[secId];
-                const secRel = sec && sec.connection ? sec.connection.querySelector(':scope > relation') : null;
+                const secRel = sec ? tableauRootRelation(sec.connection) : null;
                 if (!sec || !secRel) { warnings.push('⚠ Blend secondary \'' + secId + '\' has no warehouse table — skipped (publish/repoint it to a warehouse to include)'); continue; }
                 const pairs = [];
                 for (const m of br.querySelectorAll(':scope > column-mapping > map')) {
