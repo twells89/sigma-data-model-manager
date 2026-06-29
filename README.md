@@ -50,7 +50,7 @@ Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) 
 
 **What gets converted:**
 - Data sources → Sigma elements with warehouse table paths (standard joins, virtual connections, custom SQL)
-- Virtual connections (type=collection) → Tableau 2020.2+ relationship model with role-playing dimensions
+- Virtual connections (type=collection) → Tableau 2020.2+ relationship model with role-playing dimensions. A `type='text'` child relation (object-model / DDMX `_.fcp.ObjectModelEncapsulateLegacy` Custom SQL) is recognized as Custom SQL and emitted as a `kind:sql` element carrying its inline `SELECT` — not as a warehouse table named after the relation (which would fail "Source not found"). For a single-source custom-SQL datasource the lone SQL element is named "Custom SQL" and its column formulas are remapped to the raw SQL output names so the model POSTs cleanly.
 - Joins / Relationships → Sigma relationships on the fact element. Tableau 2020.2+ relationship model ("noodles") maps 1:1 to Sigma relationships — both tools resolve join type and granularity at viz time, so no semantic information is lost. Cardinality hints (1:1, 1:N, N:1, N:N) are preserved when present and default to N:1 (the dominant fact-to-dim pattern) when Tableau leaves them unspecified. Pre-2020.2 physical joins (older Tableau Server on-prem versions back to 2018.x) are handled via the Join Strategy dropdown: Auto routes many-to-one joins to relationships and others to physical joins; Force Relationships keeps everything lazy; Force Physical Joins keeps everything eager.
 - Calculated fields → Sigma calculated columns with formula conversion
 - Simple aggregates → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)
