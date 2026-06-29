@@ -28216,6 +28216,13 @@ ${cleanedSql}`;
                         || (tableauNsChild(mr, 'object-id')?.textContent || '')
                     ).trim());
                     const parentRaw = stripBrackets((mr.querySelector('parent-name')?.textContent || '').trim());
+                    // The exact SQL-output column name (remote-alias, else local-name).
+                    // A kind:'sql' element's column formulas must reference the RAW SQL
+                    // output name, not the friendly caption (see the type='text' branch
+                    // + single-source remap below); capture it here.
+                    const remoteAlias = ((mr.querySelector('remote-alias')?.textContent
+                        || stripBrackets(mr.querySelector('local-name')?.textContent || '')
+                        || '') || '').trim();
                     if (!uuid || !cap) continue;
                     // Skip a record whose only available name is a raw Tableau GUID (no
                     // caption/alias/local-name resolved to anything else). Such a "column"
@@ -28225,12 +28232,31 @@ ${cleanedSql}`;
                     // by requiring an object-id; relaxing that for the encapsulated variant
                     // let them leak in, so filter them explicitly.
                     if (GUID_ONLY_RE.test(cap)) continue;
-                    const entry = { uuid, caption: cap, objId: objIdRaw || null };
+                    const entry = { uuid, caption: cap, objId: objIdRaw || null, remoteAlias: remoteAlias || null };
                     if (objIdRaw) (metaByObjId[objIdRaw] = metaByObjId[objIdRaw] || []).push(entry);
                     if (parentRaw) (metaByParent[parentRaw] = metaByParent[parentRaw] || []).push(entry);
                 }
 
                 const elementMap = {}; // fullName → { element, colIdMap, cleanName }
+                // colId → the exact SQL-output column name (raw remote-alias / caption).
+                // A kind:'sql' element resolves its column formulas against the SQL's RAW
+                // output columns, so the single-source remap below rewrites each sql
+                // element's column formula to [Custom SQL/<rawName>].
+                const colSqlNameById = {};
+                // Qualify a bare 2-part `schema.table` reference after FROM/JOIN with the
+                // database override (mirrors the MCP's qualifyTwoPartFqns). 1- and 3-part
+                // names are left untouched. The fixture's SELECT is already 3-part, so this
+                // is a no-op there, but a 2-part custom SQL would otherwise lose the DB.
+                const qualifyTwoPartFqns = (sql, db) => {
+                    if (!sql || !db) return sql;
+                    const qdb = /[^A-Za-z0-9_$]/.test(db) ? '"' + db + '"' : db;
+                    const part = '(?:"[^"]+"|[A-Za-z_$][\\w$]*)';
+                    const re = new RegExp('(\\b(?:FROM|JOIN)\\s+)(' + part + '(?:\\.' + part + ')*)', 'gi');
+                    return sql.replace(re, (m, kw, ref) => {
+                        const parts = ref.match(new RegExp(part, 'g')) || [];
+                        return parts.length === 2 ? kw + qdb + '.' + ref : m;
+                    });
+                };
 
                 for (const rel of childRels) {
                     const fullName  = rel.getAttribute('name') || rel.getAttribute('table') || '';
@@ -28260,11 +28286,24 @@ ${cleanedSql}`;
                     // object-ids from the object-graph) can resolve back to THIS element.
                     const relObjId = matchingObjId || (metaCols.find(c => c.objId) || {}).objId || null;
 
-                    for (const { uuid, caption } of metaCols) {
+                    // A `type='text'` child is a Custom SQL relation → it lowers to a
+                    // kind:'sql' element below. A kind:'sql' element's OWN column formulas
+                    // must use the literal source alias `Custom SQL` as the prefix (spec
+                    // rule 3), NOT the relation name — the relation name (e.g. "Actuals")
+                    // is a Tableau federation label, not a warehouse path; using it would
+                    // emit a warehouse-table path that doesn't exist (Source not found).
+                    const isCustomSqlRel = (rel.getAttribute('type') || '') === 'text';
+                    const colPrefix = isCustomSqlRel ? 'Custom SQL' : cleanName;
+
+                    for (const { uuid, caption, remoteAlias } of metaCols) {
                         const cleanCaption = caption.replace(/\s*\(.*\)$/, '').trim(); // strip disambiguation
                         const idKey = uuid.toUpperCase();
                         const id    = sigmaInodeId(idKey);
-                        columns.push({ id, formula: '[' + cleanName + '/' + cleanCaption + ']', name: cleanCaption });
+                        // exact SQL-output name (strip Tableau's " (Disambig)" suffix) for the
+                        // single-source remap; fall back to the clean caption.
+                        const rawSqlName = (remoteAlias || caption).replace(/\s*\([^)]*\)\s*$/, '').trim();
+                        colSqlNameById[id] = rawSqlName || cleanCaption;
+                        columns.push({ id, formula: '[' + colPrefix + '/' + cleanCaption + ']', name: cleanCaption });
                         order.push(id);
                         colIdMap[idKey] = id;
                         colIdMap[uuid.toUpperCase().replace(/-/g, '_')] = id;
@@ -28281,15 +28320,28 @@ ${cleanedSql}`;
                             const formulaCol = isUuid ? (col.getAttribute('caption') || rawName) : sigmaDisplayName(rawName);
                             const idKey      = rawName.toUpperCase().replace(/\s+/g, '_');
                             const id         = sigmaInodeId(idKey);
-                            columns.push({ id, formula: '[' + cleanName + '/' + formulaCol + ']' });
+                            columns.push({ id, formula: '[' + colPrefix + '/' + formulaCol + ']' });
                             order.push(id);
                             colIdMap[rawName.toUpperCase()] = id;
                             colIdMap[idKey] = id;
                         }
                     }
 
+                    // A `type='text'` child is a Custom SQL relation: its SELECT lives in
+                    // the relation's text content. Emit a kind:'sql' element with that
+                    // statement rather than a warehouse-table path keyed on the relation
+                    // NAME (which is not a real table → "Source not found" at POST).
+                    const sqlText = isCustomSqlRel
+                        ? qualifyTwoPartFqns((rel.textContent || '').trim(), dbOverride)
+                        : '';
+                    const source = (isCustomSqlRel && sqlText)
+                        ? { connectionId, kind: 'sql', statement: sqlText }
+                        : { connectionId, kind: 'warehouse-table', path };
+                    if (isCustomSqlRel && !sqlText) {
+                        warnings.push('⚠ Custom SQL relation "' + fullName + '" has no inline SQL text — emitted as a table path "' + path.join('.') + '"; verify or replace with the query.');
+                    }
                     const el = { id: sigmaShortId(), kind: 'table',
-                        source: { connectionId, kind: 'warehouse-table', path },
+                        source,
                         columns, metrics: [], order };
                     elementMap[fullName] = { element: el, colIdMap, cleanName, objId: relObjId };
                     elements.push(el);
@@ -28418,6 +28470,25 @@ ${cleanedSql}`;
                     }
                 } else {
                     warnings.push('ℹ Collection datasource: no <relationships> element — elements created without joins');
+                }
+
+                // beads-sigma-htu7: a SINGLE-SOURCE custom-SQL datasource (one object-model
+                // type='text' relation, no blend) emits a lone kind:'sql' element. Sigma
+                // resolves a kind:'sql' element's column refs against the SQL's RAW OUTPUT
+                // columns, but the in-loop formulas use the friendly captions
+                // ([Custom SQL/<caption>]) — which 400 at DM POST ("dependency not found:
+                // custom sql/<col>"). Name the lone element "Custom SQL" and remap every
+                // formula to the raw SQL output name (display name stays the caption).
+                // Scoped to exactly one sql element so "Custom SQL" can't collide;
+                // warehouse-table elements (caption == column name) are untouched.
+                const sqlEls = elements.filter(e => e.source && e.source.kind === 'sql');
+                if (sqlEls.length === 1) {
+                    const sqlEl = sqlEls[0];
+                    if (!sqlEl.name) sqlEl.name = 'Custom SQL';
+                    for (const c of (sqlEl.columns || [])) {
+                        const raw = colSqlNameById[c.id];
+                        if (raw) c.formula = '[Custom SQL/' + raw + ']';
+                    }
                 }
 
                 // Sort: dims first, fact last
@@ -34136,7 +34207,7 @@ models:
 <h3>What Gets Converted</h3>
 <ul>
     <li><b>Data sources</b> → Sigma elements with warehouse table paths (standard joins, virtual connections, and custom SQL)</li>
-    <li><b>Virtual connections (type=collection)</b> → Tableau 2020.2+ relationship model with role-playing dimensions (same table joined twice with different join keys, e.g. two date dimensions)</li>
+    <li><b>Virtual connections (type=collection)</b> → Tableau 2020.2+ relationship model with role-playing dimensions (same table joined twice with different join keys, e.g. two date dimensions). A <code>type='text'</code> child relation (object-model / DDMX <code>_.fcp.ObjectModelEncapsulateLegacy</code> Custom SQL) is recognized as Custom SQL and emitted as a <code>kind:sql</code> element carrying its inline <code>SELECT</code> — NOT as a warehouse table named after the relation (which would fail "Source not found"). For a single-source custom-SQL datasource the lone SQL element is named "Custom SQL" and its column formulas are remapped to the raw SQL output names so the model POSTs cleanly.</li>
     <li><b>Joins/Relationships</b> → Sigma relationships on the fact element. <b>Tableau 2020.2+ relationship model ("noodles")</b>: Tableau resolves join type and granularity at viz time — the converter maps these directly to Sigma relationships (which are also lazy / resolved at query time), so no semantic information is lost. Cardinality hints (1:1, 1:N, N:1, N:N) are preserved when present and default to <code>N:1</code> (the dominant fact-to-dim pattern) when Tableau leaves them unspecified. <b>Pre-2020.2 physical joins</b> (older Tableau Server on-prem versions, including 2018.x and 2019.x): handled via the Join Strategy dropdown — Auto routes <code>many_to_one</code> joins to relationships and others to physical joins; Force Relationships keeps everything lazy; Force Physical Joins keeps everything eager. Both code paths produce valid Sigma data models.</li>
     <li><b>Calculated fields</b> → Sigma calculated columns with formula conversion</li>
     <li><b>Simple aggregates</b> → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)</li>
