@@ -10530,7 +10530,12 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 srcEl.relationships.forEach(function(rel) {
                     if (!rel.name) return; // name required for formula middle-segment
                     var tgtEl = elements.find(function(e) { return e.id === rel.targetElementId; });
-                    if (!tgtEl || !tgtEl.source || tgtEl.source.kind !== 'warehouse-table') return;
+                    // Denormalize both warehouse-table AND Custom SQL (derived_table / PDT /
+                    // synthesized date-spine) targets. When a relationship points at a SQL
+                    // element (e.g. a PBI calculated-table date dimension reached via a
+                    // USERELATIONSHIP alternate join path), its columns must surface on the
+                    // denorm element, or workbook tiles bound to them dangle. (mirrors MCP)
+                    if (!tgtEl || !tgtEl.source || (tgtEl.source.kind !== 'warehouse-table' && tgtEl.source.kind !== 'sql')) return;
                     // Don't denormalize the relationship's OWN key column across the join — the
                     // base element already carries that value, and the cross-element passthrough
                     // of a join key compiles to type "error" in Sigma (verified via readback).
@@ -30754,6 +30759,100 @@ ${cleanedSql}`;
             helper.element.source.statement = `WITH base AS (${baseSelect}) SELECT ${outerProj.join(', ')} FROM base`;
         }
 
+        // ── Time-intelligence → grouped DM elements (DateLookback / CumulativeSum) ──
+        // MIRROR of src/powerbi.ts (MCP). Standalone time-intel measures
+        // (SAMEPERIODLASTYEAR / DATEADD / TOTALYTD / running-total / hand-rolled
+        // prior-year) can't be scalar metrics (they need a date grouping) — emit them
+        // as grouped/leveled elements on the fact's "<T> View" (denormalized join),
+        // which is DM-native and verified exact vs Power BI.
+        function pbiClassifyTimeIntel(dax) {
+            const d = dax || '';
+            if (/\bTOTALYTD\s*\(|\bDATESYTD\s*\(/i.test(d)) return 'ytd';
+            if (/FILTER\s*\(\s*ALL\s*\([^)]*\)\s*,[^<]*<=\s*MAX\s*\(/i.test(d)) return 'ytd'; // running total
+            if (/\bSAMEPERIODLASTYEAR\s*\(/i.test(d)) return 'prior';
+            if (/\bDATEADD\s*\([^,]+,\s*-?\d+\s*,\s*(YEAR|QUARTER|MONTH|WEEK|DAY)/i.test(d)) return 'prior';
+            // hand-rolled prior-year: SELECTEDVALUE(Date[Year]) … ALL(Date[Year]) … [Year]=cy-1
+            if (/SELECTEDVALUE\s*\([^)]*\[Year\]/i.test(d) && /ALL\s*\([^)]*\[Year\]/i.test(d) && /-\s*1\b/.test(d)) return 'prior';
+            return null;
+        }
+        // Sigma's display name for a View column: [A/Col]->"Col"; [A/DIM/Col]->"Col (DIM)".
+        function pbiViewColDisplay(formula) {
+            const p = (formula || '').replace(/^\[|\]$/g, '').split('/');
+            return p.length <= 2 ? p[p.length - 1] : `${p[p.length - 1]} (${p[p.length - 2]})`;
+        }
+        function emitTimeIntelElements(model, elements, warnings) {
+            const AGG = { SUM: 'Sum', AVERAGE: 'Avg', AVG: 'Avg', MIN: 'Min',
+                MAX: 'Max', COUNT: 'Count', COUNTA: 'Count', DISTINCTCOUNT: 'CountDistinct' };
+            const views = elements.filter(e => e.name && /View$/.test(e.name) && e.source && e.source.kind === 'table');
+            if (!views.length) return;
+            const lastSeg = (f) => (f || '').replace(/^\[|\]$/g, '').split('/').pop() || '';
+            for (const t of (model.tables || [])) {
+                for (const m of (t.measures || [])) {
+                    const dax = Array.isArray(m.expression) ? m.expression.join(' ') : String(m.expression || '');
+                    const shape = pbiClassifyTimeIntel(dax);
+                    if (!shape) continue;
+                    const am = dax.match(/\b(SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT)\s*\(\s*'?[^'\[]*'?\[([^\]]+)\]/i);
+                    if (!am) continue;
+                    const agg = AGG[am[1].toUpperCase()]; const col = am[2];
+                    // find a View carrying both the value column and a date column.
+                    // Compare on a normalized key: lastSeg() yields the Sigma DISPLAY name
+                    // ("Incident Id") while `col` is the raw DAX token ("INCIDENT_ID"), so a
+                    // plain uppercase compare misses every multi-word column (single-word
+                    // ones like HOURS coincidentally matched). Strip spaces/underscores.
+                    const normCol = (s) => (s || '').toUpperCase().replace(/[\s_]/g, '');
+                    let parent = null, valDisp = '', dateDisp = '';
+                    for (const v of views) {
+                        const vc = (v.columns || []).find(c => normCol(lastSeg(c.formula)) === normCol(col));
+                        const dc = (v.columns || []).find(c => /full date/i.test(pbiViewColDisplay(c.formula)))
+                                || (v.columns || []).find(c => /date/i.test(lastSeg(c.formula)) && !/key/i.test(lastSeg(c.formula)));
+                        if (vc && dc) { parent = v; valDisp = pbiViewColDisplay(vc.formula); dateDisp = pbiViewColDisplay(dc.formula); break; }
+                    }
+                    if (!parent) continue;
+                    const pn = parent.name; const b = (m.name || 'TI').replace(/[^a-zA-Z0-9]/g, '').slice(0, 14);
+                    // Fidelity check: the synthesized element groups by the fact's OWN date
+                    // column. If the source measure's date dimension is reached only through
+                    // an INACTIVE relationship (and no measure activates it via
+                    // USERELATIONSHIP), the original DAX never filters by that dimension —
+                    // it returns an unfiltered grand total per period. Our element is the
+                    // "intended" per-period result, but that is a real divergence; flag it.
+                    const refTables = [...dax.matchAll(/([A-Za-z_]\w*)\s*\[/g)].map(x => x[1]);
+                    const dimTable = refTables.length ? refTables[refTables.length - 1] : null;
+                    if (dimTable && dimTable !== t.name) {
+                        const rel = (model.relationships || []).find(
+                            r => r.fromTable === t.name && r.toTable === dimTable);
+                        if (rel && rel.isActive === false) {
+                            warnings.push(`⚠ "${m.name}": the ${t.name}→${dimTable} relationship is INACTIVE and no measure activates it (USERELATIONSHIP), so the original Power BI measure does not filter by ${dimTable} — it returns an unfiltered total per ${dimTable} period. The synthesized element groups by ${t.name}'s own date instead, yielding a true per-period prior-year. Confirm this matches intent (the source measure may be silently mis-modeled).`);
+                        }
+                    }
+                    if (shape === 'prior') {
+                        const prior = `${valDisp} (Prior Year)`;
+                        const cols = [
+                            { id: `${b}_d`, formula: `DateTrunc("year", [${pn}/${dateDisp}])`, name: 'Year' },
+                            { id: `${b}_v`, formula: `${agg}([${pn}/${valDisp}])`, name: valDisp },
+                            { id: `${b}_p`, formula: `DateLookback([${valDisp}], [Year], 1, "year")`, name: prior },
+                            { id: `${b}_y`, formula: `([${valDisp}] - [${prior}]) / [${prior}]`, name: `${valDisp} YoY %`, format: { kind: 'number', formatString: ',.1%' } },
+                        ];
+                        elements.push({ id: `${b}PP`, kind: 'table', name: m.name, source: { kind: 'table', elementId: parent.id },
+                            columns: cols, order: cols.map(c => c.id), groupings: [{ id: `${b}_g`, groupBy: [`${b}_d`], calculations: [`${b}_v`, `${b}_p`, `${b}_y`] }] });
+                        warnings.push(`ℹ Time-intel measure "${m.name}" → grouped DateLookback element on "${pn}" (prior-year + YoY %).`);
+                    } else {
+                        const cols = [
+                            { id: `${b}_o`, formula: `DateTrunc("year", [${pn}/${dateDisp}])`, name: 'Year' },
+                            { id: `${b}_i`, formula: `DateTrunc("month", [${pn}/${dateDisp}])`, name: 'Month' },
+                            { id: `${b}_v`, formula: `${agg}([${pn}/${valDisp}])`, name: valDisp },
+                            { id: `${b}_c`, formula: `CumulativeSum([${valDisp}])`, name: `${valDisp} YTD` },
+                        ];
+                        // TWO grouping LEVELS so CumulativeSum resets per outer (year) period.
+                        elements.push({ id: `${b}YT`, kind: 'table', name: m.name, source: { kind: 'table', elementId: parent.id },
+                            columns: cols, order: cols.map(c => c.id), groupings: [
+                                { id: `${b}_go`, groupBy: [`${b}_o`] },
+                                { id: `${b}_gi`, groupBy: [`${b}_i`], calculations: [`${b}_v`, `${b}_c`] }] });
+                        warnings.push(`ℹ Time-intel measure "${m.name}" → grouped CumulativeSum (YTD, year-reset) element on "${pn}".`);
+                    }
+                }
+            }
+        }
+
         // ── Family 1 (beads-sigma-fah8): USERELATIONSHIP inside CALCULATE ───────────
 
         // Parse a qualified PBI column ref 'Table'[Col] / Table[Col].
@@ -31922,23 +32021,37 @@ ${cleanedSql}`;
                             sigmaDisplayName((c.sourceColumn || c.name || '').replace(/^\[|\]$/g, '')));
                         const firstColName = ctColDisplayNames.length ? ctColDisplayNames[0] : 'Value';
                         const built = pbiBuildCalcTableSql(ctExpr, firstColName, ctColDisplayNames);
+                        const statement = built.ok
+                            ? built.sql
+                            : `-- TODO (beads-sigma-w9s): ${built.reason}\n-- Original DAX: ${ctExpr.replace(/\n/g, ' ').slice(0, 300)}\nSELECT 1 AS _placeholder`;
                         const ctColumns = [];
                         const ctOrder = [];
+                        const droppedCols = [];
                         for (const c of ctCols) {
                             const sourceCol = (c.sourceColumn || c.name || '').replace(/^\[|\]$/g, '');
                             const displayName = sigmaDisplayName(sourceCol);
+                            // Only surface a column the SQL statement actually emits (alias `AS
+                            // "Display Name"`). Skip any DAX-derived column the synthesizer couldn't
+                            // translate — otherwise its `[Custom SQL/X]` ref breaks the DM POST. (MCP)
+                            const aliasEmitted = built.ok &&
+                                new RegExp(`AS\\s+"${displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'i').test(statement);
+                            if (built.ok && !aliasEmitted) { droppedCols.push(displayName); continue; }
                             const colId = sigmaShortId();
                             tableColMap[tableName][c.name] = colId;
                             allPbiToSigmaNames[c.name] = displayName;
-                            const col = { id: colId, formula: `[${displayName}]` };
+                            // Reference the SQL alias with the QUALIFIED `[Custom SQL/Display Name]`
+                            // form (verified to resolve). The element-level `name` is OMITTED below
+                            // (rule 3) so the element resolves as "Custom SQL". (MCP parity)
+                            const col = { id: colId, formula: `[Custom SQL/${displayName}]` };
                             if (c.isHidden) col.hidden = true;
                             if (c.description) col.description = c.description;
                             ctColumns.push(col);
                             ctOrder.push(colId);
                         }
-                        let statement;
+                        if (droppedCols.length) {
+                            warnings.push(`⚠ Calculated table "${tableName}": dropped column(s) ${droppedCols.join(', ')} — their DAX (ADDCOLUMNS/SELECTCOLUMNS) expression wasn't translated into the synthesized SQL, so they have no warehouse source. Add them to the SQL statement manually or as Sigma calc columns.`);
+                        }
                         if (built.ok) {
-                            statement = built.sql;
                             if (/\bCALENDAR\s*\(/i.test(ctExpr)) {
                                 warnings.push(`ℹ Calculated table "${tableName}": DAX CALENDAR/ADDCOLUMNS → synthesized a Sigma SQL date-spine element (GENERATOR + DATEADD) with the derived columns translated to SQL.`);
                             } else if (ctCols.length > 1) {
@@ -31947,7 +32060,6 @@ ${cleanedSql}`;
                                 warnings.push(`ℹ Calculated table "${tableName}": DAX GENERATESERIES → synthesized Sigma SQL element (VALUES list).`);
                             }
                         } else {
-                            statement = `-- TODO (beads-sigma-w9s): ${built.reason}\n-- Original DAX: ${ctExpr.replace(/\n/g, ' ').slice(0, 300)}\nSELECT 1 AS _placeholder`;
                             warnings.push(`⛔ Calculated table "${tableName}": ${built.reason} Emitted a placeholder SQL element (NOT a warehouse-table). Original DAX preserved as a comment.`);
                         }
                         // Rule 3 (CLAUDE.md): a Custom SQL element MUST OMIT the element-level
@@ -32451,6 +32563,10 @@ ${cleanedSql}`;
                 // Add derived element for each table with outgoing relationships;
                 // move calculated columns with cross-element refs onto those derived elements.
                 buildDerivedElementsAndMoveCalcs(elements, warnings);
+
+                // Auto-emit grouped time-intel elements (DateLookback / CumulativeSum) for
+                // standalone time-intel measures, now that the "<T> View" join elements exist.
+                emitTimeIntelElements(model, elements, warnings);
 
                 const modelName = _pbiModel.name || model.name || 'Power BI Import';
                 const outputJson = {
@@ -34265,6 +34381,7 @@ models:
     <li><b><code>FILTER(ALL(Table), pred)</code></b> → <code>GrandTotal(AggIf(…))</code> (context strip = total over all matching rows); whole-table <code>ALL</code>/<code>REMOVEFILTERS</code> → <code>GrandTotal(agg)</code>; single-column <code>ALL(T[col])</code>/<code>REMOVEFILTERS(T[col])</code> → <code>GrandTotal(…)</code> with a loud caveat (exact only when that column is the visual's sole grouping)</li>
     <li><b>USERELATIONSHIP over an inactive relationship</b> → the inactive model relationship is activated as a distinctly-named alternate join path (<code>TOTABLE_VIA_FROMCOLUMN</code>); the aggregate emits unchanged and the derived view surfaces the alternate-keyed columns. Inactive relationships no measure activates are skipped (avoids name collisions); metrics combining measures that resolve through different join paths are refused with a rebuild recipe</li>
     <li><b>EARLIER window idioms in calc columns</b> → SQL window helper elements (Sigma window functions silently error in data-model calc columns): the rank idiom (<code>COUNTROWS(FILTER(…EARLIER…)) + 1</code> → <code>DENSE_RANK() OVER</code>), running totals (<code>&lt;=/&gt;= EARLIER</code> → <code>agg(col) OVER (… ORDER BY …)</code>), group share/total (<code>= EARLIER</code> equality terms → <code>agg(col) OVER (PARTITION BY …)</code>), and peer counts (<code>COUNT(*) OVER</code>)</li>
+    <li><b>Standalone time-intelligence measures</b> (<code>TOTALYTD</code>/<code>DATESYTD</code>/running totals, and <code>SAMEPERIODLASTYEAR</code>/<code>DATEADD</code>/hand-rolled prior-year) → auto-synthesized as grouped/leveled elements on the fact's "<code>&lt;T&gt; View</code>" join element (these need a date grouping and can't be scalar metrics): prior-year → a <code>DateLookback</code> element (prior-year value + YoY %); YTD → a two-level <code>CumulativeSum</code> element (year-reset). The value column is matched space/underscore-insensitively so multi-word columns resolve. If the measure's date dimension is reached only through an INACTIVE relationship with no <code>USERELATIONSHIP</code> activator, a fidelity warning flags the per-period divergence</li>
     <li><b>DIVIDE</b> → Null-safe division with <code>If(den = 0, alt, num / den)</code></li>
     <li><b>Math functions</b> → <code>LN</code>→<code>Ln</code>; <code>LOG10</code> and <code>LOG(x, [base])</code>→Sigma <code>Log(value, [base])</code> (base-10 default matches DAX); <code>CEILING/FLOOR(n, significance)</code>→<code>Ceiling(n / s) * s</code> / <code>Floor(n / s) * s</code> (Sigma's Ceiling/Floor take no significance argument)</li>
     <li><b>RELATED(Table[Col])</b> → <code>Lookup([TABLE/Col], [LocalKey], [TABLE/ForeignKey])</code> — resolved automatically using the model's relationship definitions</li>
