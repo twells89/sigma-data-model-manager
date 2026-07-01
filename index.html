@@ -28156,12 +28156,52 @@ ${cleanedSql}`;
             const _guidCaption = guidIndex.guidCaption || {};
 
             if (relType === 'text') {
-                // Custom SQL
+                // Custom SQL data source: <relation type='text'>SELECT …</relation> →
+                // one Sigma SQL element. DOM textContent auto-decodes XML entities
+                // (incl. numeric &#13;&#10;). Columns come from the relation's inline
+                // <columns> or the connection's <metadata-record class='column'>, and
+                // self-reference their own output via the fixed "Custom SQL" keyword —
+                // verified live (mirrors MCP + LookML): bare [Display]/[COL] and the
+                // element's own name as qualifier resolve to type "error"; only
+                // [Custom SQL/COL] resolves, and an empty columns[] yields a
+                // zero-column (unqueryable) element.
                 const sql = rootRel.textContent.trim();
+                // caption overrides from datasource-level <column caption='…' name='[remote]'>
+                const dsEl = connection ? connection.closest('datasource') : null;
+                const capByName = {};
+                if (dsEl) for (const col of dsEl.querySelectorAll(':scope > column')) {
+                    const nm = (col.getAttribute('name') || '').replace(/^\[|\]$/g, '');
+                    const cap = col.getAttribute('caption');
+                    if (nm && cap) capByName[nm.toUpperCase()] = cap;
+                }
+                const rawCols = [];
+                for (const col of rootRel.querySelectorAll(':scope > columns > column')) {
+                    const nm = col.getAttribute('name'); if (nm) rawCols.push(nm);
+                }
+                if (rawCols.length === 0 && connection) {
+                    for (const mr of connection.querySelectorAll(':scope > metadata-records > metadata-record')) {
+                        if ((mr.getAttribute('class') || '') !== 'column') continue;
+                        const remote = (mr.querySelector(':scope > remote-name')?.textContent || '').trim();
+                        if (remote) rawCols.push(remote);
+                    }
+                }
+                const columns = [], order = [], seen = new Set();
+                for (const raw of rawCols) {
+                    const clean = raw.replace(/^\[|\]$/g, '');
+                    const upper = clean.toUpperCase();
+                    if (!clean || seen.has(upper)) continue; seen.add(upper);
+                    const colKey = clean.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+                    const display = capByName[upper] || sigmaDisplayName(clean);
+                    const id = sigmaInodeId(colKey);
+                    columns.push({ id, formula: '[Custom SQL/' + colKey + ']', name: display });
+                    order.push(id);
+                }
                 elements.push({ id: sigmaShortId(), kind: 'table',
                     source: { connectionId, kind: 'sql', statement: sql },
-                    columns: [], metrics: [], order: [] });
-                warnings.push('ℹ Custom SQL data source — SQL extracted as-is');
+                    columns, metrics: [], order });
+                warnings.push(columns.length
+                    ? 'ℹ Custom SQL data source → Sigma SQL element (' + columns.length + ' column(s)); statement preserved verbatim.'
+                    : '⚠ Custom SQL data source emitted with no columns (no <columns> projection or column metadata-records found).');
                 return;
             }
 
@@ -34349,7 +34389,7 @@ models:
     <li><b>Cross-element calculated columns</b> — Tableau calculated fields that reference columns from related tables are automatically moved to the derived child element (Sigma calculated columns can only reference columns local to their element). Related dimension columns are accessible via the derived element using <code>[FACT/RELATIONSHIP/Col]</code> formulas.</li>
     <li><b>Role-playing dimensions</b> — Multiple relationships from a fact table to the same dimension are now supported. Each relationship gets a unique name including the join key (e.g. "DATE_DIM via Order Date Key"). Review the generated names for clarity.</li>
     <li><b>Bins</b> — Converted to bucketed <code>Floor()</code> calculated columns.</li>
-    <li><b>Custom SQL data sources</b> — Converted to Sigma custom SQL elements. The raw SQL is passed through as-is. Tableau-specific SQL syntax may need manual adjustment.</li>
+    <li><b>Custom SQL data sources</b> (<code>&lt;relation type='text'&gt;</code>) — Converted to a Sigma custom SQL element with the raw SQL preserved verbatim; output columns are surfaced from the datasource's column metadata and self-reference via the source-qualified <code>[Custom SQL/COL]</code> form (the only form that resolves). Verify column display names match the query output, and adjust any Tableau-specific SQL syntax.</li>
     <li><b>Extracts (.hyper)</b> — Extract-only fields and extract filters are not converted. The converter reads the logical model definition, not the physical extract.</li>
     <li><b>Data blending</b> — Same-warehouse blends (workbook-level <code>&lt;datasource-relationships&gt;</code>) are converted to one merged model (see "What Gets Converted"). Limitations: a published/unpublished secondary with no warehouse table is skipped with a warning (repoint it to a warehouse first); a 3+-source blend is handled as one primary plus N secondaries that each link to it (arbitrary connected-component graphs are not yet decomposed); when the primary is grouped by dimensions finer than the link key, the secondary value repeats across the finer groups (faithful to Tableau, but verify column totals).</li>
     <li><b>Parameters with calculations</b> — Parameter values are captured but formulas that reference parameters using Tableau's parameter syntax may not convert correctly.</li>
