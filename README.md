@@ -73,7 +73,7 @@ Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) 
 - Post-create validation — After saving, call `GET /v2/dataModels/{id}/columns` and inspect for `type.type === "error"` entries; both LOD and window helpers can post as success even if a referenced column is missing.
 - Cross-element calculated columns — Automatically moved to the derived child element; metrics with cross-element refs are removed with a warning and must be added manually in Sigma UI
 - Role-playing dimensions — Supported; each relationship includes the join key in its name (e.g. "DATE_DIM via Order Date Key")
-- Custom SQL data sources — Converted to Sigma custom SQL elements; Tableau-specific SQL syntax may need manual adjustment
+- Custom SQL data sources (`<relation type='text'>`) — Converted to a Sigma custom SQL element with the raw SQL preserved verbatim; output columns are surfaced from the datasource's column metadata and self-reference via the source-qualified `[Custom SQL/COL]` form (the only form that resolves). Verify column display names match the query output, and adjust any Tableau-specific SQL syntax
 - Extracts (`.hyper`) — Extract-only fields and extract filters not converted
 - Data blending — Same-warehouse blends are converted to one merged model (see above). Limitations: a secondary with no warehouse table is skipped with a warning (repoint it to a warehouse first); 3+-source blends are handled as one primary + N secondaries linking to it (arbitrary connected-component graphs are not yet decomposed); when the primary is grouped finer than the link key, the secondary value repeats across the finer groups (faithful to Tableau — verify column totals)
 
