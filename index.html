@@ -10455,7 +10455,12 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             // expression translators more than once, and same-element sibling refs are
             // resolved case-SENSITIVELY by Sigma — a non-idempotent derivation
             // ("Cyq Rev" → "Cyq rev") breaks the ref (column compiles to type "error").
-            const words = normalized.toLowerCase().split(/[_\s]+/).filter(Boolean);
+            // `/` is Sigma's ref-path separator ([Element/Column]) and `-` is not a
+            // warehouse identifier char — a field named "Country/Region" or
+            // "Sub-Category" would emit [ORDERS/Country/region] (parsed as a nested
+            // path → type "error") / fail to match the underscore-named warehouse
+            // column. Fold both to a word boundary so they resolve.
+            const words = normalized.toLowerCase().split(/[_\s\/-]+/).filter(Boolean);
             return words.map((w, i) =>
                 (i === 0 || !SIGMA_LOWERCASE_WORDS.has(w))
                     ? w.charAt(0).toUpperCase() + w.slice(1)
@@ -28077,7 +28082,11 @@ ${cleanedSql}`;
                 .map(p => p.replace(/"/g, '').toUpperCase().trim())
                 .filter(p => p && !/^[0-9A-F]{8}-[0-9A-F]{4}-/i.test(p)); // drop virtual-connection UUID segments
             // Strip Tableau hex-hash suffix from table name: "ORDER_FACT_A1B2C3D4" → "ORDER_FACT"
-            if (parts.length > 0) parts[parts.length - 1] = parts[parts.length - 1].replace(/_[0-9A-Fa-f]{16,}$/, '');
+            // and the packaged-extract sheet suffix: "Orders$" → "ORDERS" (a .twbx names its
+            // logical table after the extract sheet, which rarely matches the warehouse table).
+            if (parts.length > 0) parts[parts.length - 1] = parts[parts.length - 1]
+                .replace(/_[0-9A-Fa-f]{16,}$/, '')
+                .replace(/\$+$/, '');
             const tableName = parts[parts.length - 1];
             const schema = schOverride || (parts.length >= 2 ? parts[parts.length - 2] : '');
             const db = dbOverride || (parts.length >= 3 ? parts[0] : '');
@@ -30024,8 +30033,12 @@ ${cleanedSql}`;
 
             try {
                 const isMulti = document.getElementById('tableauMultiConn')?.checked;
-                const dbOverride = document.getElementById('tableauDatabase').value.trim().toUpperCase();
-                const schOverride = document.getElementById('tableauSchema').value.trim().toUpperCase();
+                // Preserve the caller's exact db/schema case — warehouse identifiers are quoted
+                // per-segment in Sigma's path lookup, so a spaced/mixed-case schema ("Tableau Test")
+                // must NOT be folded to "TABLEAU TEST" (that path won't resolve). Type the exact
+                // warehouse case (standard Snowflake schemas are already uppercase).
+                const dbOverride = document.getElementById('tableauDatabase').value.trim();
+                const schOverride = document.getElementById('tableauSchema').value.trim();
                 const strategy = document.getElementById('tableauJoinStrategy').value;
 
                 // Build the list of datasources to convert, each with its connectionId
@@ -34390,7 +34403,7 @@ models:
     <li><b>Role-playing dimensions</b> — Multiple relationships from a fact table to the same dimension are now supported. Each relationship gets a unique name including the join key (e.g. "DATE_DIM via Order Date Key"). Review the generated names for clarity.</li>
     <li><b>Bins</b> — Converted to bucketed <code>Floor()</code> calculated columns.</li>
     <li><b>Custom SQL data sources</b> (<code>&lt;relation type='text'&gt;</code>) — Converted to a Sigma custom SQL element with the raw SQL preserved verbatim; output columns are surfaced from the datasource's column metadata and self-reference via the source-qualified <code>[Custom SQL/COL]</code> form (the only form that resolves). Verify column display names match the query output, and adjust any Tableau-specific SQL syntax.</li>
-    <li><b>Extracts (.hyper)</b> — Extract-only fields and extract filters are not converted. The converter reads the logical model definition, not the physical extract.</li>
+    <li><b>Extracts (.hyper / packaged .twbx)</b> — Extract-only fields and extract filters are not converted (the converter reads the logical model, not the physical extract). A packaged extract names its logical table after the extract sheet (e.g. <code>Orders$</code>); the trailing <code>$</code> is stripped automatically so the source path targets the warehouse table (<code>ORDERS</code>). Enter the exact Database/Schema case in the override fields — a spaced/mixed-case schema (<code>Tableau Test</code>) is used verbatim (NOT upper-cased), since Sigma quotes each path segment. Column names containing <code>/</code> or <code>-</code> (<code>Country/Region</code>, <code>Sub-Category</code>) are folded to spaces so they resolve to the underscore-named warehouse columns instead of erroring. When the extract sheet name still differs from the physical table after stripping <code>$</code>, rename the table in the generated JSON before saving.</li>
     <li><b>Data blending</b> — Same-warehouse blends (workbook-level <code>&lt;datasource-relationships&gt;</code>) are converted to one merged model (see "What Gets Converted"). Limitations: a published/unpublished secondary with no warehouse table is skipped with a warning (repoint it to a warehouse first); a 3+-source blend is handled as one primary plus N secondaries that each link to it (arbitrary connected-component graphs are not yet decomposed); when the primary is grouped by dimensions finer than the link key, the secondary value repeats across the finer groups (faithful to Tableau, but verify column totals).</li>
     <li><b>Parameters with calculations</b> — Parameter values are captured but formulas that reference parameters using Tableau's parameter syntax may not convert correctly.</li>
 </ul>
