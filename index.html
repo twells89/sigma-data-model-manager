@@ -29221,7 +29221,7 @@ ${cleanedSql}`;
                         return alias;
                     };
                     const _emitWinOverClause = (rec, win, windowAlias, innerAlias) => {
-                        const partBy = rec.partitionDimNames.length > 0 ? 'PARTITION BY ' + rec.partitionDimNames.join(', ') : '';
+                        const partBy = rec.partitionDimNames.length > 0 ? 'PARTITION BY ' + rec.partitionDimNames.map(_quotePhysToken).join(', ') : '';
                         const orderBy = rec.orderDimAlias ? 'ORDER BY ' + rec.orderDimAlias : '';
                         const ws = (parts) => parts.filter(Boolean).join(' ');
                         let overSql = '';
@@ -29308,7 +29308,7 @@ ${cleanedSql}`;
                             const groupByCount = rec.partitionDimNames.length + (rec.orderDimRaw ? 1 : 0);
                             const groupByIdx = Array.from({ length: groupByCount }, (_, i) => i + 1).join(', ');
                             const baseSelect = 'SELECT ' + selectParts.join(', ') + ' FROM ' + baseFq + ' GROUP BY ' + groupByIdx;
-                            const innerProj = [].concat(rec.partitionDimNames, rec.orderDimAlias ? [rec.orderDimAlias] : [], Object.values(rec.innerAggs).map(v => v.alias));
+                            const innerProj = [].concat(rec.partitionDimNames.map(_quotePhysToken), rec.orderDimAlias ? [rec.orderDimAlias] : [], Object.values(rec.innerAggs).map(v => v.alias));
                             const outerProj = innerProj.concat(rec.windowOverParts);
                             rec.element.source.statement = 'WITH base AS (' + baseSelect + ') SELECT ' + outerProj.join(', ') + ' FROM base';
                         }
