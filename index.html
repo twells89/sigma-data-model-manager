@@ -28116,8 +28116,72 @@ ${cleanedSql}`;
         }
 
         // Resolve the (single) connection root relation, namespace-aware.
+        // Is this the .hyper/sqlproxy extract PLACEHOLDER relation (no physical
+        // warehouse counterpart)? Building from it emits a 0-column element.
+        function tableauIsExtractPlaceholderRel(rel) {
+            if (!rel) return false;
+            const table = rel.getAttribute('table');
+            const name = rel.getAttribute('name');
+            if (table === '[Extract].[Extract]' || table === '[sqlproxy]') return true;
+            const hasColumns = Array.from(rel.children).some(c => c.tagName.toLowerCase() === 'columns');
+            if ((name === 'Extract' || name === 'sqlproxy') && !hasColumns) return true;
+            return false;
+        }
+
+        // Root relation of a connection. When a connection carries MORE than one
+        // relation (e.g. an [Extract].[Extract] placeholder sitting BESIDE the real
+        // Custom SQL type='text' relation), prefer the meaningful one over the
+        // placeholder — else we build a 0-column extract element (MCP #81 parity).
         function tableauRootRelation(conn) {
-            return tableauConnRelations(conn)[0] || null;
+            const rels = tableauConnRelations(conn);
+            if (rels.length <= 1) return rels[0] || null;
+            const meaningful = rels.find(r => {
+                const t = r.getAttribute('type') || 'table';
+                if (t === 'text' || t === 'join' || t === 'collection') return true;
+                return !tableauIsExtractPlaceholderRel(r);
+            });
+            return meaningful || rels[0];
+        }
+
+        // Flatten a datasource's connection(s): every <connection> under the
+        // datasource (siblings) plus nested <connection> and
+        // <named-connection><connection>, outermost first.
+        function tableauAllConnections(dsEl) {
+            const out = [];
+            if (!dsEl) return out;
+            const visit = (c) => {
+                if (!c) return;
+                out.push(c);
+                for (const child of Array.from(c.children)) {
+                    const tag = child.tagName.toLowerCase();
+                    if (tag === 'connection') visit(child);
+                    else if (tag === 'named-connections') {
+                        for (const nc of Array.from(child.children)) {
+                            const ncConn = Array.from(nc.children).find(x => x.tagName.toLowerCase() === 'connection');
+                            if (ncConn) visit(ncConn);
+                        }
+                    }
+                }
+            };
+            for (const conn of Array.from(dsEl.children).filter(c => c.tagName.toLowerCase() === 'connection')) visit(conn);
+            return out;
+        }
+
+        // Resolve the connection to build from. A .hyper/sqlproxy extract often makes
+        // the extract the OUTER/first <connection> (wrapping the live warehouse
+        // connection nested, or as a sibling) so the real schema lives on a DIFFERENT
+        // connection. Prefer the connection bearing a meaningful (non-placeholder)
+        // relation; drill through nested/sibling/named connections. Falls back to the
+        // first connection so single-connection paths are unchanged (MCP #84 parity).
+        function tableauEffectiveConnection(dsEl, fallbackConn) {
+            const conns = tableauAllConnections(dsEl);
+            if (conns.length === 0) return fallbackConn || null;
+            const meaningful = conns.find(c => tableauConnRelations(c).some(r => {
+                const t = r.getAttribute('type') || 'table';
+                if (t === 'text' || t === 'join' || t === 'collection') return true;
+                return !tableauIsExtractPlaceholderRel(r);
+            }));
+            return meaningful || conns[0];
         }
 
         // Resolve a possibly feature-flag-namespaced CHILD element. e.g. the object
@@ -28751,7 +28815,9 @@ ${cleanedSql}`;
                 return false;
             }
 
-            const connection   = ds.connection;
+            // Drill past a .hyper/sqlproxy extract wrapper (nested or sibling) to the
+            // live warehouse connection that actually bears the schema (MCP #84).
+            const connection   = tableauEffectiveConnection(ds.element, ds.connection);
                 // Namespace-aware: encapsulated-legacy (.true...relation) tags don't match a
                 // plain CSS `:scope > relation` selector.
                 const rootRelation = tableauRootRelation(connection);
