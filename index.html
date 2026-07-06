@@ -10455,7 +10455,12 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             // expression translators more than once, and same-element sibling refs are
             // resolved case-SENSITIVELY by Sigma — a non-idempotent derivation
             // ("Cyq Rev" → "Cyq rev") breaks the ref (column compiles to type "error").
-            const words = normalized.toLowerCase().split(/[_\s]+/).filter(Boolean);
+            // `/` is Sigma's ref-path separator ([Element/Column]) and `-` is not a
+            // warehouse identifier char — a field named "Country/Region" or
+            // "Sub-Category" would emit [ORDERS/Country/region] (parsed as a nested
+            // path → type "error") / fail to match the underscore-named warehouse
+            // column. Fold both to a word boundary so they resolve.
+            const words = normalized.toLowerCase().split(/[_\s\/-]+/).filter(Boolean);
             return words.map((w, i) =>
                 (i === 0 || !SIGMA_LOWERCASE_WORDS.has(w))
                     ? w.charAt(0).toUpperCase() + w.slice(1)
@@ -28077,7 +28082,11 @@ ${cleanedSql}`;
                 .map(p => p.replace(/"/g, '').toUpperCase().trim())
                 .filter(p => p && !/^[0-9A-F]{8}-[0-9A-F]{4}-/i.test(p)); // drop virtual-connection UUID segments
             // Strip Tableau hex-hash suffix from table name: "ORDER_FACT_A1B2C3D4" → "ORDER_FACT"
-            if (parts.length > 0) parts[parts.length - 1] = parts[parts.length - 1].replace(/_[0-9A-Fa-f]{16,}$/, '');
+            // and the packaged-extract sheet suffix: "Orders$" → "ORDERS" (a .twbx names its
+            // logical table after the extract sheet, which rarely matches the warehouse table).
+            if (parts.length > 0) parts[parts.length - 1] = parts[parts.length - 1]
+                .replace(/_[0-9A-Fa-f]{16,}$/, '')
+                .replace(/\$+$/, '');
             const tableName = parts[parts.length - 1];
             const schema = schOverride || (parts.length >= 2 ? parts[parts.length - 2] : '');
             const db = dbOverride || (parts.length >= 3 ? parts[0] : '');
@@ -28107,8 +28116,72 @@ ${cleanedSql}`;
         }
 
         // Resolve the (single) connection root relation, namespace-aware.
+        // Is this the .hyper/sqlproxy extract PLACEHOLDER relation (no physical
+        // warehouse counterpart)? Building from it emits a 0-column element.
+        function tableauIsExtractPlaceholderRel(rel) {
+            if (!rel) return false;
+            const table = rel.getAttribute('table');
+            const name = rel.getAttribute('name');
+            if (table === '[Extract].[Extract]' || table === '[sqlproxy]') return true;
+            const hasColumns = Array.from(rel.children).some(c => c.tagName.toLowerCase() === 'columns');
+            if ((name === 'Extract' || name === 'sqlproxy') && !hasColumns) return true;
+            return false;
+        }
+
+        // Root relation of a connection. When a connection carries MORE than one
+        // relation (e.g. an [Extract].[Extract] placeholder sitting BESIDE the real
+        // Custom SQL type='text' relation), prefer the meaningful one over the
+        // placeholder — else we build a 0-column extract element (MCP #81 parity).
         function tableauRootRelation(conn) {
-            return tableauConnRelations(conn)[0] || null;
+            const rels = tableauConnRelations(conn);
+            if (rels.length <= 1) return rels[0] || null;
+            const meaningful = rels.find(r => {
+                const t = r.getAttribute('type') || 'table';
+                if (t === 'text' || t === 'join' || t === 'collection') return true;
+                return !tableauIsExtractPlaceholderRel(r);
+            });
+            return meaningful || rels[0];
+        }
+
+        // Flatten a datasource's connection(s): every <connection> under the
+        // datasource (siblings) plus nested <connection> and
+        // <named-connection><connection>, outermost first.
+        function tableauAllConnections(dsEl) {
+            const out = [];
+            if (!dsEl) return out;
+            const visit = (c) => {
+                if (!c) return;
+                out.push(c);
+                for (const child of Array.from(c.children)) {
+                    const tag = child.tagName.toLowerCase();
+                    if (tag === 'connection') visit(child);
+                    else if (tag === 'named-connections') {
+                        for (const nc of Array.from(child.children)) {
+                            const ncConn = Array.from(nc.children).find(x => x.tagName.toLowerCase() === 'connection');
+                            if (ncConn) visit(ncConn);
+                        }
+                    }
+                }
+            };
+            for (const conn of Array.from(dsEl.children).filter(c => c.tagName.toLowerCase() === 'connection')) visit(conn);
+            return out;
+        }
+
+        // Resolve the connection to build from. A .hyper/sqlproxy extract often makes
+        // the extract the OUTER/first <connection> (wrapping the live warehouse
+        // connection nested, or as a sibling) so the real schema lives on a DIFFERENT
+        // connection. Prefer the connection bearing a meaningful (non-placeholder)
+        // relation; drill through nested/sibling/named connections. Falls back to the
+        // first connection so single-connection paths are unchanged (MCP #84 parity).
+        function tableauEffectiveConnection(dsEl, fallbackConn) {
+            const conns = tableauAllConnections(dsEl);
+            if (conns.length === 0) return fallbackConn || null;
+            const meaningful = conns.find(c => tableauConnRelations(c).some(r => {
+                const t = r.getAttribute('type') || 'table';
+                if (t === 'text' || t === 'join' || t === 'collection') return true;
+                return !tableauIsExtractPlaceholderRel(r);
+            }));
+            return meaningful || conns[0];
         }
 
         // Resolve a possibly feature-flag-namespaced CHILD element. e.g. the object
@@ -28742,7 +28815,9 @@ ${cleanedSql}`;
                 return false;
             }
 
-            const connection   = ds.connection;
+            // Drill past a .hyper/sqlproxy extract wrapper (nested or sibling) to the
+            // live warehouse connection that actually bears the schema (MCP #84).
+            const connection   = tableauEffectiveConnection(ds.element, ds.connection);
                 // Namespace-aware: encapsulated-legacy (.true...relation) tags don't match a
                 // plain CSS `:scope > relation` selector.
                 const rootRelation = tableauRootRelation(connection);
@@ -30024,8 +30099,12 @@ ${cleanedSql}`;
 
             try {
                 const isMulti = document.getElementById('tableauMultiConn')?.checked;
-                const dbOverride = document.getElementById('tableauDatabase').value.trim().toUpperCase();
-                const schOverride = document.getElementById('tableauSchema').value.trim().toUpperCase();
+                // Preserve the caller's exact db/schema case — warehouse identifiers are quoted
+                // per-segment in Sigma's path lookup, so a spaced/mixed-case schema ("Tableau Test")
+                // must NOT be folded to "TABLEAU TEST" (that path won't resolve). Type the exact
+                // warehouse case (standard Snowflake schemas are already uppercase).
+                const dbOverride = document.getElementById('tableauDatabase').value.trim();
+                const schOverride = document.getElementById('tableauSchema').value.trim();
                 const strategy = document.getElementById('tableauJoinStrategy').value;
 
                 // Build the list of datasources to convert, each with its connectionId
@@ -34390,7 +34469,7 @@ models:
     <li><b>Role-playing dimensions</b> — Multiple relationships from a fact table to the same dimension are now supported. Each relationship gets a unique name including the join key (e.g. "DATE_DIM via Order Date Key"). Review the generated names for clarity.</li>
     <li><b>Bins</b> — Converted to bucketed <code>Floor()</code> calculated columns.</li>
     <li><b>Custom SQL data sources</b> (<code>&lt;relation type='text'&gt;</code>) — Converted to a Sigma custom SQL element with the raw SQL preserved verbatim; output columns are surfaced from the datasource's column metadata and self-reference via the source-qualified <code>[Custom SQL/COL]</code> form (the only form that resolves). Verify column display names match the query output, and adjust any Tableau-specific SQL syntax.</li>
-    <li><b>Extracts (.hyper)</b> — Extract-only fields and extract filters are not converted. The converter reads the logical model definition, not the physical extract.</li>
+    <li><b>Extracts (.hyper / packaged .twbx)</b> — Extract-only fields and extract filters are not converted (the converter reads the logical model, not the physical extract). A packaged extract names its logical table after the extract sheet (e.g. <code>Orders$</code>); the trailing <code>$</code> is stripped automatically so the source path targets the warehouse table (<code>ORDERS</code>). Enter the exact Database/Schema case in the override fields — a spaced/mixed-case schema (<code>Tableau Test</code>) is used verbatim (NOT upper-cased), since Sigma quotes each path segment. Column names containing <code>/</code> or <code>-</code> (<code>Country/Region</code>, <code>Sub-Category</code>) are folded to spaces so they resolve to the underscore-named warehouse columns instead of erroring. When the extract sheet name still differs from the physical table after stripping <code>$</code>, rename the table in the generated JSON before saving.</li>
     <li><b>Data blending</b> — Same-warehouse blends (workbook-level <code>&lt;datasource-relationships&gt;</code>) are converted to one merged model (see "What Gets Converted"). Limitations: a published/unpublished secondary with no warehouse table is skipped with a warning (repoint it to a warehouse first); a 3+-source blend is handled as one primary plus N secondaries that each link to it (arbitrary connected-component graphs are not yet decomposed); when the primary is grouped by dimensions finer than the link key, the secondary value repeats across the finer groups (faithful to Tableau, but verify column totals).</li>
     <li><b>Parameters with calculations</b> — Parameter values are captured but formulas that reference parameters using Tableau's parameter syntax may not convert correctly.</li>
 </ul>
