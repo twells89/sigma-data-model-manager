@@ -21021,9 +21021,25 @@ views:
         }
         function _bobjParseJoin(join) {
             const expr = join.expression || '';
-            const m = expr.match(/"?([A-Za-z_][\w ]*?)"?\s*\.\s*"?([A-Za-z_]\w*)"?\s*=\s*"?([A-Za-z_][\w ]*?)"?\s*\.\s*"?([A-Za-z_]\w*)"?/);
-            if (m) return { leftTable: m[1].trim(), leftCol: m[2].trim(), rightTable: m[3].trim(), rightCol: m[4].trim() };
-            return null;
+            // First equality of two qualified column refs, each 2-or-more dotted,
+            // optionally quoted segments — so schema/catalog-qualified 3-part names
+            // ("DWH"."CUSTOMER"."ID" = "DWH"."SALES"."CUST_ID") resolve, not just bare
+            // Table.Col. The last two segments of each ref are taken as table.col.
+            // One identifier segment: a quoted/bracketed token (spaces allowed inside) OR a
+            // bare unquoted identifier (no spaces — so it can't swallow " AND "/operators
+            // in a multi-condition join).
+            const seg = '(?:["\'`\\[][^"\'`\\]]+["\'`\\]]|[A-Za-z_]\\w*)';
+            const ref = '((?:' + seg + '\\s*\\.\\s*)+' + seg + ')';
+            const m = expr.match(new RegExp(ref + '\\s*=\\s*' + ref));
+            if (!m) return null;
+            const l = _bobjSplitDottedRef(m[1]), r = _bobjSplitDottedRef(m[2]);
+            if (!l || !r) return null;
+            return { leftTable: l.table, leftCol: l.col, rightTable: r.table, rightCol: r.col };
+        }
+        function _bobjSplitDottedRef(ref) {
+            const parts = String(ref).split('.').map(p => p.replace(/["'`\[\]]/g, '').trim()).filter(Boolean);
+            if (parts.length < 2) return null;
+            return { table: parts[parts.length - 2], col: parts[parts.length - 1] };
         }
         function _bobjTranslateExpr(expr, warnings) {
             let f = (expr || '').trim();
@@ -21368,6 +21384,18 @@ views:
 
                 let uni = isXml ? _bobjIngestXml(raw) : _bobjNormalize(input);
 
+                // Tell the user, up front, whether the file they provided can carry joins —
+                // the #1 cause of a low-column workbook is an outline-only input silently
+                // producing a joinless model.
+                if (isXml) {
+                    warnings.push('SL-SDK / IDT XML export — carries the data foundation, so joins and physical columns are expected. If relationships still come out 0, check the per-join warnings below.');
+                } else {
+                    const _root = (input && input.universe) ? input.universe : (input || {});
+                    const _rawJoins = _root.joins || (_root.dataFoundation && _root.dataFoundation.joins) || (input && input.joins);
+                    if (!(Array.isArray(_rawJoins) && _rawJoins.length))
+                        warnings.push('RWS outline JSON — carries object names/types/folders ONLY, not the data foundation (physical tables, joins) or object SELECTs. Expect 0 relationships and outline-only columns. For a full model (joins + all columns) provide an SL-SDK / IDT XML export instead.');
+                }
+
                 // Optional target-layer remap (restructured / platinum layer).
                 const remapRaw = (document.getElementById('bobjRemapJson')?.value || '').trim();
                 if (remapRaw) {
@@ -21483,6 +21511,19 @@ views:
                     elements.push(ctx.element);
                 }
                 for (const de of _bobjBuildDerived(elements)) elements.push(de);
+
+                // Guard: a multi-table universe that produced NO relationships yields a
+                // low-fidelity model — the denormalized View can only traverse to dimension
+                // columns via a relationship, so a workbook bound to it sees just the one
+                // fact table's columns. This used to happen silently; surface it loudly.
+                const _physicalCount = elements.filter(e => e.source && e.source.kind === 'warehouse-table').length;
+                const _relCount = elements.reduce((n, e) => n + ((e.relationships || []).length), 0);
+                if (_physicalCount > 1 && _relCount === 0) {
+                    if (!uni.joins.length)
+                        warnings.push(`⚠ No joins in the universe input: ${_physicalCount} tables produced 0 relationships, so a workbook can only reach ONE table's columns. If this came from the RWS outline (GET /sl/v1/universes/{id}), that REST path carries no join graph by design — re-extract with the SL-SDK / IDT XML path so joins and the full column set come through.`);
+                    else
+                        warnings.push(`⚠ ${uni.joins.length} join(s) present but 0 produced a relationship — a workbook can only reach ONE table's columns. See the per-join warnings above: joins whose expression isn't a simple equi-join, or whose tables/aliases aren't in the exported data foundation, are dropped. Verify each join expression and that every joined table is exported.`);
+                }
 
                 const sigma = { name: sigmaDisplayName(uni.name), schemaVersion: 1,
                     pages: [{ id: sigmaShortId(), name: 'Page 1', elements }] };
@@ -28983,6 +29024,32 @@ ${cleanedSql}`;
                         _lodUsedAliases.add(a);
                         return a;
                     };
+                    // Recover the REAL warehouse column name (preserving case /
+                    // spaces) from metadata-records, so LOD helper SQL can QUOTE
+                    // mixed-case identifiers. Every capture point upper-cases and
+                    // underscores names, so a column like "SFDC Oppty ID" would
+                    // otherwise be emitted bare as SFDC_OPPTY_ID and fail to match
+                    // the real quoted column. Only names that ACTUALLY need
+                    // quoting (differ from their upper-snake form) are added, so
+                    // all-uppercase columns are emitted bare exactly as before.
+                    const _physToRealQuoted = {};
+                    if (connection) {
+                        for (const mr of connection.querySelectorAll('metadata-records > metadata-record')) {
+                            const remote = (mr.querySelector(':scope > remote-name')?.textContent || '').trim();
+                            if (!remote) continue;
+                            const snakeUpper = remote.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+                            const spaceUpper = remote.replace(/\s+/g, '_').toUpperCase();
+                            if (remote === snakeUpper && !/^[0-9]/.test(remote)) continue;
+                            const quoted = '"' + remote + '"';
+                            for (const key of [snakeUpper, spaceUpper]) {
+                                if (key && !(key in _physToRealQuoted)) _physToRealQuoted[key] = quoted;
+                            }
+                        }
+                    }
+                    const _hasRealNames = Object.keys(_physToRealQuoted).length > 0;
+                    const _quotePhysToken = (tok) => _physToRealQuoted[tok] || _physToRealQuoted[tok.toUpperCase()] || tok;
+                    const _rewritePhysExpr = (expr) => !_hasRealNames ? expr
+                        : expr.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\b/g, (m, tok) => _physToRealQuoted[tok.toUpperCase()] || m);
                     const _resolveLodDim = (dimName) => {
                         const found = displayNameMap[dimName.toUpperCase()] || displayNameMap[sigmaDisplayName(dimName).toUpperCase()];
                         if (!found) return null;
@@ -29014,7 +29081,12 @@ ${cleanedSql}`;
                             columns: cols, order
                         };
                         _lodHelpers[sigKey] = {
-                            element: helperEl, groupDimNames: effectiveDims.slice(),
+                            // Use the RESOLVED physical-upper names (aligned 1:1 with
+                            // effectiveDims), not the raw effective names — INCLUDE/EXCLUDE
+                            // worksheet dims arrive as display strings ("SALES REGION"),
+                            // and the resolved dimUpper ("SALES_REGION") is what
+                            // _quotePhysToken maps to the real quoted warehouse column.
+                            element: helperEl, groupDimNames: dimResolved.map(d => d.dimUpper),
                             groupDimColIds, aggsByExpr: {}, relationshipName: relNameSuggestion
                         };
                         lodChildElements.push(helperEl);
@@ -29048,11 +29120,19 @@ ${cleanedSql}`;
                             ? factEl.source.path.join('.') : factTableName;
                         for (const sigKey of Object.keys(_lodHelpers)) {
                             const rec = _lodHelpers[sigKey];
-                            const dimList = rec.groupDimNames.join(', ');
+                            // Quote mixed-case source columns and alias them back to the
+                            // bare upper-snake name — the helper's dim column formula is
+                            // [Custom SQL/<UPPER>], so the SQL output identifier must be
+                            // that upper name (a quoted mixed-case output would not resolve).
+                            const dimList = rec.groupDimNames.map(dn => {
+                                const q = _quotePhysToken(dn);
+                                return q === dn ? dn : (q + ' AS ' + dn);
+                            }).join(', ');
                             const aggParts = [];
                             for (const k of Object.keys(rec.aggsByExpr)) {
                                 const a = rec.aggsByExpr[k];
-                                const sqlAggFunc = a.aggFunc === 'COUNTD' ? ('COUNT(DISTINCT ' + a.aggExpr + ')') : (a.aggFunc + '(' + a.aggExpr + ')');
+                                const safeExpr = _rewritePhysExpr(a.aggExpr);
+                                const sqlAggFunc = a.aggFunc === 'COUNTD' ? ('COUNT(DISTINCT ' + safeExpr + ')') : (a.aggFunc + '(' + safeExpr + ')');
                                 aggParts.push(sqlAggFunc + ' AS ' + a.alias);
                             }
                             const groupByIdx = rec.groupDimNames.map((_d, i) => i + 1).join(', ');
@@ -29206,16 +29286,23 @@ ${cleanedSql}`;
                         for (const key of Object.keys(_winHelpers)) {
                             const rec = _winHelpers[key];
                             const selectParts = [];
-                            for (const d of rec.partitionDimNames) selectParts.push(d);
+                            // Base SELECT reads the fact table: quote mixed-case cols and
+                            // alias to bare upper-snake; downstream CTE refs use the alias.
+                            for (const d of rec.partitionDimNames) {
+                                const q = _quotePhysToken(d);
+                                selectParts.push(q === d ? d : (q + ' AS ' + d));
+                            }
                             if (rec.orderDimRaw && rec.orderDimAlias) {
+                                const rawRef = _rewritePhysExpr(rec.orderDimRaw);
                                 selectParts.push(rec.orderDimDateTrunc
-                                    ? "DATE_TRUNC('" + rec.orderDimDateTrunc + "', " + rec.orderDimRaw + ') AS ' + rec.orderDimAlias
-                                    : (rec.orderDimRaw + ' AS ' + rec.orderDimAlias));
+                                    ? "DATE_TRUNC('" + rec.orderDimDateTrunc + "', " + rawRef + ') AS ' + rec.orderDimAlias
+                                    : (rawRef + ' AS ' + rec.orderDimAlias));
                             }
                             for (const k of Object.keys(rec.innerAggs)) {
                                 const [aggFunc, exprSql] = k.split('::');
                                 const a = rec.innerAggs[k];
-                                const sqlFn = aggFunc === 'COUNTD' ? ('COUNT(DISTINCT ' + exprSql + ')') : (aggFunc + '(' + exprSql + ')');
+                                const safeExpr = _rewritePhysExpr(exprSql);
+                                const sqlFn = aggFunc === 'COUNTD' ? ('COUNT(DISTINCT ' + safeExpr + ')') : (aggFunc + '(' + safeExpr + ')');
                                 selectParts.push(sqlFn + ' AS ' + a.alias);
                             }
                             const groupByCount = rec.partitionDimNames.length + (rec.orderDimRaw ? 1 : 0);
@@ -29306,18 +29393,23 @@ ${cleanedSql}`;
                         order.push(isTopNColId);
                         const baseFq = (factEl.source && factEl.source.path && factEl.source.path.length >= 2)
                             ? factEl.source.path.join('.') : factTableName;
-                        const groupCols = [keyResolved.dimUpper].concat(partResolved.map(p => p.dimUpper));
-                        const groupByIdx = groupCols.map((_g, i) => i + 1).join(', ');
+                        // agg CTE reads the table → quote+alias to bare upper-snake; every
+                        // downstream ref (ranked, outer, PARTITION BY) uses the bare alias.
+                        const _groupDims = [keyResolved.dimUpper].concat(partResolved.map(p => p.dimUpper));
+                        const groupColsSource = _groupDims.map(c => { const q = _quotePhysToken(c); return q === c ? c : (q + ' AS ' + c); });
+                        const groupColsOut = _groupDims.slice();
+                        const groupByIdx = _groupDims.map((_g, i) => i + 1).join(', ');
                         let aggSql = top.byAggFunc;
-                        if (aggSql === 'COUNTD') aggSql = 'COUNT(DISTINCT ' + top.byField + ')';
-                        else aggSql = aggSql + '(' + top.byField + ')';
+                        const safeByField = _rewritePhysExpr(top.byField);
+                        if (aggSql === 'COUNTD') aggSql = 'COUNT(DISTINCT ' + safeByField + ')';
+                        else aggSql = aggSql + '(' + safeByField + ')';
                         const partBy = top.partitionBy.length > 0 ? 'PARTITION BY ' + top.partitionBy.join(', ') + ' ' : '';
                         const overClause = 'RANK() OVER (' + partBy + 'ORDER BY s ' + dirSql + ')';
-                        const innerSelect = 'SELECT ' + groupCols.join(', ') + ', ' + aggSql + ' AS s FROM ' + baseFq + ' GROUP BY ' + groupByIdx;
-                        const rankedSelect = 'SELECT ' + groupCols.join(', ') + ', s, ' + overClause + ' AS RNK FROM agg';
+                        const innerSelect = 'SELECT ' + groupColsSource.join(', ') + ', ' + aggSql + ' AS s FROM ' + baseFq + ' GROUP BY ' + groupByIdx;
+                        const rankedSelect = 'SELECT ' + groupColsOut.join(', ') + ', s, ' + overClause + ' AS RNK FROM agg';
                         const outerCols = emitIsTopNInSql
-                            ? (groupCols.join(', ') + ', s AS TOTAL, RNK, (RNK <= ' + nLiteral + ') AS IS_TOP_N')
-                            : (groupCols.join(', ') + ', s AS TOTAL, RNK');
+                            ? (groupColsOut.join(', ') + ', s AS TOTAL, RNK, (RNK <= ' + nLiteral + ') AS IS_TOP_N')
+                            : (groupColsOut.join(', ') + ', s AS TOTAL, RNK');
                         const outerSelect = 'SELECT ' + outerCols + ' FROM ranked';
                         const statement = 'WITH agg AS (' + innerSelect + '), ranked AS (' + rankedSelect + ') ' + outerSelect;
                         const helperEl = {
@@ -34450,7 +34542,7 @@ models:
     <li><b>Statistical / regex / date-construction functions</b> → <code>STDEV</code>→<code>StdDev</code>, <code>VAR</code>→<code>Variance</code>, <code>VARP</code>→<code>VariancePop</code>, <code>STDEVP</code>→<code>Sqrt(VariancePop(…))</code>, <code>PERCENTILE</code>→<code>PercentileCont</code>, <code>CORR</code>→<code>Corr</code> (routed to a metric), <code>REGEXP_EXTRACT/MATCH/REPLACE</code>→<code>Regexp*</code>, <code>SPLIT</code>→<code>SplitPart</code>, <code>MAKEDATE</code>→<code>MakeDate</code>, and <code>DATEPARSE(fmt, str)</code>→<code>DateParse(str, "&lt;strftime&gt;")</code> (Tableau's arg order is reversed and its Java date tokens are rewritten to strftime — review the pattern). <code>COVAR</code>/<code>COVARP</code> have no Sigma equivalent and are flagged, not emitted.</li>
     <li><b>User functions / row-level security</b> → User-context functions are translated (<code>USERNAME()</code>→<code>CurrentUserEmail()</code>, <code>ISMEMBEROF('g')</code>→<code>CurrentUserInTeam("g")</code>, <code>USERATTRIBUTE('a')</code>→<code>CurrentUserAttributeText("a")</code>, <code>ISUSERNAME('u')</code>→<code>CurrentUserEmail() = "u"</code>). Calcs that test the viewer's identity (the classic Tableau RLS / data-source-filter pattern) are <b>detected and reported, not injected</b>: the converter emits a 🔐 conversion note (and an RLS-rules badge) carrying the translated boolean formula plus the user attributes/teams to provision — it does NOT add the calc column to the spec, because a converter can't provision Sigma user attributes/teams and an injected filter would fail-closed to 0 rows for everyone. After saving, provision the listed attribute(s)/team(s), then apply the boolean calc column + an element filter keeping only <code>True</code> rows.</li>
     <li><b>Parameters</b> → Sigma controls (list, date-range, number-range, text)</li>
-    <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves.</li>
+    <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves. Warehouse columns whose real name is mixed-case or contains spaces (e.g. <code>"SFDC Oppty ID"</code>, recovered from the datasource's <code>&lt;metadata-record&gt;</code> <code>remote-name</code>) are emitted DOUBLE-QUOTED and aliased back to their upper-snake form (<code>"SFDC Oppty ID" AS SFDC_OPPTY_ID</code>) in the helper SQL — so the query matches the real Snowflake column and the helper's <code>[Custom SQL/…]</code> refs still resolve. Already-uppercase columns are emitted bare, unchanged. The same quoting applies to Top-N and window helpers.</li>
     <li><b>Window / table calculations</b> (<code>RUNNING_SUM</code>, <code>RUNNING_AVG</code>, <code>RUNNING_MIN</code>, <code>RUNNING_MAX</code>, <code>WINDOW_SUM</code>, <code>WINDOW_AVG</code>, <code>WINDOW_MIN</code>, <code>WINDOW_MAX</code>, <code>WINDOW_COUNT</code>, <code>LOOKUP</code>, <code>RANK</code>, <code>RANK_DENSE</code>, <code>RANK_UNIQUE</code>, <code>INDEX</code>, <code>FIRST</code>, <code>LAST</code>) → A <code>kind:sql</code> helper element with explicit Snowflake <code>OVER()</code> clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys are derived from worksheet <code>rows</code> shelves, order keys from time-truncated <code>cols</code> shelves. The DATE_TRUNC grain is derived from the cols-shelf prefix (<code>yr:</code>→year, <code>qr:</code>→quarter, <code>mn:</code>→month, <code>wk:</code>→week, <code>dy:</code>/<code>md:</code>→day; no prefix → no DATE_TRUNC wrapper). Explicit "Compute Using" addressing (<code>&lt;table-calculation&gt;</code> with <code>&lt;address&gt;</code> children, plus Table Across/Down direction) overrides the rows/cols heuristic. Multiple window calcs sharing the same partition+order signature are emitted as separate aliases on a single helper element.</li>
     <li><b>Table calcs the SQL lowering can't express → 🧩 workbook patterns</b> (reported with ready-to-place formulas, never injected as DM columns — Sigma window functions silently error in data-model calc columns and metrics). Validated mappings: <code>RUNNING_*(agg)</code>→<code>Cumulative*(agg)</code>; <code>WINDOW_AVG/SUM/MAX/MIN(agg, -n, 0)</code>→<code>Moving*(agg, n)</code> (and <code>(-n, m)</code>→<code>(agg, n, m)</code>); <code>WINDOW_STDEV</code>→<code>MovingStdDev</code>; <code>agg/WINDOW_SUM(agg)</code> or <code>agg/TOTAL(agg)</code>→<code>PercentOfTotal(agg, "grand_total")</code>; <code>RUNNING_SUM(agg)/TOTAL(agg)</code>→<code>CumulativeSum(PercentOfTotal(…))</code>; <code>RANK/RANK_DENSE/RANK_PERCENTILE</code>→<code>Rank/RankDense/RankPercentile(agg, "desc")</code>; <code>INDEX()</code>→<code>RowNumber()</code>; <code>LOOKUP(agg, ±n)</code>→<code>Lag/Lead(agg, n)</code>. Place each formula in a GROUPED workbook element (group by the chart's dimensions). The converter never emits <code>*Over</code> functions (SumOver/CountOver resolve as 'Unknown function' in spec contexts).</li>
     <li><b>Sets</b> → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → <code>In([Field], ...)</code> column. Add a filter control on these columns in your Sigma workbook to replicate set-based filtering. If a set's formula references a related-element column (e.g. <code>In([Customer Segment], ...)</code> on a fact element where Customer Segment lives on a dim), the set column is automatically moved to the derived element and scrubbed from the source element's "Sets" folder so the model saves cleanly.</li>
@@ -35257,6 +35349,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <li>If your RWS JSON looks empty of real columns/SQL, that's expected. Use it for <b>inventory/discovery</b>.</li>
     <li>To migrate the actual <b>columns + calculations</b>, feed an <b>SL-SDK / IDT XML export</b> instead. The skill ships a Semantic Layer SDK extractor recipe (<code>scripts/extract-universe-sdk.groovy</code>) that walks each object's <code>RelationalBinding</code> (<code>getSelect()/getWhere()/getTables()</code>) plus the data foundation and emits this XML (or the equivalent JSON).</li>
 </ul>
+<p><b>The converter tells you which you gave it.</b> Its first warning states the detected <code>Input format</code> (RWS outline JSON vs. SL-SDK / IDT XML) and whether that format can carry joins. And if a <b>multi-table</b> universe converts to <b>0 relationships</b>, it emits a loud guard warning — because a workbook bound to a joinless model can only reach <i>one</i> table's columns (the common "my dashboard only has ~15 columns" symptom). Heed it before handing the model off: either supply the XML export, or fix the join expressions it flags.</p>
 
 <h3>What Gets Converted</h3>
 <ul>
@@ -35264,7 +35357,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <li><b>Dimensions / details</b> → Sigma columns; the universe <b>business name</b> is preserved via the column <code>name</code> while the formula references the underlying physical column</li>
     <li><b>Measures</b> → Sigma <b>metrics</b> (Sum / Count / Count Distinct / Avg / Min / Max / StdDev / Variance) of the underlying column; the backing physical column is also kept so the metric resolves</li>
     <li><b>Object expressions</b> (functions, CASE, concatenation) → Sigma calculated columns</li>
-    <li><b>Joins</b> → Sigma relationships; FK/PK keys are parsed directly from the join's <code>Table.col = Table.col</code> SQL, and join-key columns are surfaced (hidden) so the relationship resolves. Tables with outgoing joins also get a derived <b>View</b> element exposing own + joined columns via <code>[SRC/TARGET/Col]</code> cross-element formulas</li>
+    <li><b>Joins</b> → Sigma relationships; FK/PK keys are parsed from the join's equi-join SQL — including schema/catalog-<b>qualified</b> refs (<code>"DB"."TABLE"."COL" = …</code>) and bracketed identifiers (<code>[schema].[table].[col]</code>), taking the last two segments as <code>table.col</code>; the first equality of a multi-condition join is used. Join-key columns are surfaced (hidden) so the relationship resolves. Tables with outgoing joins also get a derived <b>View</b> element exposing own + joined columns via <code>[SRC/TARGET/Col]</code> cross-element formulas</li>
 </ul>
 
 <h3>Target-layer remap (restructured / platinum layer)</h3>
