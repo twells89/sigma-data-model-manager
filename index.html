@@ -29114,7 +29114,53 @@ ${cleanedSql}`;
                         // helpers (LOD / window / Top-N) query the fact table directly, so a dim
                         // that resolves to a *related* dimension element can't be expressed as a
                         // single-table helper.
-                        return { dimUpper, displayName: dispName, baseColId: found.colId, onFact: found.el === factEl };
+                        return { dimUpper, displayName: dispName, baseColId: found.colId, onFact: found.el === factEl, el: found.el };
+                    };
+                    // Cross-table LOD (grouping dim on a JOINED dimension element): emit a
+                    // paste-ready Custom SQL (fact→dim JOIN + GROUP BY) instead of a bare
+                    // skip, so the case is self-service. Mirrors MCP _suggestCrossTableLodSql.
+                    // Returns null when the join can't be resolved mechanically.
+                    const _suggestCrossTableLodSql = (lod, dimsResolved, caption) => {
+                        const fe = factEl;
+                        if (!fe || !fe.source || fe.source.kind !== 'warehouse-table' || !(fe.source.path && fe.source.path.length >= 1)) return null;
+                        const physNameOf = (el, colId) => {
+                            const c = (el && el.columns || []).find(x => x.id === colId);
+                            if (!c) return null;
+                            const m = typeof c.formula === 'string' ? c.formula.match(/\/([^\]]+)\]$/) : null;
+                            const nm = c.name || (m ? m[1] : null);
+                            return nm ? String(nm).replace(/\s+/g, '_').toUpperCase() : null;
+                        };
+                        const qFact = (u) => _physToRealQuoted[u] || u;
+                        const factPath = fe.source.path.join('.');
+                        const factPhys = new Set((fe.columns || []).map(c => physNameOf(fe, c.id)).filter(Boolean));
+                        const joins = []; const joinByEl = {}; const dimSel = [];
+                        for (const d of dimsResolved) {
+                            if (!d.el || d.el === fe) { dimSel.push('__f.' + qFact(d.dimUpper) + ' AS ' + d.dimUpper); continue; }
+                            const dimEl = d.el;
+                            if (!dimEl.source || dimEl.source.kind !== 'warehouse-table' || !(dimEl.source.path && dimEl.source.path.length >= 1)) return null;
+                            const rel = (fe.relationships || []).find(r => r.targetElementId === dimEl.id);
+                            if (!rel || !(rel.keys && rel.keys.length)) return null;
+                            let alias = joinByEl[dimEl.id];
+                            if (!alias) {
+                                alias = '__d' + joins.length; const on = [];
+                                for (const k of rel.keys) {
+                                    const fp = physNameOf(fe, k.sourceColumnId), dp = physNameOf(dimEl, k.targetColumnId);
+                                    if (!fp || !dp) return null;
+                                    on.push('__f.' + qFact(fp) + ' = ' + alias + '.' + dp);
+                                }
+                                joins.push({ alias, path: dimEl.source.path.join('.'), on });
+                                joinByEl[dimEl.id] = alias;
+                            }
+                            dimSel.push(alias + '.' + d.dimUpper + ' AS ' + d.dimUpper);
+                        }
+                        if (!joins.length) return null;
+                        const aggExpr = String(lod.aggExpr || '').replace(/\b([A-Za-z_][A-Za-z0-9_]*)\b/g,
+                            (m, tok) => factPhys.has(tok.toUpperCase()) ? '__f.' + qFact(tok.toUpperCase()) : m);
+                        const aggAlias = (caption || 'LOD_VALUE').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase() || 'LOD_VALUE';
+                        const aggFn = lod.aggFunc === 'COUNTD' ? 'COUNT(DISTINCT ' + aggExpr + ')' : lod.aggFunc + '(' + aggExpr + ')';
+                        const gb = dimSel.map((_s, i) => i + 1).join(', ');
+                        const joinSql = joins.map(j => '    LEFT JOIN ' + j.path + ' ' + j.alias + ' ON ' + j.on.join(' AND ')).join('\n');
+                        return '    SELECT ' + dimSel.join(', ') + ', ' + aggFn + ' AS ' + aggAlias + '\n    FROM ' + factPath + ' __f\n' + joinSql + '\n    GROUP BY ' + gb;
                     };
                     const _ensureLodHelper = (effectiveDims, dimResolved, relNameSuggestion) => {
                         if (!effectiveDims.length) return null;
@@ -29742,7 +29788,12 @@ ${cleanedSql}`;
                                     else { allFound = false; warnings.push('⚠ LOD "' + caption + '": dim [' + dn + '] not found'); }
                                 }
                                 if (dimOffFact) {
-                                    warnings.push('⚠ LOD "' + caption + '" (' + lod.lodType + ') groups by a dimension-table column (cross-table grain); not mechanizable as a single-table helper — needs manual Sigma authoring. Skipped.');
+                                    const suggestion = _suggestCrossTableLodSql(lod, lodDimsResolved, caption);
+                                    if (suggestion) {
+                                        warnings.push('⚠ LOD "' + caption + '" (' + lod.lodType + ') groups by a dimension-table column (cross-table grain) — not auto-wired yet. Create a Custom SQL element in Sigma with:\n' + suggestion + '\n  then relate it back to the base on the grouping column(s). (Auto-wiring tracked: beads-sigma-hnx0.)');
+                                    } else {
+                                        warnings.push('⚠ LOD "' + caption + '" (' + lod.lodType + ') groups by a dimension-table column (cross-table grain); not mechanizable as a single-table helper — needs manual Sigma authoring. Skipped.');
+                                    }
                                     continue;
                                 }
                                 if (lod.lodType === 'FIXED' && lod.dims.length === 0) {
@@ -34639,7 +34690,7 @@ models:
     <li><b>Statistical / regex / date-construction functions</b> → <code>STDEV</code>→<code>StdDev</code>, <code>VAR</code>→<code>Variance</code>, <code>VARP</code>→<code>VariancePop</code>, <code>STDEVP</code>→<code>Sqrt(VariancePop(…))</code>, <code>PERCENTILE</code>→<code>PercentileCont</code>, <code>CORR</code>→<code>Corr</code> (routed to a metric), <code>REGEXP_EXTRACT/MATCH/REPLACE</code>→<code>Regexp*</code>, <code>SPLIT</code>→<code>SplitPart</code>, <code>MAKEDATE</code>→<code>MakeDate</code>, and <code>DATEPARSE(fmt, str)</code>→<code>DateParse(str, "&lt;strftime&gt;")</code> (Tableau's arg order is reversed and its Java date tokens are rewritten to strftime — review the pattern). <code>COVAR</code>/<code>COVARP</code> have no Sigma equivalent and are flagged, not emitted.</li>
     <li><b>User functions / row-level security</b> → User-context functions are translated (<code>USERNAME()</code>→<code>CurrentUserEmail()</code>, <code>ISMEMBEROF('g')</code>→<code>CurrentUserInTeam("g")</code>, <code>USERATTRIBUTE('a')</code>→<code>CurrentUserAttributeText("a")</code>, <code>ISUSERNAME('u')</code>→<code>CurrentUserEmail() = "u"</code>). Calcs that test the viewer's identity (the classic Tableau RLS / data-source-filter pattern) are <b>detected and reported, not injected</b>: the converter emits a 🔐 conversion note (and an RLS-rules badge) carrying the translated boolean formula plus the user attributes/teams to provision — it does NOT add the calc column to the spec, because a converter can't provision Sigma user attributes/teams and an injected filter would fail-closed to 0 rows for everyone. After saving, provision the listed attribute(s)/team(s), then apply the boolean calc column + an element filter keeping only <code>True</code> rows.</li>
     <li><b>Parameters</b> → Sigma controls (list, date-range, number-range, text)</li>
-    <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves. Warehouse columns whose real name is mixed-case or contains spaces (e.g. <code>"SFDC Oppty ID"</code>, recovered from the datasource's <code>&lt;metadata-record&gt;</code> <code>remote-name</code>) are emitted DOUBLE-QUOTED and aliased back to their upper-snake form (<code>"SFDC Oppty ID" AS SFDC_OPPTY_ID</code>) in the helper SQL — so the query matches the real Snowflake column and the helper's <code>[Custom SQL/…]</code> refs still resolve. Already-uppercase columns are emitted bare, unchanged. The same quoting applies to Top-N and window helpers. When the base is itself a <b>Custom SQL</b> (<code>kind:sql</code>) element, the helper wraps that verbatim statement as a subquery (<code>FROM (…) __base</code>) rather than a warehouse path. A Tableau conditional inside the LOD's inner aggregate (<code>SUM(IF [App Name]="EP1" THEN [Clicks] END)</code>) is lowered to SQL <code>CASE</code> with single-quoted string literals (<code>SUM(CASE WHEN "App Name"='EP1' THEN "Clicks" END)</code>).</li>
+    <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves. Warehouse columns whose real name is mixed-case or contains spaces (e.g. <code>"SFDC Oppty ID"</code>, recovered from the datasource's <code>&lt;metadata-record&gt;</code> <code>remote-name</code>) are emitted DOUBLE-QUOTED and aliased back to their upper-snake form (<code>"SFDC Oppty ID" AS SFDC_OPPTY_ID</code>) in the helper SQL — so the query matches the real Snowflake column and the helper's <code>[Custom SQL/…]</code> refs still resolve. Already-uppercase columns are emitted bare, unchanged. The same quoting applies to Top-N and window helpers. When the base is itself a <b>Custom SQL</b> (<code>kind:sql</code>) element, the helper wraps that verbatim statement as a subquery (<code>FROM (…) __base</code>) rather than a warehouse path. A Tableau conditional inside the LOD's inner aggregate (<code>SUM(IF [App Name]="EP1" THEN [Clicks] END)</code>) is lowered to SQL <code>CASE</code> with single-quoted string literals (<code>SUM(CASE WHEN "App Name"='EP1' THEN "Clicks" END)</code>). <b>Cross-table LODs</b> — a LOD that groups by a column on a JOINED dimension (not the fact) can't be a single-table fact helper, so instead of a bare skip the converter emits a <b>paste-ready Custom SQL</b> (the real fact→dim <code>LEFT JOIN</code> + <code>GROUP BY</code>, keys and aggregate resolved from the model) in the warnings; create that element in Sigma and relate it back on the grouping column(s).</li>
     <li><b>Window / table calculations</b> (<code>RUNNING_SUM</code>, <code>RUNNING_AVG</code>, <code>RUNNING_MIN</code>, <code>RUNNING_MAX</code>, <code>WINDOW_SUM</code>, <code>WINDOW_AVG</code>, <code>WINDOW_MIN</code>, <code>WINDOW_MAX</code>, <code>WINDOW_COUNT</code>, <code>LOOKUP</code>, <code>RANK</code>, <code>RANK_DENSE</code>, <code>RANK_UNIQUE</code>, <code>INDEX</code>, <code>FIRST</code>, <code>LAST</code>) → A <code>kind:sql</code> helper element with explicit Snowflake <code>OVER()</code> clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys are derived from worksheet <code>rows</code> shelves, order keys from time-truncated <code>cols</code> shelves. The DATE_TRUNC grain is derived from the cols-shelf prefix (<code>yr:</code>→year, <code>qr:</code>→quarter, <code>mn:</code>→month, <code>wk:</code>→week, <code>dy:</code>/<code>md:</code>→day; no prefix → no DATE_TRUNC wrapper). Explicit "Compute Using" addressing (<code>&lt;table-calculation&gt;</code> with <code>&lt;address&gt;</code> children, plus Table Across/Down direction) overrides the rows/cols heuristic. Multiple window calcs sharing the same partition+order signature are emitted as separate aliases on a single helper element.</li>
     <li><b>Table calcs the SQL lowering can't express → 🧩 workbook patterns</b> (reported with ready-to-place formulas, never injected as DM columns — Sigma window functions silently error in data-model calc columns and metrics). Validated mappings: <code>RUNNING_*(agg)</code>→<code>Cumulative*(agg)</code>; <code>WINDOW_AVG/SUM/MAX/MIN(agg, -n, 0)</code>→<code>Moving*(agg, n)</code> (and <code>(-n, m)</code>→<code>(agg, n, m)</code>); <code>WINDOW_STDEV</code>→<code>MovingStdDev</code>; <code>agg/WINDOW_SUM(agg)</code> or <code>agg/TOTAL(agg)</code>→<code>PercentOfTotal(agg, "grand_total")</code>; <code>RUNNING_SUM(agg)/TOTAL(agg)</code>→<code>CumulativeSum(PercentOfTotal(…))</code>; <code>RANK/RANK_DENSE/RANK_PERCENTILE</code>→<code>Rank/RankDense/RankPercentile(agg, "desc")</code>; <code>INDEX()</code>→<code>RowNumber()</code>; <code>LOOKUP(agg, ±n)</code>→<code>Lag/Lead(agg, n)</code>. Place each formula in a GROUPED workbook element (group by the chart's dimensions). The converter never emits <code>*Over</code> functions (SumOver/CountOver resolve as 'Unknown function' in spec contexts).</li>
     <li><b>Sets</b> → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → <code>In([Field], ...)</code> column. Add a filter control on these columns in your Sigma workbook to replicate set-based filtering. If a set's formula references a related-element column (e.g. <code>In([Customer Segment], ...)</code> on a fact element where Customer Segment lives on a dim), the set column is automatically moved to the derived element and scrubbed from the source element's "Sets" folder so the model saves cleanly.</li>
