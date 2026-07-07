@@ -27486,10 +27486,25 @@ ${cleanedSql}`;
         //         { INCLUDE [dim] : AGG([field]) }
         //         { EXCLUDE [dim] : AGG([field]) }
         //         { FIXED : AGG([field]) }  (table-scoped, no dimensions)
+        // Lower a Tableau inner expression to Snowflake SQL: Tableau
+        // `IF cond THEN a ELSEIF b THEN c ELSE d END` → `CASE WHEN cond THEN a
+        // WHEN b THEN c ELSE d END`, and double-quoted string literals ("EP1")
+        // → single-quoted ('EP1') — in Snowflake a double-quoted token is an
+        // identifier, so an untranslated `="EP1"` throws unexpected 'EP1'.
+        function _tableauExprToSql(s) {
+            s = s.replace(/"([^"]*)"/g, (_m, inner) => "'" + inner.replace(/'/g, "''") + "'");
+            if (/\bIF\b/i.test(s) && /\bEND\b/i.test(s)) {
+                s = s.replace(/\bELSE\s+IF\b/gi, 'WHEN')
+                     .replace(/\bELSEIF\b/gi, 'WHEN')
+                     .replace(/\bIF\b/gi, 'CASE WHEN');
+            }
+            return s;
+        }
         function _tableauInnerToSql(expr) {
             let s = expr;
             s = s.replace(/\bZN\s*\(([^()]+)\)/gi, '$1');
             s = s.replace(/\[([^\]]+)\]/g, (_m, name) => name.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase());
+            s = _tableauExprToSql(s);
             s = s.replace(/\/\s*([A-Z][A-Z0-9_]*)\b/g, '/NULLIF($1,0)');
             return s;
         }
@@ -28300,18 +28315,36 @@ ${cleanedSql}`;
                     }
                 }
                 const columns = [], order = [], seen = new Set();
+                // Re-alias projection: '/' in an output column name is a Sigma
+                // formula path separator, so we sanitize it to '-' in the ref and
+                // wrap the verbatim statement to re-alias the real (slashed) column.
+                const projParts = []; let needsRealias = false;
                 for (const raw of rawCols) {
                     const clean = raw.replace(/^\[|\]$/g, '');
                     const upper = clean.toUpperCase();
                     if (!clean || seen.has(upper)) continue; seen.add(upper);
                     const colKey = clean.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+                    // Snowflake folds UNQUOTED aliases to upper bare identifiers, but
+                    // preserves the EXACT spelling of QUOTED aliases (spaces, mixed
+                    // case, punctuation). Reference by the exact name when it isn't
+                    // already a folded bare identifier (live-verified: for a
+                    // `… AS "SFDC Oppty ID"` output, [Custom SQL/SFDC_OPPTY_ID] 400s
+                    // "dependency not found" while [Custom SQL/SFDC Oppty ID] resolves).
+                    const colRefRaw = clean === colKey ? colKey : clean;
+                    const colRef = colRefRaw.replace(/\//g, '-');
                     const display = capByName[upper] || sigmaDisplayName(clean);
-                    const id = sigmaInodeId(colKey);
-                    columns.push({ id, formula: '[Custom SQL/' + colKey + ']', name: display });
+                    const id = sigmaInodeId(colRef);
+                    columns.push({ id, formula: '[Custom SQL/' + colRef + ']', name: display });
                     order.push(id);
+                    if (colRef !== colRefRaw) { projParts.push('"' + clean + '" AS "' + colRef + '"'); needsRealias = true; }
+                    else if (colRefRaw === colKey) { projParts.push(colRefRaw); }
+                    else { projParts.push('"' + clean + '"'); }
                 }
+                const finalStatement = needsRealias
+                    ? 'SELECT ' + projParts.join(', ') + ' FROM (\n' + sql + '\n) __cs'
+                    : sql;
                 elements.push({ id: sigmaShortId(), kind: 'table',
-                    source: { connectionId, kind: 'sql', statement: sql },
+                    source: { connectionId, kind: 'sql', statement: finalStatement },
                     columns, metrics: [], order });
                 warnings.push(columns.length
                     ? 'ℹ Custom SQL data source → Sigma SQL element (' + columns.length + ' column(s)); statement preserved verbatim.'
@@ -29116,8 +29149,15 @@ ${cleanedSql}`;
                         return { alias, caption: cap };
                     };
                     const _finalizeLodHelpers = () => {
-                        const baseFq = (factEl.source && factEl.source.path && factEl.source.path.length >= 2)
-                            ? factEl.source.path.join('.') : factTableName;
+                        // A Custom SQL (kind:'sql') fact has no warehouse path — wrap its
+                        // verbatim statement as a subquery so the helper selects from the
+                        // real query output (whose columns _physToRealQuoted quotes by
+                        // their exact metadata remote-name). A plain warehouse-table fact
+                        // uses its FQN path.
+                        const baseFq = (factEl.source && factEl.source.kind === 'sql' && factEl.source.statement)
+                            ? ('(\n' + factEl.source.statement + '\n) __base')
+                            : ((factEl.source && factEl.source.path && factEl.source.path.length >= 2)
+                                ? factEl.source.path.join('.') : factTableName);
                         for (const sigKey of Object.keys(_lodHelpers)) {
                             const rec = _lodHelpers[sigKey];
                             // Quote mixed-case source columns and alias them back to the
@@ -29829,6 +29869,43 @@ ${cleanedSql}`;
                                 }
                             }
                         }
+                    }
+
+                    // ── Custom SQL fact: qualify sibling calc/metric refs to [Custom SQL/…] ──
+                    // A kind:'sql' element resolves references to its OWN output columns
+                    // only via the qualified [Custom SQL/<outputId>] form (spec rule 3):
+                    // a bare [Display] sibling ref type-errors, and a '/'-in-name ref
+                    // fails to resolve. Map each output column (display / normalized /
+                    // outputId) to that form and rewrite the derived calc + metric
+                    // formulas. Cross-element refs never match a sibling key → pass through.
+                    if (factEl.source && factEl.source.kind === 'sql') {
+                        const _nkey = (s) => String(s).replace(/[^a-zA-Z0-9]+/g, '').toLowerCase();
+                        const _refToOutId = {};
+                        for (const c of (factEl.columns || [])) {
+                            const fm = typeof c.formula === 'string' && c.formula.match(/^\[Custom SQL\/([^\]]+)\]$/);
+                            if (!fm) continue;
+                            const outId = fm[1];
+                            for (const k of [c.name, outId]) {
+                                const nk = k && _nkey(k);
+                                if (nk && !(nk in _refToOutId)) _refToOutId[nk] = outId;
+                            }
+                        }
+                        let _qc = 0;
+                        const _qualifyCsRef = (formula, ownName) => {
+                            if (typeof formula !== 'string') return formula;
+                            return formula.replace(/\[([^\]]+)\]/g, (m, ref) => {
+                                if (/^Custom SQL\//.test(ref)) return m;
+                                if (ownName && ref.toLowerCase() === ownName.toLowerCase()) return m;
+                                const outId = _refToOutId[_nkey(ref)];
+                                if (!outId) return m;
+                                _qc++;
+                                return '[Custom SQL/' + outId + ']';
+                            });
+                        };
+                        const _isCsAlias = (f) => typeof f === 'string' && /^\[Custom SQL\/[^\]]+\]$/.test(f);
+                        for (const c of (factEl.columns || [])) { if (!_isCsAlias(c.formula)) c.formula = _qualifyCsRef(c.formula, c.name); }
+                        for (const mtr of (factEl.metrics || [])) mtr.formula = _qualifyCsRef(mtr.formula, mtr.name);
+                        if (_qc > 0) warnings.push('ℹ Qualified ' + _qc + ' sibling reference(s) to [Custom SQL/…] on the Custom SQL fact (kind:sql columns resolve only via the Custom SQL/ prefix).');
                     }
 
                     // Finalize LOD helper SQL statements now that all aggregates are registered
@@ -34542,7 +34619,7 @@ models:
     <li><b>Statistical / regex / date-construction functions</b> → <code>STDEV</code>→<code>StdDev</code>, <code>VAR</code>→<code>Variance</code>, <code>VARP</code>→<code>VariancePop</code>, <code>STDEVP</code>→<code>Sqrt(VariancePop(…))</code>, <code>PERCENTILE</code>→<code>PercentileCont</code>, <code>CORR</code>→<code>Corr</code> (routed to a metric), <code>REGEXP_EXTRACT/MATCH/REPLACE</code>→<code>Regexp*</code>, <code>SPLIT</code>→<code>SplitPart</code>, <code>MAKEDATE</code>→<code>MakeDate</code>, and <code>DATEPARSE(fmt, str)</code>→<code>DateParse(str, "&lt;strftime&gt;")</code> (Tableau's arg order is reversed and its Java date tokens are rewritten to strftime — review the pattern). <code>COVAR</code>/<code>COVARP</code> have no Sigma equivalent and are flagged, not emitted.</li>
     <li><b>User functions / row-level security</b> → User-context functions are translated (<code>USERNAME()</code>→<code>CurrentUserEmail()</code>, <code>ISMEMBEROF('g')</code>→<code>CurrentUserInTeam("g")</code>, <code>USERATTRIBUTE('a')</code>→<code>CurrentUserAttributeText("a")</code>, <code>ISUSERNAME('u')</code>→<code>CurrentUserEmail() = "u"</code>). Calcs that test the viewer's identity (the classic Tableau RLS / data-source-filter pattern) are <b>detected and reported, not injected</b>: the converter emits a 🔐 conversion note (and an RLS-rules badge) carrying the translated boolean formula plus the user attributes/teams to provision — it does NOT add the calc column to the spec, because a converter can't provision Sigma user attributes/teams and an injected filter would fail-closed to 0 rows for everyone. After saving, provision the listed attribute(s)/team(s), then apply the boolean calc column + an element filter keeping only <code>True</code> rows.</li>
     <li><b>Parameters</b> → Sigma controls (list, date-range, number-range, text)</li>
-    <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves. Warehouse columns whose real name is mixed-case or contains spaces (e.g. <code>"SFDC Oppty ID"</code>, recovered from the datasource's <code>&lt;metadata-record&gt;</code> <code>remote-name</code>) are emitted DOUBLE-QUOTED and aliased back to their upper-snake form (<code>"SFDC Oppty ID" AS SFDC_OPPTY_ID</code>) in the helper SQL — so the query matches the real Snowflake column and the helper's <code>[Custom SQL/…]</code> refs still resolve. Already-uppercase columns are emitted bare, unchanged. The same quoting applies to Top-N and window helpers.</li>
+    <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves. Warehouse columns whose real name is mixed-case or contains spaces (e.g. <code>"SFDC Oppty ID"</code>, recovered from the datasource's <code>&lt;metadata-record&gt;</code> <code>remote-name</code>) are emitted DOUBLE-QUOTED and aliased back to their upper-snake form (<code>"SFDC Oppty ID" AS SFDC_OPPTY_ID</code>) in the helper SQL — so the query matches the real Snowflake column and the helper's <code>[Custom SQL/…]</code> refs still resolve. Already-uppercase columns are emitted bare, unchanged. The same quoting applies to Top-N and window helpers. When the base is itself a <b>Custom SQL</b> (<code>kind:sql</code>) element, the helper wraps that verbatim statement as a subquery (<code>FROM (…) __base</code>) rather than a warehouse path. A Tableau conditional inside the LOD's inner aggregate (<code>SUM(IF [App Name]="EP1" THEN [Clicks] END)</code>) is lowered to SQL <code>CASE</code> with single-quoted string literals (<code>SUM(CASE WHEN "App Name"='EP1' THEN "Clicks" END)</code>).</li>
     <li><b>Window / table calculations</b> (<code>RUNNING_SUM</code>, <code>RUNNING_AVG</code>, <code>RUNNING_MIN</code>, <code>RUNNING_MAX</code>, <code>WINDOW_SUM</code>, <code>WINDOW_AVG</code>, <code>WINDOW_MIN</code>, <code>WINDOW_MAX</code>, <code>WINDOW_COUNT</code>, <code>LOOKUP</code>, <code>RANK</code>, <code>RANK_DENSE</code>, <code>RANK_UNIQUE</code>, <code>INDEX</code>, <code>FIRST</code>, <code>LAST</code>) → A <code>kind:sql</code> helper element with explicit Snowflake <code>OVER()</code> clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys are derived from worksheet <code>rows</code> shelves, order keys from time-truncated <code>cols</code> shelves. The DATE_TRUNC grain is derived from the cols-shelf prefix (<code>yr:</code>→year, <code>qr:</code>→quarter, <code>mn:</code>→month, <code>wk:</code>→week, <code>dy:</code>/<code>md:</code>→day; no prefix → no DATE_TRUNC wrapper). Explicit "Compute Using" addressing (<code>&lt;table-calculation&gt;</code> with <code>&lt;address&gt;</code> children, plus Table Across/Down direction) overrides the rows/cols heuristic. Multiple window calcs sharing the same partition+order signature are emitted as separate aliases on a single helper element.</li>
     <li><b>Table calcs the SQL lowering can't express → 🧩 workbook patterns</b> (reported with ready-to-place formulas, never injected as DM columns — Sigma window functions silently error in data-model calc columns and metrics). Validated mappings: <code>RUNNING_*(agg)</code>→<code>Cumulative*(agg)</code>; <code>WINDOW_AVG/SUM/MAX/MIN(agg, -n, 0)</code>→<code>Moving*(agg, n)</code> (and <code>(-n, m)</code>→<code>(agg, n, m)</code>); <code>WINDOW_STDEV</code>→<code>MovingStdDev</code>; <code>agg/WINDOW_SUM(agg)</code> or <code>agg/TOTAL(agg)</code>→<code>PercentOfTotal(agg, "grand_total")</code>; <code>RUNNING_SUM(agg)/TOTAL(agg)</code>→<code>CumulativeSum(PercentOfTotal(…))</code>; <code>RANK/RANK_DENSE/RANK_PERCENTILE</code>→<code>Rank/RankDense/RankPercentile(agg, "desc")</code>; <code>INDEX()</code>→<code>RowNumber()</code>; <code>LOOKUP(agg, ±n)</code>→<code>Lag/Lead(agg, n)</code>. Place each formula in a GROUPED workbook element (group by the chart's dimensions). The converter never emits <code>*Over</code> functions (SumOver/CountOver resolve as 'Unknown function' in spec contexts).</li>
     <li><b>Sets</b> → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → <code>In([Field], ...)</code> column. Add a filter control on these columns in your Sigma workbook to replicate set-based filtering. If a set's formula references a related-element column (e.g. <code>In([Customer Segment], ...)</code> on a fact element where Customer Segment lives on a dim), the set column is automatically moved to the derived element and scrubbed from the source element's "Sets" folder so the model saves cleanly.</li>
@@ -34560,7 +34637,7 @@ models:
     <li><b>Cross-element calculated columns</b> — Tableau calculated fields that reference columns from related tables are automatically moved to the derived child element (Sigma calculated columns can only reference columns local to their element). Related dimension columns are accessible via the derived element using <code>[FACT/RELATIONSHIP/Col]</code> formulas.</li>
     <li><b>Role-playing dimensions</b> — Multiple relationships from a fact table to the same dimension are now supported. Each relationship gets a unique name including the join key (e.g. "DATE_DIM via Order Date Key"). Review the generated names for clarity.</li>
     <li><b>Bins</b> — Converted to bucketed <code>Floor()</code> calculated columns.</li>
-    <li><b>Custom SQL data sources</b> (<code>&lt;relation type='text'&gt;</code>) — Converted to a Sigma custom SQL element with the raw SQL preserved verbatim; output columns are surfaced from the datasource's column metadata and self-reference via the source-qualified <code>[Custom SQL/COL]</code> form (the only form that resolves). Verify column display names match the query output, and adjust any Tableau-specific SQL syntax.</li>
+    <li><b>Custom SQL data sources</b> (<code>&lt;relation type='text'&gt;</code>) — Converted to a Sigma custom SQL element with the raw SQL preserved verbatim; output columns are surfaced from the datasource's column metadata and self-reference via the source-qualified <code>[Custom SQL/COL]</code> form (the only form that resolves). A column produced by a <b>quoted</b> alias (<code>… AS "SFDC Oppty ID"</code>) keeps its exact spelling in Snowflake, so it is referenced by that exact name (<code>[Custom SQL/SFDC Oppty ID]</code>) rather than the upper-snake form; already-uppercase (unquoted-alias) columns are referenced bare, unchanged. A <code>/</code> in a column name is a Sigma bracket-ref path separator, so it is sanitized to <code>-</code> in the ref and the statement is wrapped to re-alias the real output column to match. Calculated fields on the SQL element that reference sibling output columns (including inner LOD conditionals) are automatically qualified to the <code>[Custom SQL/COL]</code> form — a bare sibling ref would type-error. Verify column display names match the query output, and adjust any Tableau-specific SQL syntax.</li>
     <li><b>Extracts (.hyper / packaged .twbx)</b> — Extract-only fields and extract filters are not converted (the converter reads the logical model, not the physical extract). A packaged extract names its logical table after the extract sheet (e.g. <code>Orders$</code>); the trailing <code>$</code> is stripped automatically so the source path targets the warehouse table (<code>ORDERS</code>). Enter the exact Database/Schema case in the override fields — a spaced/mixed-case schema (<code>Tableau Test</code>) is used verbatim (NOT upper-cased), since Sigma quotes each path segment. Column names containing <code>/</code> or <code>-</code> (<code>Country/Region</code>, <code>Sub-Category</code>) are folded to spaces so they resolve to the underscore-named warehouse columns instead of erroring. When the extract sheet name still differs from the physical table after stripping <code>$</code>, rename the table in the generated JSON before saving.</li>
     <li><b>Data blending</b> — Same-warehouse blends (workbook-level <code>&lt;datasource-relationships&gt;</code>) are converted to one merged model (see "What Gets Converted"). Limitations: a published/unpublished secondary with no warehouse table is skipped with a warning (repoint it to a warehouse first); a 3+-source blend is handled as one primary plus N secondaries that each link to it (arbitrary connected-component graphs are not yet decomposed); when the primary is grouped by dimensions finer than the link key, the secondary value repeats across the finer groups (faithful to Tableau, but verify column totals).</li>
     <li><b>Parameters with calculations</b> — Parameter values are captured but formulas that reference parameters using Tableau's parameter syntax may not convert correctly.</li>
