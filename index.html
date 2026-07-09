@@ -21041,6 +21041,21 @@ views:
             if (parts.length < 2) return null;
             return { table: parts[parts.length - 2], col: parts[parts.length - 1] };
         }
+        // Read a SAP join cardinality string and say which side is the "many" side, so the
+        // Sigma relationship (a many→one lookup) is built with the many side as source.
+        // Tolerant of the encodings BO/IDT emit: one-to-many/many-to-one, OneToMany,
+        // 1-n/n-1, 1:N/N:1, 1..N/N..1, 1..*/*..1. Returns 'left-many' | 'right-many' | null.
+        function _bobjJoinDirection(card) {
+            if (!card) return null;
+            const norm = String(card).toLowerCase()
+                .replace(/many/g, 'N').replace(/one/g, '1').replace(/[*]/g, 'N');
+            const toks = norm.toUpperCase().match(/[1N]/g);
+            if (!toks || toks.length < 2) return null;
+            const left = toks[0], right = toks[toks.length - 1];
+            if (left === 'N' && right === '1') return 'left-many';
+            if (left === '1' && right === 'N') return 'right-many';
+            return null; // 1-1 or N-N — no directional signal
+        }
         function _bobjTranslateExpr(expr, warnings) {
             let f = (expr || '').trim();
             const at = f.match(/@(\w+)\s*\(/);
@@ -21101,9 +21116,17 @@ views:
             for (const j of _bobjFindAll(dfScope, n => n.tag === 'join')) {
                 const expression = _bobjTextOf(_bobjFindFirst(j, ['expression', 'statement', 'sql', 'definition'])) ||
                     j.attrs.expression || j.attrs.statement || _bobjTextOf(j) || undefined;
+                // Cardinality: a single string when present, else compose one from per-side
+                // multiplicity (attrs or child tags) so _bobjJoinDirection() can read direction.
+                const lc = j.attrs.leftcardinality || j.attrs.leftmultiplicity ||
+                    _bobjTextOf(_bobjFindFirst(j, ['leftcardinality', 'leftmultiplicity']));
+                const rc = j.attrs.rightcardinality || j.attrs.rightmultiplicity ||
+                    _bobjTextOf(_bobjFindFirst(j, ['rightcardinality', 'rightmultiplicity']));
+                const cardinality = j.attrs.cardinality || _bobjTextOf(_bobjFindFirst(j, ['cardinality'])) ||
+                    (lc && rc ? `${lc}-to-${rc}` : undefined);
                 joins.push({ left: j.attrs.left || j.attrs.lefttable || j.attrs.table1 || undefined,
                     right: j.attrs.right || j.attrs.righttable || j.attrs.table2 || undefined,
-                    expression, cardinality: j.attrs.cardinality || _bobjTextOf(_bobjFindFirst(j, ['cardinality'])) || undefined });
+                    expression, cardinality });
             }
             const objects = [];
             const _walkBl = (nodes, parentClass) => {
@@ -21486,7 +21509,27 @@ views:
                     const parsed = _bobjParseJoin(join);
                     if (!parsed) { warnings.push(`⚠ Join "${join.expression || (join.left + '~' + join.right)}" not a simple equi-join — add manually.`); continue; }
                     let { leftTable, leftCol, rightTable, rightCol } = parsed;
-                    if (join.cardinality && /one-to-many|1-n|onetomany/i.test(join.cardinality)) {
+                    // Direction matters: in Sigma a relationship is a many→one LOOKUP. The
+                    // source element (which owns the relationship and becomes the View base)
+                    // MUST be the "many" side, or every column looked up across the join fans
+                    // out to "multiple values" in a workbook.
+                    const dir = _bobjJoinDirection(join.cardinality); // 'left-many' | 'right-many' | null
+                    let leftIsSource;
+                    if (dir === 'left-many') leftIsSource = true;
+                    else if (dir === 'right-many') leftIsSource = false;
+                    else {
+                        // No usable cardinality — infer from the star-schema shape: the fact
+                        // (measure-bearing) table is the many side. If exactly one side carries
+                        // measures, make that the source; otherwise keep left but warn.
+                        const lHasM = !!(ctxByKey.get(_bobjTableKey(leftTable)) || {}).metrics?.length;
+                        const rHasM = !!(ctxByKey.get(_bobjTableKey(rightTable)) || {}).metrics?.length;
+                        if (lHasM !== rHasM) leftIsSource = lHasM;
+                        else {
+                            leftIsSource = true;
+                            warnings.push(`⚠ Join ${_bobjTableKey(leftTable)}↔${_bobjTableKey(rightTable)}: no usable join cardinality and can't tell the fact from the dimension by measures — assumed "${_bobjTableKey(leftTable)}" is the many side. If workbook columns come back as "multiple values", flip this relationship so its source is the many/fact table.`);
+                        }
+                    }
+                    if (!leftIsSource) {
                         [leftTable, leftCol, rightTable, rightCol] = [rightTable, rightCol, leftTable, leftCol];
                     }
                     const srcKey = _bobjTableKey(leftTable), tgtKey = _bobjTableKey(rightTable);
@@ -35505,7 +35548,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <li><b>Dimensions / details</b> → Sigma columns; the universe <b>business name</b> is preserved via the column <code>name</code> while the formula references the underlying physical column</li>
     <li><b>Measures</b> → Sigma <b>metrics</b> (Sum / Count / Count Distinct / Avg / Min / Max / StdDev / Variance) of the underlying column; the backing physical column is also kept so the metric resolves</li>
     <li><b>Object expressions</b> (functions, CASE, concatenation) → Sigma calculated columns</li>
-    <li><b>Joins</b> → Sigma relationships; FK/PK keys are parsed from the join's equi-join SQL — including schema/catalog-<b>qualified</b> refs (<code>"DB"."TABLE"."COL" = …</code>) and bracketed identifiers (<code>[schema].[table].[col]</code>), taking the last two segments as <code>table.col</code>; the first equality of a multi-condition join is used. Join-key columns are surfaced (hidden) so the relationship resolves. Tables with outgoing joins also get a derived <b>View</b> element exposing own + joined columns via <code>[SRC/TARGET/Col]</code> cross-element formulas</li>
+    <li><b>Joins</b> → Sigma relationships; FK/PK keys are parsed from the join's equi-join SQL — including schema/catalog-<b>qualified</b> refs (<code>"DB"."TABLE"."COL" = …</code>) and bracketed identifiers (<code>[schema].[table].[col]</code>), taking the last two segments as <code>table.col</code>; the first equality of a multi-condition join is used. Join-key columns are surfaced (hidden) so the relationship resolves. Tables with outgoing joins also get a derived <b>View</b> element exposing own + joined columns via <code>[SRC/TARGET/Col]</code> cross-element formulas. <b>Direction:</b> a Sigma relationship is a <b>many→one lookup</b>, so the source (the View base) must be the <b>many</b> side — otherwise looked-up columns come back as <b>"multiple values"</b>. The converter reads the join cardinality (<code>one-to-many</code>/<code>many-to-one</code>, <code>1:N</code>/<code>N:1</code>, <code>1..*</code>, per-side multiplicity); if it's absent it makes the <b>measure-bearing (fact)</b> table the many side, and warns when it can't tell — flip the relationship in Sigma if columns show "multiple values"</li>
 </ul>
 
 <h3>Target-layer remap (restructured / platinum layer)</h3>
