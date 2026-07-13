@@ -10540,6 +10540,8 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                     // element (e.g. a PBI calculated-table date dimension reached via a
                     // USERELATIONSHIP alternate join path), its columns must surface on the
                     // denorm element, or workbook tiles bound to them dangle. (mirrors MCP)
+                    // A LookML explore joining a derived_table view likewise surfaces that
+                    // view's (named, source-qualified) columns on the denorm element.
                     if (!tgtEl || !tgtEl.source || (tgtEl.source.kind !== 'warehouse-table' && tgtEl.source.kind !== 'sql')) return;
                     // Don't denormalize the relationship's OWN key column across the join — the
                     // base element already carries that value, and the cross-element passthrough
@@ -24283,6 +24285,7 @@ views:
             if (/^[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(cleaned)) return true;
             if (/^CASE\b/i.test(cleaned)) return true;
             if (/\bIN\s*\(/i.test(cleaned)) return true;  // SQL IN operator — needs In() formula
+            if (cleaned.includes('||')) return true;      // SQL string concat — needs Concat()
             if (/[=<>!+\-*\/%]/.test(cleaned.replace(/'[^']*'/g, ''))) return true;
             return false;
         }
@@ -24496,6 +24499,21 @@ views:
             // e.g. GROSS_PROFIT / NULLIF(GROSS_REVENUE, 0) * 100
             if (/^[A-Z_][A-Z0-9_]*\s*[+\-*\/]/.test(expr) || /NULLIF/i.test(expr)) {
                 return lookConvertMathExpr(expr);
+            }
+
+            // ── Pattern 6: SQL string concat (a || ' ' || b) → Concat(Text([A]), " ", Text([B])) ──
+            // Column refs are wrapped in Text(): SQL || coerces operands to text, but
+            // Sigma Concat requires string args (a numeric column → "Invalid arg type").
+            // Text() is a no-op on text columns, so wrapping every ref is always safe.
+            if (expr.includes('||')) {
+                const parts = expr.split('||').map(p => {
+                    p = p.trim();
+                    if (/^'[^']*'$/.test(p)) return `"${p.slice(1, -1)}"`;            // 'x'  -> "x" (literal)
+                    if (/^\[[^\]]+\]$/.test(p)) return `Text(${p})`;                  // [Display] ref -> Text([Display])
+                    if (/^[A-Z_][A-Z0-9_]*$/i.test(p)) return `Text(${lookColRef(p)})`; // bare column -> Text([Display])
+                    return null;                                                     // a part we can't safely map
+                });
+                if (parts.length > 1 && parts.every(p => p !== null)) return `Concat(${parts.join(', ')})`;
             }
 
             return null; // Not recognised — fall back to AI
@@ -26568,13 +26586,16 @@ ${cleanedSql}`;
                     const rawTiers = typeof d.tiers === 'string' ? d.tiers : String(d.tiers);
                     const tierValues = rawTiers.replace(/[\[\]]/g, '').split(/[,\s]+/).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
                     if (tierValues.length > 0) {
-                        const srcDn = colLabel(physicalCol);
+                        // SOURCE-qualified ref (colRef) — a bare [Display] sibling ref
+                        // errors on a NAMED Custom SQL element, and would fuzzy-match
+                        // the source column's own name → circular reference.
+                        const srcRef = colRef(physicalCol);
                         const parts = [];
                         for (let ti = tierValues.length - 1; ti >= 0; ti--) {
                             const lo = tierValues[ti];
                             const hi = ti < tierValues.length - 1 ? tierValues[ti + 1] : null;
                             const label = hi ? `"${lo} to ${hi - 1}"` : `"${lo} or Above"`;
-                            parts.push(`If([${srcDn}] >= ${lo}, ${label}`);
+                            parts.push(`If(${srcRef} >= ${lo}, ${label}`);
                         }
                         parts.push(`"Below ${tierValues[0]}"`);
                         const formula = parts.join(', ') + ')'.repeat(tierValues.length);
@@ -26599,6 +26620,12 @@ ${cleanedSql}`;
                 colIdMap[colName] = colId;
                 colIdMap[physicalCol] = colId;
                 const dimCol = { id: colId, formula: colRef(physicalCol) };
+                // Custom SQL columns need an explicit `name` so downstream
+                // buildDerivedElements (relationship traversal) / workbook tiles can
+                // reference a joined derived_table/PDT column by name. The colRef is
+                // SOURCE-qualified [Custom SQL/COL] (NOT bare — a bare self-ref would
+                // fuzzy-match this name → circular reference).
+                if (tableName === 'Custom SQL') dimCol.name = d.label || sigmaDisplayName(d._name);
                 if (d.hidden === true || d.hidden === 'yes') dimCol.hidden = true;
                 const _lkDimFmt = (d.value_format_name ? _lookFormatNameToSigma(d.value_format_name) : null)
                     || (d.value_format ? _excelFormatToSigma(d.value_format) : null);
@@ -34901,7 +34928,9 @@ models:
     <li><b>Derived tables (SQL)</b> → Sigma custom SQL elements; if the SQL references another derived view via <code>${'{'}view.SQL_TABLE_NAME{'}'}</code>, that view's SQL is <b>inlined as a WITH CTE</b> (recursively, in dependency order). Regular-view references resolve to the literal warehouse path. Unresolved or circular references emit a <code>LOOKER_SCRATCH.&lt;VIEW&gt;</code> placeholder table plus a loud 🔶 warning naming the fix — never a silent broken statement</li>
     <li><b>CTE-continuation fragments</b> → A derived table whose SQL starts with <code>, name AS (</code> (Looker prepends inlined PDT CTEs before it) is completed by the generated CTE prelude; when nothing was inlined, the leading comma is promoted to <code>WITH</code> so the statement parses standalone</li>
     <li><b>Dimensions</b> → Sigma columns with formula conversion; complex <code>sql</code> expressions auto-converted to Sigma syntax (see Expression Conversion below); duplicate physical columns are auto-deduplicated</li>
-    <li><b>Tier dimensions</b> → Bucketed <code>If()</code> calculated columns (e.g. "0 to 99", "100 to 499", "500 or Above")</li>
+    <li><b>Tier dimensions</b> → Bucketed <code>If()</code> calculated columns with Looker <code>style:integer</code> labels (e.g. "0 to 499", "500 to 999", "5000 or Above", "Below 0"). On a Custom SQL element the bucket references the source column with the source-qualified form (a bare sibling ref would fuzzy-match the column's own name → circular reference)</li>
+    <li><b>String concatenation</b> → SQL <code>a || ' ' || b</code> in a dimension <code>sql:</code> becomes <code>Concat([A], " ", [B])</code> (previously the <code>||</code> wasn't recognized as a complex expression, so the dimension silently deduped into its first operand)</li>
+    <li><b>Joined derived_table / PDT columns</b> → When an explore joins a <code>derived_table</code> (Custom SQL) view, that view's columns are NAMED and surface on the explore's denormalized element via <code>[BASE/join_alias/Col]</code> cross-element refs — so tiles mixing base + PDT measures resolve. (Custom SQL columns carry an explicit name + source-qualified self-refs; without both, cross-element refs into the SQL element fail.)</li>
     <li><b>Yesno dimensions</b> → Boolean calculated columns with "(T-F)" suffix (no "/" — a slash in a display name breaks Sigma's slash-delimited bracket refs); the boolean formula uses the source-qualified ref (e.g. <code>[Custom SQL/IS_RETURNED] = 1</code>) because a bare sibling ref to an unnamed passthrough errors on named SQL elements</li>
     <li><b>TO_CHAR display-mask measures</b> → <code>TO_CHAR(SUM(col), '$999,999,990.00')</code>-style measures become a <b>numeric metric</b> (<code>Sum([Col])</code>) plus a Sigma column format translated from the numeric mask — display-identical to Looker but sortable/chartable. Masks with date/text elements stay on a loud ⚠ warning path (no silently-broken column)</li>
     <li><b>date / date_time / time measures</b> → <code>MAX(\${group_raw})</code>/<code>MIN(…)</code> over a dimension-group timeframe become <code>Max([Col])</code>/<code>Min([Col])</code> <b>metrics</b> (never an aggregate calculated column, which silently errors)</li>
