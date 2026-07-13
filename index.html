@@ -27953,6 +27953,46 @@ ${cleanedSql}`;
             return null;
         }
 
+        // Tableau [Field] IN (a, b, …) / NOT IN (…) → Sigma boolean chain (Sigma has no
+        // IN operator — raw IN silently errors the column / blanks the chart). IN →
+        // ([F] = a or [F] = b …); NOT IN → ([F] <> a and [F] <> b …). Handles IN nested
+        // inside If()/CASE. Mirrors MCP src/formulas.ts tableauInToSigma.
+        function tableauInToSigma(formula) {
+            const re = /(\[[^\]]+\]|[A-Za-z_][\w]*)\s+(not\s+)?in\s*\(/gi;
+            let f = formula, guard = 0;
+            for (let m = re.exec(f); m && guard < 200; m = re.exec(f), guard++) {
+                const operand = m[1];
+                const isNot = !!m[2];
+                const open = m.index + m[0].length - 1; // index of '('
+                let depth = 0, close = -1;
+                for (let i = open; i < f.length; i++) {
+                    if (f[i] === '(') depth++;
+                    else if (f[i] === ')') { depth--; if (depth === 0) { close = i; break; } }
+                }
+                if (close === -1) break;
+                const inner = f.slice(open + 1, close);
+                const parts = []; let buf = '', d = 0, sq = false, dq = false;
+                for (const ch of inner) {
+                    if (sq) { buf += ch; if (ch === "'") sq = false; continue; }
+                    if (dq) { buf += ch; if (ch === '"') dq = false; continue; }
+                    if (ch === "'") { sq = true; buf += ch; continue; }
+                    if (ch === '"') { dq = true; buf += ch; continue; }
+                    if (ch === '(') { d++; buf += ch; continue; }
+                    if (ch === ')') { d--; buf += ch; continue; }
+                    if (ch === ',' && d === 0) { parts.push(buf.trim()); buf = ''; continue; }
+                    buf += ch;
+                }
+                if (buf.trim()) parts.push(buf.trim());
+                if (!parts.length) continue;
+                const op = isNot ? '<>' : '=';
+                const join = isNot ? ' and ' : ' or ';
+                const chain = '(' + parts.map(p => `${operand} ${op} ${p}`).join(join) + ')';
+                f = f.slice(0, m.index) + chain + f.slice(close + 1);
+                re.lastIndex = m.index + chain.length;
+            }
+            return f;
+        }
+
         function tableauFormulaToSigma(formula, warnings) {
             if (!formula || !formula.trim()) return '';
             let f = formula.trim();
@@ -28019,6 +28059,9 @@ ${cleanedSql}`;
             // ATTR([x]) → just [x]
             f = f.replace(/\bATTR\s*\(([^)]+)\)/gi, '$1');
 
+            // [Field] IN (…) → boolean chain (Sigma has no IN operator). Run BEFORE IF/CASE
+            // lowering so an If([X] in (…), …) condition is already a boolean chain. Mirrors MCP.
+            f = tableauInToSigma(f);
             // IF...THEN...ELSE...END
             f = tableauIfToSigma(f);
             // IIF
@@ -28028,7 +28071,9 @@ ${cleanedSql}`;
 
             // DATEPART('year', [Date]) → Year([Date])
             f = f.replace(/\bDATEPART\s*\(\s*'(\w+)'\s*,\s*([^)]+)\)/gi, function(m, part, dateArg) {
-                const partMap = { year:'Year', month:'Month', day:'Day', hour:'Hour', minute:'Minute', second:'Second', week:'Week', quarter:'Quarter', dayofweek:'DayOfWeek', weekday:'DayOfWeek' };
+                // 'week' has no dedicated Sigma fn — use DatePart("week", …) (mirrors MCP; see WEEK below).
+                if (part.toLowerCase() === 'week') return 'DatePart("week", ' + dateArg.trim() + ')';
+                const partMap = { year:'Year', month:'Month', day:'Day', hour:'Hour', minute:'Minute', second:'Second', quarter:'Quarter', dayofweek:'DayOfWeek', weekday:'DayOfWeek' };
                 const fn = partMap[part.toLowerCase()];
                 return fn ? fn + '(' + dateArg.trim() + ')' : m;
             });
@@ -28053,6 +28098,13 @@ ${cleanedSql}`;
             f = f.replace(/\bDATETRUNC\s*\(\s*'([^']+)'\s*,/gi, 'DateTrunc("$1",');
             f = f.replace(/\bDATEADD\s*\(\s*'([^']+)'\s*,/gi, 'DateAdd("$1",');
             f = f.replace(/\bDATEDIFF\s*\(\s*'([^']+)'\s*,/gi, 'DateDiff("$1",');
+
+            // Tableau WEEK(date) = week-of-year number. Sigma has NO Week() function
+            // ("Unknown function" at query time) — the week number comes from
+            // DatePart("week", date). Handles one level of nested parens so
+            // WEEK(MakeDate(...)) / WEEK([Date]) both rewrite, and also rewrites the
+            // Week() emitted by DATENAME('week') above. Mirrors MCP src/formulas.ts.
+            f = f.replace(/\bWEEK\s*\(\s*([^()]*(?:\([^()]*\)[^()]*)*)\)/gi, 'DatePart("week", $1)');
 
             // STDEVP (population std dev) — Sigma has no population-stddev fn; use Sqrt(VariancePop()).
             f = f.replace(/\bSTDEVP\s*\(([^()]+(?:\([^()]*\)[^()]*)*)\)/gi, 'Sqrt(VariancePop($1))');
