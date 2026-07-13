@@ -50,7 +50,7 @@ Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) 
 
 **What gets converted:**
 - Data sources → Sigma elements with warehouse table paths (standard joins, virtual connections, custom SQL)
-- Virtual connections (type=collection) → Tableau 2020.2+ relationship model with role-playing dimensions
+- Virtual connections (type=collection) → Tableau 2020.2+ relationship model with role-playing dimensions. A `type='text'` child relation (object-model / DDMX `_.fcp.ObjectModelEncapsulateLegacy` Custom SQL) is recognized as Custom SQL and emitted as a `kind:sql` element carrying its inline `SELECT` — not as a warehouse table named after the relation (which would fail "Source not found"). For a single-source custom-SQL datasource the lone SQL element is named "Custom SQL" and its column formulas are remapped to the raw SQL output names so the model POSTs cleanly.
 - Joins / Relationships → Sigma relationships on the fact element. Tableau 2020.2+ relationship model ("noodles") maps 1:1 to Sigma relationships — both tools resolve join type and granularity at viz time, so no semantic information is lost. Cardinality hints (1:1, 1:N, N:1, N:N) are preserved when present and default to N:1 (the dominant fact-to-dim pattern) when Tableau leaves them unspecified. Pre-2020.2 physical joins (older Tableau Server on-prem versions back to 2018.x) are handled via the Join Strategy dropdown: Auto routes many-to-one joins to relationships and others to physical joins; Force Relationships keeps everything lazy; Force Physical Joins keeps everything eager.
 - Calculated fields → Sigma calculated columns with formula conversion
 - Simple aggregates → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)
@@ -73,7 +73,7 @@ Converts Tableau workbooks (`.twb`, `.twbx`) and data sources (`.tds`, `.tdsx`) 
 - Post-create validation — After saving, call `GET /v2/dataModels/{id}/columns` and inspect for `type.type === "error"` entries; both LOD and window helpers can post as success even if a referenced column is missing.
 - Cross-element calculated columns — Automatically moved to the derived child element; metrics with cross-element refs are removed with a warning and must be added manually in Sigma UI
 - Role-playing dimensions — Supported; each relationship includes the join key in its name (e.g. "DATE_DIM via Order Date Key")
-- Custom SQL data sources — Converted to Sigma custom SQL elements; Tableau-specific SQL syntax may need manual adjustment
+- Custom SQL data sources (`<relation type='text'>`) — Converted to a Sigma custom SQL element with the raw SQL preserved verbatim; output columns are surfaced from the datasource's column metadata and self-reference via the source-qualified `[Custom SQL/COL]` form (the only form that resolves). Verify column display names match the query output, and adjust any Tableau-specific SQL syntax
 - Extracts (`.hyper`) — Extract-only fields and extract filters not converted
 - Data blending — Same-warehouse blends are converted to one merged model (see above). Limitations: a secondary with no warehouse table is skipped with a warning (repoint it to a warehouse first); 3+-source blends are handled as one primary + N secondaries linking to it (arbitrary connected-component graphs are not yet decomposed); when the primary is grouped finer than the link key, the secondary value repeats across the finer groups (faithful to Tableau — verify column totals)
 

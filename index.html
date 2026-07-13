@@ -10455,7 +10455,12 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             // expression translators more than once, and same-element sibling refs are
             // resolved case-SENSITIVELY by Sigma — a non-idempotent derivation
             // ("Cyq Rev" → "Cyq rev") breaks the ref (column compiles to type "error").
-            const words = normalized.toLowerCase().split(/[_\s]+/).filter(Boolean);
+            // `/` is Sigma's ref-path separator ([Element/Column]) and `-` is not a
+            // warehouse identifier char — a field named "Country/Region" or
+            // "Sub-Category" would emit [ORDERS/Country/region] (parsed as a nested
+            // path → type "error") / fail to match the underscore-named warehouse
+            // column. Fold both to a word boundary so they resolve.
+            const words = normalized.toLowerCase().split(/[_\s\/-]+/).filter(Boolean);
             return words.map((w, i) =>
                 (i === 0 || !SIGMA_LOWERCASE_WORDS.has(w))
                     ? w.charAt(0).toUpperCase() + w.slice(1)
@@ -10530,9 +10535,13 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                 srcEl.relationships.forEach(function(rel) {
                     if (!rel.name) return; // name required for formula middle-segment
                     var tgtEl = elements.find(function(e) { return e.id === rel.targetElementId; });
-                    // Denormalize warehouse-table AND Custom SQL (derived_table / PDT)
-                    // targets — a LookML explore joining a derived_table view must surface
-                    // that view's (named, source-qualified) columns on the denorm element.
+                    // Denormalize both warehouse-table AND Custom SQL (derived_table / PDT /
+                    // synthesized date-spine) targets. When a relationship points at a SQL
+                    // element (e.g. a PBI calculated-table date dimension reached via a
+                    // USERELATIONSHIP alternate join path), its columns must surface on the
+                    // denorm element, or workbook tiles bound to them dangle. (mirrors MCP)
+                    // A LookML explore joining a derived_table view likewise surfaces that
+                    // view's (named, source-qualified) columns on the denorm element.
                     if (!tgtEl || !tgtEl.source || (tgtEl.source.kind !== 'warehouse-table' && tgtEl.source.kind !== 'sql')) return;
                     // Don't denormalize the relationship's OWN key column across the join — the
                     // base element already carries that value, and the cross-element passthrough
@@ -21014,9 +21023,40 @@ views:
         }
         function _bobjParseJoin(join) {
             const expr = join.expression || '';
-            const m = expr.match(/"?([A-Za-z_][\w ]*?)"?\s*\.\s*"?([A-Za-z_]\w*)"?\s*=\s*"?([A-Za-z_][\w ]*?)"?\s*\.\s*"?([A-Za-z_]\w*)"?/);
-            if (m) return { leftTable: m[1].trim(), leftCol: m[2].trim(), rightTable: m[3].trim(), rightCol: m[4].trim() };
-            return null;
+            // First equality of two qualified column refs, each 2-or-more dotted,
+            // optionally quoted segments — so schema/catalog-qualified 3-part names
+            // ("DWH"."CUSTOMER"."ID" = "DWH"."SALES"."CUST_ID") resolve, not just bare
+            // Table.Col. The last two segments of each ref are taken as table.col.
+            // One identifier segment: a quoted/bracketed token (spaces allowed inside) OR a
+            // bare unquoted identifier (no spaces — so it can't swallow " AND "/operators
+            // in a multi-condition join).
+            const seg = '(?:["\'`\\[][^"\'`\\]]+["\'`\\]]|[A-Za-z_]\\w*)';
+            const ref = '((?:' + seg + '\\s*\\.\\s*)+' + seg + ')';
+            const m = expr.match(new RegExp(ref + '\\s*=\\s*' + ref));
+            if (!m) return null;
+            const l = _bobjSplitDottedRef(m[1]), r = _bobjSplitDottedRef(m[2]);
+            if (!l || !r) return null;
+            return { leftTable: l.table, leftCol: l.col, rightTable: r.table, rightCol: r.col };
+        }
+        function _bobjSplitDottedRef(ref) {
+            const parts = String(ref).split('.').map(p => p.replace(/["'`\[\]]/g, '').trim()).filter(Boolean);
+            if (parts.length < 2) return null;
+            return { table: parts[parts.length - 2], col: parts[parts.length - 1] };
+        }
+        // Read a SAP join cardinality string and say which side is the "many" side, so the
+        // Sigma relationship (a many→one lookup) is built with the many side as source.
+        // Tolerant of the encodings BO/IDT emit: one-to-many/many-to-one, OneToMany,
+        // 1-n/n-1, 1:N/N:1, 1..N/N..1, 1..*/*..1. Returns 'left-many' | 'right-many' | null.
+        function _bobjJoinDirection(card) {
+            if (!card) return null;
+            const norm = String(card).toLowerCase()
+                .replace(/many/g, 'N').replace(/one/g, '1').replace(/[*]/g, 'N');
+            const toks = norm.toUpperCase().match(/[1N]/g);
+            if (!toks || toks.length < 2) return null;
+            const left = toks[0], right = toks[toks.length - 1];
+            if (left === 'N' && right === '1') return 'left-many';
+            if (left === '1' && right === 'N') return 'right-many';
+            return null; // 1-1 or N-N — no directional signal
         }
         function _bobjTranslateExpr(expr, warnings) {
             let f = (expr || '').trim();
@@ -21078,9 +21118,17 @@ views:
             for (const j of _bobjFindAll(dfScope, n => n.tag === 'join')) {
                 const expression = _bobjTextOf(_bobjFindFirst(j, ['expression', 'statement', 'sql', 'definition'])) ||
                     j.attrs.expression || j.attrs.statement || _bobjTextOf(j) || undefined;
+                // Cardinality: a single string when present, else compose one from per-side
+                // multiplicity (attrs or child tags) so _bobjJoinDirection() can read direction.
+                const lc = j.attrs.leftcardinality || j.attrs.leftmultiplicity ||
+                    _bobjTextOf(_bobjFindFirst(j, ['leftcardinality', 'leftmultiplicity']));
+                const rc = j.attrs.rightcardinality || j.attrs.rightmultiplicity ||
+                    _bobjTextOf(_bobjFindFirst(j, ['rightcardinality', 'rightmultiplicity']));
+                const cardinality = j.attrs.cardinality || _bobjTextOf(_bobjFindFirst(j, ['cardinality'])) ||
+                    (lc && rc ? `${lc}-to-${rc}` : undefined);
                 joins.push({ left: j.attrs.left || j.attrs.lefttable || j.attrs.table1 || undefined,
                     right: j.attrs.right || j.attrs.righttable || j.attrs.table2 || undefined,
-                    expression, cardinality: j.attrs.cardinality || _bobjTextOf(_bobjFindFirst(j, ['cardinality'])) || undefined });
+                    expression, cardinality });
             }
             const objects = [];
             const _walkBl = (nodes, parentClass) => {
@@ -21361,6 +21409,18 @@ views:
 
                 let uni = isXml ? _bobjIngestXml(raw) : _bobjNormalize(input);
 
+                // Tell the user, up front, whether the file they provided can carry joins —
+                // the #1 cause of a low-column workbook is an outline-only input silently
+                // producing a joinless model.
+                if (isXml) {
+                    warnings.push('SL-SDK / IDT XML export — carries the data foundation, so joins and physical columns are expected. If relationships still come out 0, check the per-join warnings below.');
+                } else {
+                    const _root = (input && input.universe) ? input.universe : (input || {});
+                    const _rawJoins = _root.joins || (_root.dataFoundation && _root.dataFoundation.joins) || (input && input.joins);
+                    if (!(Array.isArray(_rawJoins) && _rawJoins.length))
+                        warnings.push('RWS outline JSON — carries object names/types/folders ONLY, not the data foundation (physical tables, joins) or object SELECTs. Expect 0 relationships and outline-only columns. For a full model (joins + all columns) provide an SL-SDK / IDT XML export instead.');
+                }
+
                 // Optional target-layer remap (restructured / platinum layer).
                 const remapRaw = (document.getElementById('bobjRemapJson')?.value || '').trim();
                 if (remapRaw) {
@@ -21451,7 +21511,27 @@ views:
                     const parsed = _bobjParseJoin(join);
                     if (!parsed) { warnings.push(`⚠ Join "${join.expression || (join.left + '~' + join.right)}" not a simple equi-join — add manually.`); continue; }
                     let { leftTable, leftCol, rightTable, rightCol } = parsed;
-                    if (join.cardinality && /one-to-many|1-n|onetomany/i.test(join.cardinality)) {
+                    // Direction matters: in Sigma a relationship is a many→one LOOKUP. The
+                    // source element (which owns the relationship and becomes the View base)
+                    // MUST be the "many" side, or every column looked up across the join fans
+                    // out to "multiple values" in a workbook.
+                    const dir = _bobjJoinDirection(join.cardinality); // 'left-many' | 'right-many' | null
+                    let leftIsSource;
+                    if (dir === 'left-many') leftIsSource = true;
+                    else if (dir === 'right-many') leftIsSource = false;
+                    else {
+                        // No usable cardinality — infer from the star-schema shape: the fact
+                        // (measure-bearing) table is the many side. If exactly one side carries
+                        // measures, make that the source; otherwise keep left but warn.
+                        const lHasM = !!(ctxByKey.get(_bobjTableKey(leftTable)) || {}).metrics?.length;
+                        const rHasM = !!(ctxByKey.get(_bobjTableKey(rightTable)) || {}).metrics?.length;
+                        if (lHasM !== rHasM) leftIsSource = lHasM;
+                        else {
+                            leftIsSource = true;
+                            warnings.push(`⚠ Join ${_bobjTableKey(leftTable)}↔${_bobjTableKey(rightTable)}: no usable join cardinality and can't tell the fact from the dimension by measures — assumed "${_bobjTableKey(leftTable)}" is the many side. If workbook columns come back as "multiple values", flip this relationship so its source is the many/fact table.`);
+                        }
+                    }
+                    if (!leftIsSource) {
                         [leftTable, leftCol, rightTable, rightCol] = [rightTable, rightCol, leftTable, leftCol];
                     }
                     const srcKey = _bobjTableKey(leftTable), tgtKey = _bobjTableKey(rightTable);
@@ -21476,6 +21556,19 @@ views:
                     elements.push(ctx.element);
                 }
                 for (const de of _bobjBuildDerived(elements)) elements.push(de);
+
+                // Guard: a multi-table universe that produced NO relationships yields a
+                // low-fidelity model — the denormalized View can only traverse to dimension
+                // columns via a relationship, so a workbook bound to it sees just the one
+                // fact table's columns. This used to happen silently; surface it loudly.
+                const _physicalCount = elements.filter(e => e.source && e.source.kind === 'warehouse-table').length;
+                const _relCount = elements.reduce((n, e) => n + ((e.relationships || []).length), 0);
+                if (_physicalCount > 1 && _relCount === 0) {
+                    if (!uni.joins.length)
+                        warnings.push(`⚠ No joins in the universe input: ${_physicalCount} tables produced 0 relationships, so a workbook can only reach ONE table's columns. If this came from the RWS outline (GET /sl/v1/universes/{id}), that REST path carries no join graph by design — re-extract with the SL-SDK / IDT XML path so joins and the full column set come through.`);
+                    else
+                        warnings.push(`⚠ ${uni.joins.length} join(s) present but 0 produced a relationship — a workbook can only reach ONE table's columns. See the per-join warnings above: joins whose expression isn't a simple equi-join, or whose tables/aliases aren't in the exported data foundation, are dropped. Verify each join expression and that every joined table is exported.`);
+                }
 
                 const sigma = { name: sigmaDisplayName(uni.name), schemaVersion: 1,
                     pages: [{ id: sigmaShortId(), name: 'Page 1', elements }] };
@@ -27463,10 +27556,25 @@ ${cleanedSql}`;
         //         { INCLUDE [dim] : AGG([field]) }
         //         { EXCLUDE [dim] : AGG([field]) }
         //         { FIXED : AGG([field]) }  (table-scoped, no dimensions)
+        // Lower a Tableau inner expression to Snowflake SQL: Tableau
+        // `IF cond THEN a ELSEIF b THEN c ELSE d END` → `CASE WHEN cond THEN a
+        // WHEN b THEN c ELSE d END`, and double-quoted string literals ("EP1")
+        // → single-quoted ('EP1') — in Snowflake a double-quoted token is an
+        // identifier, so an untranslated `="EP1"` throws unexpected 'EP1'.
+        function _tableauExprToSql(s) {
+            s = s.replace(/"([^"]*)"/g, (_m, inner) => "'" + inner.replace(/'/g, "''") + "'");
+            if (/\bIF\b/i.test(s) && /\bEND\b/i.test(s)) {
+                s = s.replace(/\bELSE\s+IF\b/gi, 'WHEN')
+                     .replace(/\bELSEIF\b/gi, 'WHEN')
+                     .replace(/\bIF\b/gi, 'CASE WHEN');
+            }
+            return s;
+        }
         function _tableauInnerToSql(expr) {
             let s = expr;
             s = s.replace(/\bZN\s*\(([^()]+)\)/gi, '$1');
             s = s.replace(/\[([^\]]+)\]/g, (_m, name) => name.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase());
+            s = _tableauExprToSql(s);
             s = s.replace(/\/\s*([A-Z][A-Z0-9_]*)\b/g, '/NULLIF($1,0)');
             return s;
         }
@@ -27772,8 +27880,9 @@ ${cleanedSql}`;
             if (!f || tableauWindowUntranslatable(f)) return null;
             let m;
 
-            // AGG([x]) / WINDOW_SUM(AGG([x])) → PercentOfTotal(Agg([x]), "grand_total")
-            m = f.match(new RegExp('^' + _TABLEAU_TC_AGG_EXPR + '\\s*\\/\\s*WINDOW_SUM\\s*\\(\\s*' + _TABLEAU_TC_AGG_EXPR + '\\s*\\)$', 'i'));
+            // AGG([x]) / TOTAL(AGG([x])) (or / WINDOW_SUM(AGG([x]))) → PercentOfTotal(Agg([x]), "grand_total")
+            // Tableau's TOTAL(SUM(x)) and WINDOW_SUM(SUM(x)) are the same grand-total denominator.
+            m = f.match(new RegExp('^' + _TABLEAU_TC_AGG_EXPR + '\\s*\\/\\s*(?:TOTAL|WINDOW_SUM)\\s*\\(\\s*' + _TABLEAU_TC_AGG_EXPR + '\\s*\\)$', 'i'));
             if (m && m[1].toUpperCase() === m[3].toUpperCase() && _tableauTcSameRef(m[2], m[4])) {
                 return { formula: 'PercentOfTotal(' + _tableauTcAgg(m[1], m[2]) + ', "grand_total")', kind: 'percent-of-total' };
             }
@@ -27998,6 +28107,26 @@ ${cleanedSql}`;
                 warnings.push('⚠ Table-calc function embedded in a larger expression — NOT translated in place. Untranslated fragment: ' + f.slice(0, 120));
             }
 
+            // B1 catch-all — never let an unmapped Tableau function pass through
+            // silently. Every function we emit is PascalCase, so any residual
+            // ALL-CAPS FUNC( token is an unmapped Tableau function (FINDNTH, CHAR,
+            // MAKEDATETIME, MODEL_QUANTILE, trig…) that would otherwise reach Sigma
+            // verbatim and error only at query time. Mask strings/column refs first;
+            // table-calc tokens are already flagged just above, so skip them.
+            if (warnings) {
+                const masked = f.replace(/"[^"]*"/g, '""').replace(/\[[^\]]*\]/g, '[]');
+                const unmapped = new Set();
+                const scan = /\b([A-Z][A-Z0-9_]+)\s*\(/g;
+                let mm;
+                while ((mm = scan.exec(masked)) !== null) {
+                    if (TABLEAU_TABLE_CALC_TOKEN_RE.test(mm[1] + '(')) continue;
+                    unmapped.add(mm[1]);
+                }
+                if (unmapped.size) {
+                    warnings.push('⚠ Unmapped Tableau function(s) passed through unconverted: ' + [...unmapped].join(', ') + ' — no validated Sigma equivalent yet. Rewrite manually; left as-is they error at query time.');
+                }
+            }
+
             return f.trim();
         }
 
@@ -28099,11 +28228,144 @@ ${cleanedSql}`;
                 .map(p => p.replace(/"/g, '').toUpperCase().trim())
                 .filter(p => p && !/^[0-9A-F]{8}-[0-9A-F]{4}-/i.test(p)); // drop virtual-connection UUID segments
             // Strip Tableau hex-hash suffix from table name: "ORDER_FACT_A1B2C3D4" → "ORDER_FACT"
-            if (parts.length > 0) parts[parts.length - 1] = parts[parts.length - 1].replace(/_[0-9A-Fa-f]{16,}$/, '');
+            // and the packaged-extract sheet suffix: "Orders$" → "ORDERS" (a .twbx names its
+            // logical table after the extract sheet, which rarely matches the warehouse table).
+            if (parts.length > 0) parts[parts.length - 1] = parts[parts.length - 1]
+                .replace(/_[0-9A-Fa-f]{16,}$/, '')
+                .replace(/\$+$/, '');
             const tableName = parts[parts.length - 1];
             const schema = schOverride || (parts.length >= 2 ? parts[parts.length - 2] : '');
             const db = dbOverride || (parts.length >= 3 ? parts[0] : '');
             return [db, schema, tableName].filter(Boolean);
+        }
+
+        // ── Encapsulated-legacy object-model helpers (DOM variants) ───────
+        // Tableau 2021.1+ ("Object Model / EncapsulateLegacy") no longer emits a
+        // plain <relation>/<object-graph>; it emits feature-flag-namespaced tags
+        // whose literal name is e.g. `_.fcp.ObjectModelEncapsulateLegacy.true...relation`
+        // (+ a `.false...` legacy twin). The DOM keeps that full string as the
+        // tagName, so `querySelector(':scope > relation')` matches nothing and the
+        // datasource silently yields 0 tables/columns — the empty-DM bug on modern
+        // .twb. We can't pass these names to a CSS selector (they contain dots), so
+        // we filter children by tagName instead.
+
+        // Resolve a connection's <relation>(s): prefer bare <relation>, then the
+        // `.true...` (encapsulated object-model) variant, then any `...relation`.
+        function tableauConnRelations(conn) {
+            if (!conn) return [];
+            const bare = Array.from(conn.children).filter(c => c.tagName.toLowerCase() === 'relation');
+            if (bare.length) return bare;
+            const ns = Array.from(conn.children).filter(c => c.tagName.toLowerCase().endsWith('...relation'));
+            if (!ns.length) return [];
+            const truthy = ns.filter(c => c.tagName.includes('.true...'));
+            return truthy.length ? truthy : ns;
+        }
+
+        // Resolve the (single) connection root relation, namespace-aware.
+        // Is this the .hyper/sqlproxy extract PLACEHOLDER relation (no physical
+        // warehouse counterpart)? Building from it emits a 0-column element.
+        function tableauIsExtractPlaceholderRel(rel) {
+            if (!rel) return false;
+            const table = rel.getAttribute('table');
+            const name = rel.getAttribute('name');
+            if (table === '[Extract].[Extract]' || table === '[sqlproxy]') return true;
+            const hasColumns = Array.from(rel.children).some(c => c.tagName.toLowerCase() === 'columns');
+            if ((name === 'Extract' || name === 'sqlproxy') && !hasColumns) return true;
+            return false;
+        }
+
+        // Root relation of a connection. When a connection carries MORE than one
+        // relation (e.g. an [Extract].[Extract] placeholder sitting BESIDE the real
+        // Custom SQL type='text' relation), prefer the meaningful one over the
+        // placeholder — else we build a 0-column extract element (MCP #81 parity).
+        function tableauRootRelation(conn) {
+            const rels = tableauConnRelations(conn);
+            if (rels.length <= 1) return rels[0] || null;
+            const meaningful = rels.find(r => {
+                const t = r.getAttribute('type') || 'table';
+                if (t === 'text' || t === 'join' || t === 'collection') return true;
+                return !tableauIsExtractPlaceholderRel(r);
+            });
+            return meaningful || rels[0];
+        }
+
+        // Flatten a datasource's connection(s): every <connection> under the
+        // datasource (siblings) plus nested <connection> and
+        // <named-connection><connection>, outermost first.
+        function tableauAllConnections(dsEl) {
+            const out = [];
+            if (!dsEl) return out;
+            const visit = (c) => {
+                if (!c) return;
+                out.push(c);
+                for (const child of Array.from(c.children)) {
+                    const tag = child.tagName.toLowerCase();
+                    if (tag === 'connection') visit(child);
+                    else if (tag === 'named-connections') {
+                        for (const nc of Array.from(child.children)) {
+                            const ncConn = Array.from(nc.children).find(x => x.tagName.toLowerCase() === 'connection');
+                            if (ncConn) visit(ncConn);
+                        }
+                    }
+                }
+            };
+            for (const conn of Array.from(dsEl.children).filter(c => c.tagName.toLowerCase() === 'connection')) visit(conn);
+            return out;
+        }
+
+        // Resolve the connection to build from. A .hyper/sqlproxy extract often makes
+        // the extract the OUTER/first <connection> (wrapping the live warehouse
+        // connection nested, or as a sibling) so the real schema lives on a DIFFERENT
+        // connection. Prefer the connection bearing a meaningful (non-placeholder)
+        // relation; drill through nested/sibling/named connections. Falls back to the
+        // first connection so single-connection paths are unchanged (MCP #84 parity).
+        function tableauEffectiveConnection(dsEl, fallbackConn) {
+            const conns = tableauAllConnections(dsEl);
+            if (conns.length === 0) return fallbackConn || null;
+            const meaningful = conns.find(c => tableauConnRelations(c).some(r => {
+                const t = r.getAttribute('type') || 'table';
+                if (t === 'text' || t === 'join' || t === 'collection') return true;
+                return !tableauIsExtractPlaceholderRel(r);
+            }));
+            return meaningful || conns[0];
+        }
+
+        // Resolve a possibly feature-flag-namespaced CHILD element. e.g. the object
+        // graph is `_.fcp.ObjectModelEncapsulateLegacy.true...object-graph` and a
+        // column's owning object is under `...object-id`. Prefer the bare child,
+        // then a `.true...` variant, then any `...<suffix>` child.
+        function tableauNsChild(el, suffix) {
+            if (!el) return null;
+            const kids = Array.from(el.children);
+            const bare = kids.find(c => c.tagName.toLowerCase() === suffix.toLowerCase());
+            if (bare) return bare;
+            const matches = kids.filter(c => c.tagName.toLowerCase().endsWith('...' + suffix.toLowerCase()));
+            if (!matches.length) return null;
+            return matches.find(c => c.tagName.includes('.true...')) || matches[0];
+        }
+
+        // getAttribute() that also matches a feature-flag-namespaced ATTRIBUTE, e.g.
+        // a relationship join op stored as `_.fcp.RelationshipCalculations.true...op`
+        // instead of `op`. Prefers the bare attribute, then the `.true...` variant
+        // (bracketed column refs), then any namespaced match.
+        function tableauNsAttr(node, key) {
+            if (!node) return '';
+            const bare = node.getAttribute(key);
+            if (bare != null && bare !== '') return bare;
+            const attrs = Array.from(node.attributes || []);
+            const lk = '...' + key.toLowerCase();
+            const matches = attrs.filter(a => a.name.toLowerCase().endsWith(lk));
+            if (!matches.length) return '';
+            const pick = matches.find(a => a.name.includes('.true...')) || matches[0];
+            return pick.value || '';
+        }
+
+        // Namespace-aware child <relation> filter (used for collection trees).
+        function tableauChildRelations(el) {
+            return Array.from(el.children).filter(c => {
+                const t = c.tagName.toLowerCase();
+                return t === 'relation' || t.endsWith('...relation');
+            });
         }
 
         // ── Build elements from Tableau relation tree ─────────────────────
@@ -28113,12 +28375,70 @@ ${cleanedSql}`;
             const _guidCaption = guidIndex.guidCaption || {};
 
             if (relType === 'text') {
-                // Custom SQL
+                // Custom SQL data source: <relation type='text'>SELECT …</relation> →
+                // one Sigma SQL element. DOM textContent auto-decodes XML entities
+                // (incl. numeric &#13;&#10;). Columns come from the relation's inline
+                // <columns> or the connection's <metadata-record class='column'>, and
+                // self-reference their own output via the fixed "Custom SQL" keyword —
+                // verified live (mirrors MCP + LookML): bare [Display]/[COL] and the
+                // element's own name as qualifier resolve to type "error"; only
+                // [Custom SQL/COL] resolves, and an empty columns[] yields a
+                // zero-column (unqueryable) element.
                 const sql = rootRel.textContent.trim();
+                // caption overrides from datasource-level <column caption='…' name='[remote]'>
+                const dsEl = connection ? connection.closest('datasource') : null;
+                const capByName = {};
+                if (dsEl) for (const col of dsEl.querySelectorAll(':scope > column')) {
+                    const nm = (col.getAttribute('name') || '').replace(/^\[|\]$/g, '');
+                    const cap = col.getAttribute('caption');
+                    if (nm && cap) capByName[nm.toUpperCase()] = cap;
+                }
+                const rawCols = [];
+                for (const col of rootRel.querySelectorAll(':scope > columns > column')) {
+                    const nm = col.getAttribute('name'); if (nm) rawCols.push(nm);
+                }
+                if (rawCols.length === 0 && connection) {
+                    for (const mr of connection.querySelectorAll(':scope > metadata-records > metadata-record')) {
+                        if ((mr.getAttribute('class') || '') !== 'column') continue;
+                        const remote = (mr.querySelector(':scope > remote-name')?.textContent || '').trim();
+                        if (remote) rawCols.push(remote);
+                    }
+                }
+                const columns = [], order = [], seen = new Set();
+                // Re-alias projection: '/' in an output column name is a Sigma
+                // formula path separator, so we sanitize it to '-' in the ref and
+                // wrap the verbatim statement to re-alias the real (slashed) column.
+                const projParts = []; let needsRealias = false;
+                for (const raw of rawCols) {
+                    const clean = raw.replace(/^\[|\]$/g, '');
+                    const upper = clean.toUpperCase();
+                    if (!clean || seen.has(upper)) continue; seen.add(upper);
+                    const colKey = clean.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+                    // Snowflake folds UNQUOTED aliases to upper bare identifiers, but
+                    // preserves the EXACT spelling of QUOTED aliases (spaces, mixed
+                    // case, punctuation). Reference by the exact name when it isn't
+                    // already a folded bare identifier (live-verified: for a
+                    // `… AS "SFDC Oppty ID"` output, [Custom SQL/SFDC_OPPTY_ID] 400s
+                    // "dependency not found" while [Custom SQL/SFDC Oppty ID] resolves).
+                    const colRefRaw = clean === colKey ? colKey : clean;
+                    const colRef = colRefRaw.replace(/\//g, '-');
+                    const display = capByName[upper] || sigmaDisplayName(clean);
+                    const id = sigmaInodeId(colRef);
+                    columns.push({ id, formula: '[Custom SQL/' + colRef + ']', name: display });
+                    order.push(id);
+                    if (colRef !== colRefRaw) { projParts.push('"' + clean + '" AS "' + colRef + '"'); needsRealias = true; }
+                    else if (colRefRaw === colKey) { projParts.push(colRefRaw); }
+                    else { projParts.push('"' + clean + '"'); }
+                }
+                const finalStatement = needsRealias
+                    ? 'SELECT ' + projParts.join(', ') + ' FROM (\n' + sql + '\n) __cs'
+                    : sql;
                 elements.push({ id: sigmaShortId(), kind: 'table',
-                    source: { connectionId, kind: 'sql', statement: sql },
-                    columns: [], metrics: [], order: [] });
-                warnings.push('ℹ Custom SQL data source — SQL extracted as-is');
+                    source: { connectionId, kind: 'sql', statement: finalStatement },
+                    columns, metrics: [], order });
+                warnings.push(columns.length
+                    ? 'ℹ Custom SQL data source → Sigma SQL element (' + columns.length + ' column(s)); statement preserved verbatim.'
+                    : '⚠ Custom SQL data source emitted with no columns (no <columns> projection or column metadata-records found).');
                 return;
             }
 
@@ -28144,7 +28464,7 @@ ${cleanedSql}`;
                 // Tableau 2020.2+ relationship model (virtual connections).
                 // All columns live in <metadata-record class='column'> elements, not in the inline <columns> block.
                 // Joins are defined in <datasource><object-graph><relationships>.
-                const childRels = Array.from(rootRel.children).filter(c => c.tagName.toLowerCase() === 'relation');
+                const childRels = tableauChildRelations(rootRel);
                 if (childRels.length === 0) {
                     warnings.push('⚠ Collection datasource has no child relations — skipped');
                     return;
@@ -28152,18 +28472,73 @@ ${cleanedSql}`;
 
                 // Build UUID→caption map keyed by FULL object-id (with hex hash) so role-playing
                 // dimensions (two instances of the same table) remain distinguishable.
-                const metaByObjId = {};
+                // ALSO key by parent-name: the encapsulated-legacy object model (most modern
+                // .twb, incl. multi-custom-SQL workbooks) leaves <object-id> absent on the
+                // metadata-record and instead carries `parent-name` ("[Custom SQL Query1]")
+                // — which maps 1:1 to the child relation NAME — plus the object id under the
+                // namespaced `_.fcp.…true...object-id`. Grouping only by object-id collapsed
+                // every column onto the first element (the empty-stub-elements bug); group by
+                // parent-name so each of the N relations gets its own columns.
+                const stripBrackets = s => (s || '').replace(/^\[|\]$/g, '');
+                const GUID_ONLY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                const metaByObjId = {};   // objId → [{ uuid, caption, objId }]
+                const metaByParent = {};  // parent-name → [{ uuid, caption, objId }]
                 for (const mr of connection.querySelectorAll('metadata-records > metadata-record')) {
                     if ((mr.getAttribute('class') || '') !== 'column') continue;
-                    const uuid     = (mr.querySelector('remote-name')?.textContent || '').trim();
-                    const cap      = (mr.querySelector('caption')?.textContent     || '').trim();
-                    const objIdRaw = (mr.querySelector('object-id')?.textContent   || '').replace(/^\[|\]$/g, '');
-                    if (!uuid || !cap || !objIdRaw) continue;
-                    if (!metaByObjId[objIdRaw]) metaByObjId[objIdRaw] = [];
-                    metaByObjId[objIdRaw].push({ uuid, caption: cap });
+                    const uuid = (mr.querySelector('remote-name')?.textContent || '').trim();
+                    // caption is often absent on the encapsulated model — fall back to the
+                    // remote alias / local-name / remote-name so columns still get a name.
+                    const cap = ((mr.querySelector('caption')?.textContent
+                        || mr.querySelector('remote-alias')?.textContent
+                        || stripBrackets(mr.querySelector('local-name')?.textContent || '')
+                        || uuid) || '').trim();
+                    // object-id may be bare OR under the namespaced `…object-id` child.
+                    const objIdRaw = stripBrackets((
+                        (mr.querySelector('object-id')?.textContent || '')
+                        || (tableauNsChild(mr, 'object-id')?.textContent || '')
+                    ).trim());
+                    const parentRaw = stripBrackets((mr.querySelector('parent-name')?.textContent || '').trim());
+                    // The exact SQL-output column name (remote-alias, else local-name).
+                    // A kind:'sql' element's column formulas must reference the RAW SQL
+                    // output name, not the friendly caption (see the type='text' branch
+                    // + single-source remap below); capture it here.
+                    const remoteAlias = ((mr.querySelector('remote-alias')?.textContent
+                        || stripBrackets(mr.querySelector('local-name')?.textContent || '')
+                        || '') || '').trim();
+                    if (!uuid || !cap) continue;
+                    // Skip a record whose only available name is a raw Tableau GUID (no
+                    // caption/alias/local-name resolved to anything else). Such a "column"
+                    // is an internal field id, not a real warehouse column — emitting it
+                    // yields a `[TABLE/<guid>]` ref that can't resolve ("dependency not
+                    // found" at POST). The pre-encapsulation path skipped these implicitly
+                    // by requiring an object-id; relaxing that for the encapsulated variant
+                    // let them leak in, so filter them explicitly.
+                    if (GUID_ONLY_RE.test(cap)) continue;
+                    const entry = { uuid, caption: cap, objId: objIdRaw || null, remoteAlias: remoteAlias || null };
+                    if (objIdRaw) (metaByObjId[objIdRaw] = metaByObjId[objIdRaw] || []).push(entry);
+                    if (parentRaw) (metaByParent[parentRaw] = metaByParent[parentRaw] || []).push(entry);
                 }
 
                 const elementMap = {}; // fullName → { element, colIdMap, cleanName }
+                // colId → the exact SQL-output column name (raw remote-alias / caption).
+                // A kind:'sql' element resolves its column formulas against the SQL's RAW
+                // output columns, so the single-source remap below rewrites each sql
+                // element's column formula to [Custom SQL/<rawName>].
+                const colSqlNameById = {};
+                // Qualify a bare 2-part `schema.table` reference after FROM/JOIN with the
+                // database override (mirrors the MCP's qualifyTwoPartFqns). 1- and 3-part
+                // names are left untouched. The fixture's SELECT is already 3-part, so this
+                // is a no-op there, but a 2-part custom SQL would otherwise lose the DB.
+                const qualifyTwoPartFqns = (sql, db) => {
+                    if (!sql || !db) return sql;
+                    const qdb = /[^A-Za-z0-9_$]/.test(db) ? '"' + db + '"' : db;
+                    const part = '(?:"[^"]+"|[A-Za-z_$][\\w$]*)';
+                    const re = new RegExp('(\\b(?:FROM|JOIN)\\s+)(' + part + '(?:\\.' + part + ')*)', 'gi');
+                    return sql.replace(re, (m, kw, ref) => {
+                        const parts = ref.match(new RegExp(part, 'g')) || [];
+                        return parts.length === 2 ? kw + qdb + '.' + ref : m;
+                    });
+                };
 
                 for (const rel of childRels) {
                     const fullName  = rel.getAttribute('name') || rel.getAttribute('table') || '';
@@ -28184,13 +28559,33 @@ ${cleanedSql}`;
                             matchingObjId = cands[idx];
                         }
                     }
-                    const metaCols   = matchingObjId ? metaByObjId[matchingObjId] : [];
+                    let metaCols = matchingObjId ? (metaByObjId[matchingObjId] || []) : [];
+                    // Encapsulated-legacy / multi-custom-SQL: object-id is absent on the
+                    // metadata-record, so the object-id match above finds nothing — match by
+                    // parent-name, which equals the child relation name.
+                    if (!metaCols.length) metaCols = metaByParent[fullName] || [];
+                    // Adopt the object-id these columns carry so relationship wiring (keyed on
+                    // object-ids from the object-graph) can resolve back to THIS element.
+                    const relObjId = matchingObjId || (metaCols.find(c => c.objId) || {}).objId || null;
 
-                    for (const { uuid, caption } of metaCols) {
+                    // A `type='text'` child is a Custom SQL relation → it lowers to a
+                    // kind:'sql' element below. A kind:'sql' element's OWN column formulas
+                    // must use the literal source alias `Custom SQL` as the prefix (spec
+                    // rule 3), NOT the relation name — the relation name (e.g. "Actuals")
+                    // is a Tableau federation label, not a warehouse path; using it would
+                    // emit a warehouse-table path that doesn't exist (Source not found).
+                    const isCustomSqlRel = (rel.getAttribute('type') || '') === 'text';
+                    const colPrefix = isCustomSqlRel ? 'Custom SQL' : cleanName;
+
+                    for (const { uuid, caption, remoteAlias } of metaCols) {
                         const cleanCaption = caption.replace(/\s*\(.*\)$/, '').trim(); // strip disambiguation
                         const idKey = uuid.toUpperCase();
                         const id    = sigmaInodeId(idKey);
-                        columns.push({ id, formula: '[' + cleanName + '/' + cleanCaption + ']', name: cleanCaption });
+                        // exact SQL-output name (strip Tableau's " (Disambig)" suffix) for the
+                        // single-source remap; fall back to the clean caption.
+                        const rawSqlName = (remoteAlias || caption).replace(/\s*\([^)]*\)\s*$/, '').trim();
+                        colSqlNameById[id] = rawSqlName || cleanCaption;
+                        columns.push({ id, formula: '[' + colPrefix + '/' + cleanCaption + ']', name: cleanCaption });
                         order.push(id);
                         colIdMap[idKey] = id;
                         colIdMap[uuid.toUpperCase().replace(/-/g, '_')] = id;
@@ -28207,23 +28602,41 @@ ${cleanedSql}`;
                             const formulaCol = isUuid ? (col.getAttribute('caption') || rawName) : sigmaDisplayName(rawName);
                             const idKey      = rawName.toUpperCase().replace(/\s+/g, '_');
                             const id         = sigmaInodeId(idKey);
-                            columns.push({ id, formula: '[' + cleanName + '/' + formulaCol + ']' });
+                            columns.push({ id, formula: '[' + colPrefix + '/' + formulaCol + ']' });
                             order.push(id);
                             colIdMap[rawName.toUpperCase()] = id;
                             colIdMap[idKey] = id;
                         }
                     }
 
+                    // A `type='text'` child is a Custom SQL relation: its SELECT lives in
+                    // the relation's text content. Emit a kind:'sql' element with that
+                    // statement rather than a warehouse-table path keyed on the relation
+                    // NAME (which is not a real table → "Source not found" at POST).
+                    const sqlText = isCustomSqlRel
+                        ? qualifyTwoPartFqns((rel.textContent || '').trim(), dbOverride)
+                        : '';
+                    const source = (isCustomSqlRel && sqlText)
+                        ? { connectionId, kind: 'sql', statement: sqlText }
+                        : { connectionId, kind: 'warehouse-table', path };
+                    if (isCustomSqlRel && !sqlText) {
+                        warnings.push('⚠ Custom SQL relation "' + fullName + '" has no inline SQL text — emitted as a table path "' + path.join('.') + '"; verify or replace with the query.');
+                    }
                     const el = { id: sigmaShortId(), kind: 'table',
-                        source: { connectionId, kind: 'warehouse-table', path },
+                        source,
                         columns, metrics: [], order };
-                    elementMap[fullName] = { element: el, colIdMap, cleanName, objId: matchingObjId || null };
+                    elementMap[fullName] = { element: el, colIdMap, cleanName, objId: relObjId };
                     elements.push(el);
                 }
 
-                // Wire relationships from <object-graph><relationships>
+                // Wire relationships from <object-graph><relationships>. The graph may be
+                // bare `object-graph` OR the namespaced encapsulated-legacy variant, so we
+                // can't reach it through a plain CSS selector — resolve via tableauNsChild.
                 const dsEl  = connection.parentElement || rootRel.parentElement?.parentElement;
-                const relsEl = dsEl ? dsEl.querySelector('object-graph > relationships, relationships') : null;
+                const objGraphEl = dsEl ? tableauNsChild(dsEl, 'object-graph') : null;
+                const relsEl = objGraphEl
+                    ? (Array.from(objGraphEl.children).find(c => c.tagName.toLowerCase() === 'relationships') || null)
+                    : (dsEl ? dsEl.querySelector('relationships') : null);
 
                 if (relsEl) {
                     // Resolve object-id to an elementMap entry.
@@ -28259,26 +28672,6 @@ ${cleanedSql}`;
                         const secondEntry = findEntry(secondEp.getAttribute('object-id') || '');
                         if (!firstEntry || !secondEntry || firstEntry === secondEntry) continue;
 
-                        const exprs = rel.querySelectorAll('expression > expression');
-                        if (exprs.length < 2) continue;
-
-                        const srcOpRaw = exprs[0].getAttribute('op') || '';
-                        const tgtOpRaw = exprs[1].getAttribute('op') || '';
-                        const srcKey = parseOpRef(srcOpRaw);
-                        const tgtKey = parseOpRef(tgtOpRaw);
-                        if (!srcKey || !tgtKey) continue;
-
-                        // A join key wrapped in a function (e.g. DATE([order_date])) is a computed
-                        // key, not a plain physical column. Sigma relationships join on physical
-                        // columns only; emitting one keyed on a derived value yields a dangling join
-                        // whose cross-element refs all error-type. Route to manual authoring.
-                        const isFnWrappedKey = (op) =>
-                            /^[A-Za-z_]\w*\(\s*\[?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\]?\s*\)$/i.test(op.trim());
-                        if (isFnWrappedKey(srcOpRaw) || isFnWrappedKey(tgtOpRaw)) {
-                            warnings.push('⚠ Relationship ' + firstEntry.cleanName + ' → ' + secondEntry.cleanName + ' joins on a computed key (' + (srcOpRaw || tgtOpRaw).slice(0, 40) + '); Sigma joins on physical columns only — skipped, needs manual authoring.');
-                            continue;
-                        }
-
                         const ensureCol = (entry, key) => {
                             let id = entry.colIdMap[key] || entry.colIdMap[key.replace(/-/g, '_')];
                             if (!id) {
@@ -28301,20 +28694,103 @@ ${cleanedSql}`;
                             return id;
                         };
 
-                        const srcColId = ensureCol(firstEntry,  srcKey);
-                        const tgtColId = ensureCol(secondEntry, tgtKey);
+                        // The join condition is either a single equality (expression[op="="])
+                        // or a composite AND/OR of several equalities (expression[op="AND"] >
+                        // expression[op="="] × N). Flatten to the leaf equalities. The `op`
+                        // attribute may be namespaced (`_.fcp.RelationshipCalculations.true...op`).
+                        const collectEqs = (expr, acc) => {
+                            const op   = tableauNsAttr(expr, 'op');
+                            const kids = Array.from(expr.children).filter(c => c.tagName.toLowerCase() === 'expression');
+                            if (op === '=' && kids.length >= 2) { acc.push(expr); return; }
+                            for (const k of kids) collectEqs(k, acc); // AND / OR / nested
+                        };
+                        const eqExprs = [];
+                        for (const oe of Array.from(rel.children).filter(c => c.tagName.toLowerCase() === 'expression')) {
+                            collectEqs(oe, eqExprs);
+                        }
+                        if (eqExprs.length === 0) {
+                            // Pure noun-model case: Tableau auto-matches the tables at query
+                            // time and stores no explicit key. Sigma needs one, so we can't
+                            // wire it — but never SILENTLY (that yields a disconnected DM with
+                            // no signal why). See the aggregate zero-join guard below.
+                            warnings.push('⚠ Relationship ' + firstEntry.cleanName + ' → ' + secondEntry.cleanName + ' carries no serialized join key — Tableau auto-matches these at query time; Sigma needs an explicit key. NOT wired: pick a join key and wire manually (LEFT from fact→dim), and verify the dimension is unique on the key to avoid measure fan-out.');
+                            continue;
+                        }
+
+                        // A side is a plain physical column iff its op is a bare bracketed ref
+                        // `[COL]`. Anything else — an IF/DATETRUNC formula (stored under the
+                        // namespaced RelationshipCalculations op), DATE([uuid]), a concatenation —
+                        // is a computed key Sigma can't join on. Wire physical equalities as keys;
+                        // drop computed ones (warn); skip the whole relationship if NONE are
+                        // physical (never fake a join on a synthetic "=" column).
+                        const isPhysical = op => /^\[[^\]]+\]$/.test((op || '').trim());
+                        const keys = [];
+                        let skippedComputed = 0;
+                        for (const eq of eqExprs) {
+                            const inner = Array.from(eq.children).filter(c => c.tagName.toLowerCase() === 'expression');
+                            if (inner.length < 2) continue;
+                            const srcOpRaw = tableauNsAttr(inner[0], 'op') || '';
+                            const tgtOpRaw = tableauNsAttr(inner[1], 'op') || '';
+                            if (!isPhysical(srcOpRaw) || !isPhysical(tgtOpRaw)) { skippedComputed++; continue; }
+                            const srcKey = parseOpRef(srcOpRaw), tgtKey = parseOpRef(tgtOpRaw);
+                            if (!srcKey || !tgtKey) continue;
+                            keys.push({
+                                sourceColumnId: ensureCol(firstEntry,  srcKey),
+                                targetColumnId: ensureCol(secondEntry, tgtKey)
+                            });
+                        }
+
+                        if (keys.length === 0) {
+                            warnings.push('⚠ Relationship ' + firstEntry.cleanName + ' → ' + secondEntry.cleanName + ' joins only on computed key(s) (e.g. IF/DATETRUNC expression); Sigma joins on physical columns only — NOT wired. Needs a computed join column or manual authoring.');
+                            continue;
+                        }
+                        if (skippedComputed > 0) {
+                            warnings.push('⚠ Relationship ' + firstEntry.cleanName + ' → ' + secondEntry.cleanName + ': wired ' + keys.length + ' physical key(s); ' + skippedComputed + ' computed condition(s) dropped — verify join grain in Sigma.');
+                        }
 
                         if (!firstEntry.element.relationships) firstEntry.element.relationships = [];
                         firstEntry.element.relationships.push({
                             id: sigmaShortId(),
                             targetElementId: secondEntry.element.id,
-                            keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
+                            keys,
                             name: secondEntry.cleanName
                         });
-                        warnings.push('ℹ Relationship ' + firstEntry.cleanName + ' → ' + secondEntry.cleanName + ' on ' + srcKey + ' = ' + tgtKey);
+                        warnings.push('ℹ Relationship ' + firstEntry.cleanName + ' → ' + secondEntry.cleanName + ' wired on ' + keys.length + ' physical key(s).');
                     }
-                } else {
-                    warnings.push('ℹ Collection datasource: no <relationships> element — elements created without joins');
+                }
+
+                // Zero-join guard for the noun/collection model. A derived/denormalized
+                // Sigma view can only reach a table's columns THROUGH a relationship, so
+                // a multi-table DM with zero wired relationships is effectively unusable
+                // downstream — yet every per-relationship skip above is easy to miss.
+                // Emit ONE loud, cause-specific warning (mirrors the MCP + BOBJ zero-join
+                // guard) so this never reaches a user as a silent joinless DM.
+                const _joinableEls = elements.filter(e => e.source && (e.source.kind === 'warehouse-table' || e.source.kind === 'sql'));
+                const _wiredRelCount = elements.reduce((n, e) => n + ((e.relationships && e.relationships.length) || 0), 0);
+                const _relCount = relsEl ? relsEl.querySelectorAll(':scope > relationship').length : 0;
+                if (_joinableEls.length > 1 && _wiredRelCount === 0) {
+                    warnings.push(_relCount === 0
+                        ? '⚠ Tableau logical (relationship / noun) datasource: ' + _joinableEls.length + ' tables but NO relationships were serialized in <object-graph> — nothing to derive a join key from (Tableau matches these at query time). The DM is a set of disconnected tables. Pick an explicit join key for each table pair and wire relationships manually (LEFT from fact→dim), and verify each dimension is unique on the key to avoid measure fan-out.'
+                        : '⚠ Tableau logical (relationship / noun) datasource: ' + _joinableEls.length + ' tables and ' + _relCount + ' relationship(s), but 0 could be wired — all lacked a physical equality key (auto-matched or computed-only; see per-relationship warnings above). The DM is a set of disconnected tables. Pick an explicit join key per pair and wire manually (LEFT from fact→dim); verify dimension uniqueness on the key.');
+                }
+
+                // beads-sigma-htu7: a SINGLE-SOURCE custom-SQL datasource (one object-model
+                // type='text' relation, no blend) emits a lone kind:'sql' element. Sigma
+                // resolves a kind:'sql' element's column refs against the SQL's RAW OUTPUT
+                // columns, but the in-loop formulas use the friendly captions
+                // ([Custom SQL/<caption>]) — which 400 at DM POST ("dependency not found:
+                // custom sql/<col>"). Name the lone element "Custom SQL" and remap every
+                // formula to the raw SQL output name (display name stays the caption).
+                // Scoped to exactly one sql element so "Custom SQL" can't collide;
+                // warehouse-table elements (caption == column name) are untouched.
+                const sqlEls = elements.filter(e => e.source && e.source.kind === 'sql');
+                if (sqlEls.length === 1) {
+                    const sqlEl = sqlEls[0];
+                    if (!sqlEl.name) sqlEl.name = 'Custom SQL';
+                    for (const c of (sqlEl.columns || [])) {
+                        const raw = colSqlNameById[c.id];
+                        if (raw) c.formula = '[Custom SQL/' + raw + ']';
+                    }
                 }
 
                 // Sort: dims first, fact last
@@ -28523,8 +28999,12 @@ ${cleanedSql}`;
                 return false;
             }
 
-            const connection   = ds.connection;
-                const rootRelation = connection ? connection.querySelector(':scope > relation') : null;
+            // Drill past a .hyper/sqlproxy extract wrapper (nested or sibling) to the
+            // live warehouse connection that actually bears the schema (MCP #84).
+            const connection   = tableauEffectiveConnection(ds.element, ds.connection);
+                // Namespace-aware: encapsulated-legacy (.true...relation) tags don't match a
+                // plain CSS `:scope > relation` selector.
+                const rootRelation = tableauRootRelation(connection);
 
                 // ── Virtual-connection GUID resolution index ─────────────────────
                 // In a Tableau 2020.2+ "virtual connection" (relation type='collection')
@@ -28575,7 +29055,7 @@ ${cleanedSql}`;
                 // <columns> (the physical fact table). Dimension relations are bare.
                 let factRelName = null;
                 if (rootRelation && (rootRelation.getAttribute('type') || '') === 'collection') {
-                    const _childRels = Array.from(rootRelation.children).filter(c => c.tagName.toLowerCase() === 'relation');
+                    const _childRels = tableauChildRelations(rootRelation);
                     const _factChild = _childRels.find(r => r.querySelectorAll(':scope > columns > column').length > 0);
                     factRelName = _factChild ? (_factChild.getAttribute('name') || _factChild.getAttribute('table') || null) : null;
                 }
@@ -28594,9 +29074,9 @@ ${cleanedSql}`;
                                 derivedRelColGuids.add(gm[0].toLowerCase());
                             }
                         }
-                        for (const child of Array.from(r.children).filter(c => c.tagName.toLowerCase() === 'relation')) scanRel(child);
+                        for (const child of tableauChildRelations(r)) scanRel(child);
                     };
-                    for (const rel of connection.querySelectorAll(':scope > relation')) scanRel(rel);
+                    for (const rel of tableauConnRelations(connection)) scanRel(rel);
                 }
 
                 // Rewrite bare [GUID] references in a Tableau formula to [Caption] so the
@@ -28687,6 +29167,32 @@ ${cleanedSql}`;
                         _lodUsedAliases.add(a);
                         return a;
                     };
+                    // Recover the REAL warehouse column name (preserving case /
+                    // spaces) from metadata-records, so LOD helper SQL can QUOTE
+                    // mixed-case identifiers. Every capture point upper-cases and
+                    // underscores names, so a column like "SFDC Oppty ID" would
+                    // otherwise be emitted bare as SFDC_OPPTY_ID and fail to match
+                    // the real quoted column. Only names that ACTUALLY need
+                    // quoting (differ from their upper-snake form) are added, so
+                    // all-uppercase columns are emitted bare exactly as before.
+                    const _physToRealQuoted = {};
+                    if (connection) {
+                        for (const mr of connection.querySelectorAll('metadata-records > metadata-record')) {
+                            const remote = (mr.querySelector(':scope > remote-name')?.textContent || '').trim();
+                            if (!remote) continue;
+                            const snakeUpper = remote.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+                            const spaceUpper = remote.replace(/\s+/g, '_').toUpperCase();
+                            if (remote === snakeUpper && !/^[0-9]/.test(remote)) continue;
+                            const quoted = '"' + remote + '"';
+                            for (const key of [snakeUpper, spaceUpper]) {
+                                if (key && !(key in _physToRealQuoted)) _physToRealQuoted[key] = quoted;
+                            }
+                        }
+                    }
+                    const _hasRealNames = Object.keys(_physToRealQuoted).length > 0;
+                    const _quotePhysToken = (tok) => _physToRealQuoted[tok] || _physToRealQuoted[tok.toUpperCase()] || tok;
+                    const _rewritePhysExpr = (expr) => !_hasRealNames ? expr
+                        : expr.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\b/g, (m, tok) => _physToRealQuoted[tok.toUpperCase()] || m);
                     const _resolveLodDim = (dimName) => {
                         const found = displayNameMap[dimName.toUpperCase()] || displayNameMap[sigmaDisplayName(dimName).toUpperCase()];
                         if (!found) return null;
@@ -28698,7 +29204,53 @@ ${cleanedSql}`;
                         // helpers (LOD / window / Top-N) query the fact table directly, so a dim
                         // that resolves to a *related* dimension element can't be expressed as a
                         // single-table helper.
-                        return { dimUpper, displayName: dispName, baseColId: found.colId, onFact: found.el === factEl };
+                        return { dimUpper, displayName: dispName, baseColId: found.colId, onFact: found.el === factEl, el: found.el };
+                    };
+                    // Cross-table LOD (grouping dim on a JOINED dimension element): emit a
+                    // paste-ready Custom SQL (fact→dim JOIN + GROUP BY) instead of a bare
+                    // skip, so the case is self-service. Mirrors MCP _suggestCrossTableLodSql.
+                    // Returns null when the join can't be resolved mechanically.
+                    const _suggestCrossTableLodSql = (lod, dimsResolved, caption) => {
+                        const fe = factEl;
+                        if (!fe || !fe.source || fe.source.kind !== 'warehouse-table' || !(fe.source.path && fe.source.path.length >= 1)) return null;
+                        const physNameOf = (el, colId) => {
+                            const c = (el && el.columns || []).find(x => x.id === colId);
+                            if (!c) return null;
+                            const m = typeof c.formula === 'string' ? c.formula.match(/\/([^\]]+)\]$/) : null;
+                            const nm = c.name || (m ? m[1] : null);
+                            return nm ? String(nm).replace(/\s+/g, '_').toUpperCase() : null;
+                        };
+                        const qFact = (u) => _physToRealQuoted[u] || u;
+                        const factPath = fe.source.path.join('.');
+                        const factPhys = new Set((fe.columns || []).map(c => physNameOf(fe, c.id)).filter(Boolean));
+                        const joins = []; const joinByEl = {}; const dimSel = [];
+                        for (const d of dimsResolved) {
+                            if (!d.el || d.el === fe) { dimSel.push('__f.' + qFact(d.dimUpper) + ' AS ' + d.dimUpper); continue; }
+                            const dimEl = d.el;
+                            if (!dimEl.source || dimEl.source.kind !== 'warehouse-table' || !(dimEl.source.path && dimEl.source.path.length >= 1)) return null;
+                            const rel = (fe.relationships || []).find(r => r.targetElementId === dimEl.id);
+                            if (!rel || !(rel.keys && rel.keys.length)) return null;
+                            let alias = joinByEl[dimEl.id];
+                            if (!alias) {
+                                alias = '__d' + joins.length; const on = [];
+                                for (const k of rel.keys) {
+                                    const fp = physNameOf(fe, k.sourceColumnId), dp = physNameOf(dimEl, k.targetColumnId);
+                                    if (!fp || !dp) return null;
+                                    on.push('__f.' + qFact(fp) + ' = ' + alias + '.' + dp);
+                                }
+                                joins.push({ alias, path: dimEl.source.path.join('.'), on });
+                                joinByEl[dimEl.id] = alias;
+                            }
+                            dimSel.push(alias + '.' + d.dimUpper + ' AS ' + d.dimUpper);
+                        }
+                        if (!joins.length) return null;
+                        const aggExpr = String(lod.aggExpr || '').replace(/\b([A-Za-z_][A-Za-z0-9_]*)\b/g,
+                            (m, tok) => factPhys.has(tok.toUpperCase()) ? '__f.' + qFact(tok.toUpperCase()) : m);
+                        const aggAlias = (caption || 'LOD_VALUE').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase() || 'LOD_VALUE';
+                        const aggFn = lod.aggFunc === 'COUNTD' ? 'COUNT(DISTINCT ' + aggExpr + ')' : lod.aggFunc + '(' + aggExpr + ')';
+                        const gb = dimSel.map((_s, i) => i + 1).join(', ');
+                        const joinSql = joins.map(j => '    LEFT JOIN ' + j.path + ' ' + j.alias + ' ON ' + j.on.join(' AND ')).join('\n');
+                        return '    SELECT ' + dimSel.join(', ') + ', ' + aggFn + ' AS ' + aggAlias + '\n    FROM ' + factPath + ' __f\n' + joinSql + '\n    GROUP BY ' + gb;
                     };
                     const _ensureLodHelper = (effectiveDims, dimResolved, relNameSuggestion) => {
                         if (!effectiveDims.length) return null;
@@ -28718,7 +29270,12 @@ ${cleanedSql}`;
                             columns: cols, order
                         };
                         _lodHelpers[sigKey] = {
-                            element: helperEl, groupDimNames: effectiveDims.slice(),
+                            // Use the RESOLVED physical-upper names (aligned 1:1 with
+                            // effectiveDims), not the raw effective names — INCLUDE/EXCLUDE
+                            // worksheet dims arrive as display strings ("SALES REGION"),
+                            // and the resolved dimUpper ("SALES_REGION") is what
+                            // _quotePhysToken maps to the real quoted warehouse column.
+                            element: helperEl, groupDimNames: dimResolved.map(d => d.dimUpper),
                             groupDimColIds, aggsByExpr: {}, relationshipName: relNameSuggestion
                         };
                         lodChildElements.push(helperEl);
@@ -28748,15 +29305,30 @@ ${cleanedSql}`;
                         return { alias, caption: cap };
                     };
                     const _finalizeLodHelpers = () => {
-                        const baseFq = (factEl.source && factEl.source.path && factEl.source.path.length >= 2)
-                            ? factEl.source.path.join('.') : factTableName;
+                        // A Custom SQL (kind:'sql') fact has no warehouse path — wrap its
+                        // verbatim statement as a subquery so the helper selects from the
+                        // real query output (whose columns _physToRealQuoted quotes by
+                        // their exact metadata remote-name). A plain warehouse-table fact
+                        // uses its FQN path.
+                        const baseFq = (factEl.source && factEl.source.kind === 'sql' && factEl.source.statement)
+                            ? ('(\n' + factEl.source.statement + '\n) __base')
+                            : ((factEl.source && factEl.source.path && factEl.source.path.length >= 2)
+                                ? factEl.source.path.join('.') : factTableName);
                         for (const sigKey of Object.keys(_lodHelpers)) {
                             const rec = _lodHelpers[sigKey];
-                            const dimList = rec.groupDimNames.join(', ');
+                            // Quote mixed-case source columns and alias them back to the
+                            // bare upper-snake name — the helper's dim column formula is
+                            // [Custom SQL/<UPPER>], so the SQL output identifier must be
+                            // that upper name (a quoted mixed-case output would not resolve).
+                            const dimList = rec.groupDimNames.map(dn => {
+                                const q = _quotePhysToken(dn);
+                                return q === dn ? dn : (q + ' AS ' + dn);
+                            }).join(', ');
                             const aggParts = [];
                             for (const k of Object.keys(rec.aggsByExpr)) {
                                 const a = rec.aggsByExpr[k];
-                                const sqlAggFunc = a.aggFunc === 'COUNTD' ? ('COUNT(DISTINCT ' + a.aggExpr + ')') : (a.aggFunc + '(' + a.aggExpr + ')');
+                                const safeExpr = _rewritePhysExpr(a.aggExpr);
+                                const sqlAggFunc = a.aggFunc === 'COUNTD' ? ('COUNT(DISTINCT ' + safeExpr + ')') : (a.aggFunc + '(' + safeExpr + ')');
                                 aggParts.push(sqlAggFunc + ' AS ' + a.alias);
                             }
                             const groupByIdx = rec.groupDimNames.map((_d, i) => i + 1).join(', ');
@@ -28845,7 +29417,7 @@ ${cleanedSql}`;
                         return alias;
                     };
                     const _emitWinOverClause = (rec, win, windowAlias, innerAlias) => {
-                        const partBy = rec.partitionDimNames.length > 0 ? 'PARTITION BY ' + rec.partitionDimNames.join(', ') : '';
+                        const partBy = rec.partitionDimNames.length > 0 ? 'PARTITION BY ' + rec.partitionDimNames.map(_quotePhysToken).join(', ') : '';
                         const orderBy = rec.orderDimAlias ? 'ORDER BY ' + rec.orderDimAlias : '';
                         const ws = (parts) => parts.filter(Boolean).join(' ');
                         let overSql = '';
@@ -28910,22 +29482,29 @@ ${cleanedSql}`;
                         for (const key of Object.keys(_winHelpers)) {
                             const rec = _winHelpers[key];
                             const selectParts = [];
-                            for (const d of rec.partitionDimNames) selectParts.push(d);
+                            // Base SELECT reads the fact table: quote mixed-case cols and
+                            // alias to bare upper-snake; downstream CTE refs use the alias.
+                            for (const d of rec.partitionDimNames) {
+                                const q = _quotePhysToken(d);
+                                selectParts.push(q === d ? d : (q + ' AS ' + d));
+                            }
                             if (rec.orderDimRaw && rec.orderDimAlias) {
+                                const rawRef = _rewritePhysExpr(rec.orderDimRaw);
                                 selectParts.push(rec.orderDimDateTrunc
-                                    ? "DATE_TRUNC('" + rec.orderDimDateTrunc + "', " + rec.orderDimRaw + ') AS ' + rec.orderDimAlias
-                                    : (rec.orderDimRaw + ' AS ' + rec.orderDimAlias));
+                                    ? "DATE_TRUNC('" + rec.orderDimDateTrunc + "', " + rawRef + ') AS ' + rec.orderDimAlias
+                                    : (rawRef + ' AS ' + rec.orderDimAlias));
                             }
                             for (const k of Object.keys(rec.innerAggs)) {
                                 const [aggFunc, exprSql] = k.split('::');
                                 const a = rec.innerAggs[k];
-                                const sqlFn = aggFunc === 'COUNTD' ? ('COUNT(DISTINCT ' + exprSql + ')') : (aggFunc + '(' + exprSql + ')');
+                                const safeExpr = _rewritePhysExpr(exprSql);
+                                const sqlFn = aggFunc === 'COUNTD' ? ('COUNT(DISTINCT ' + safeExpr + ')') : (aggFunc + '(' + safeExpr + ')');
                                 selectParts.push(sqlFn + ' AS ' + a.alias);
                             }
                             const groupByCount = rec.partitionDimNames.length + (rec.orderDimRaw ? 1 : 0);
                             const groupByIdx = Array.from({ length: groupByCount }, (_, i) => i + 1).join(', ');
                             const baseSelect = 'SELECT ' + selectParts.join(', ') + ' FROM ' + baseFq + ' GROUP BY ' + groupByIdx;
-                            const innerProj = [].concat(rec.partitionDimNames, rec.orderDimAlias ? [rec.orderDimAlias] : [], Object.values(rec.innerAggs).map(v => v.alias));
+                            const innerProj = [].concat(rec.partitionDimNames.map(_quotePhysToken), rec.orderDimAlias ? [rec.orderDimAlias] : [], Object.values(rec.innerAggs).map(v => v.alias));
                             const outerProj = innerProj.concat(rec.windowOverParts);
                             rec.element.source.statement = 'WITH base AS (' + baseSelect + ') SELECT ' + outerProj.join(', ') + ' FROM base';
                         }
@@ -29010,18 +29589,23 @@ ${cleanedSql}`;
                         order.push(isTopNColId);
                         const baseFq = (factEl.source && factEl.source.path && factEl.source.path.length >= 2)
                             ? factEl.source.path.join('.') : factTableName;
-                        const groupCols = [keyResolved.dimUpper].concat(partResolved.map(p => p.dimUpper));
-                        const groupByIdx = groupCols.map((_g, i) => i + 1).join(', ');
+                        // agg CTE reads the table → quote+alias to bare upper-snake; every
+                        // downstream ref (ranked, outer, PARTITION BY) uses the bare alias.
+                        const _groupDims = [keyResolved.dimUpper].concat(partResolved.map(p => p.dimUpper));
+                        const groupColsSource = _groupDims.map(c => { const q = _quotePhysToken(c); return q === c ? c : (q + ' AS ' + c); });
+                        const groupColsOut = _groupDims.slice();
+                        const groupByIdx = _groupDims.map((_g, i) => i + 1).join(', ');
                         let aggSql = top.byAggFunc;
-                        if (aggSql === 'COUNTD') aggSql = 'COUNT(DISTINCT ' + top.byField + ')';
-                        else aggSql = aggSql + '(' + top.byField + ')';
+                        const safeByField = _rewritePhysExpr(top.byField);
+                        if (aggSql === 'COUNTD') aggSql = 'COUNT(DISTINCT ' + safeByField + ')';
+                        else aggSql = aggSql + '(' + safeByField + ')';
                         const partBy = top.partitionBy.length > 0 ? 'PARTITION BY ' + top.partitionBy.join(', ') + ' ' : '';
                         const overClause = 'RANK() OVER (' + partBy + 'ORDER BY s ' + dirSql + ')';
-                        const innerSelect = 'SELECT ' + groupCols.join(', ') + ', ' + aggSql + ' AS s FROM ' + baseFq + ' GROUP BY ' + groupByIdx;
-                        const rankedSelect = 'SELECT ' + groupCols.join(', ') + ', s, ' + overClause + ' AS RNK FROM agg';
+                        const innerSelect = 'SELECT ' + groupColsSource.join(', ') + ', ' + aggSql + ' AS s FROM ' + baseFq + ' GROUP BY ' + groupByIdx;
+                        const rankedSelect = 'SELECT ' + groupColsOut.join(', ') + ', s, ' + overClause + ' AS RNK FROM agg';
                         const outerCols = emitIsTopNInSql
-                            ? (groupCols.join(', ') + ', s AS TOTAL, RNK, (RNK <= ' + nLiteral + ') AS IS_TOP_N')
-                            : (groupCols.join(', ') + ', s AS TOTAL, RNK');
+                            ? (groupColsOut.join(', ') + ', s AS TOTAL, RNK, (RNK <= ' + nLiteral + ') AS IS_TOP_N')
+                            : (groupColsOut.join(', ') + ', s AS TOTAL, RNK');
                         const outerSelect = 'SELECT ' + outerCols + ' FROM ranked';
                         const statement = 'WITH agg AS (' + innerSelect + '), ranked AS (' + rankedSelect + ') ' + outerSelect;
                         const helperEl = {
@@ -29294,7 +29878,12 @@ ${cleanedSql}`;
                                     else { allFound = false; warnings.push('⚠ LOD "' + caption + '": dim [' + dn + '] not found'); }
                                 }
                                 if (dimOffFact) {
-                                    warnings.push('⚠ LOD "' + caption + '" (' + lod.lodType + ') groups by a dimension-table column (cross-table grain); not mechanizable as a single-table helper — needs manual Sigma authoring. Skipped.');
+                                    const suggestion = _suggestCrossTableLodSql(lod, lodDimsResolved, caption);
+                                    if (suggestion) {
+                                        warnings.push('⚠ LOD "' + caption + '" (' + lod.lodType + ') groups by a dimension-table column (cross-table grain) — not auto-wired yet. Create a Custom SQL element in Sigma with:\n' + suggestion + '\n  then relate it back to the base on the grouping column(s). (Auto-wiring tracked: beads-sigma-hnx0.)');
+                                    } else {
+                                        warnings.push('⚠ LOD "' + caption + '" (' + lod.lodType + ') groups by a dimension-table column (cross-table grain); not mechanizable as a single-table helper — needs manual Sigma authoring. Skipped.');
+                                    }
                                     continue;
                                 }
                                 if (lod.lodType === 'FIXED' && lod.dims.length === 0) {
@@ -29441,6 +30030,43 @@ ${cleanedSql}`;
                                 }
                             }
                         }
+                    }
+
+                    // ── Custom SQL fact: qualify sibling calc/metric refs to [Custom SQL/…] ──
+                    // A kind:'sql' element resolves references to its OWN output columns
+                    // only via the qualified [Custom SQL/<outputId>] form (spec rule 3):
+                    // a bare [Display] sibling ref type-errors, and a '/'-in-name ref
+                    // fails to resolve. Map each output column (display / normalized /
+                    // outputId) to that form and rewrite the derived calc + metric
+                    // formulas. Cross-element refs never match a sibling key → pass through.
+                    if (factEl.source && factEl.source.kind === 'sql') {
+                        const _nkey = (s) => String(s).replace(/[^a-zA-Z0-9]+/g, '').toLowerCase();
+                        const _refToOutId = {};
+                        for (const c of (factEl.columns || [])) {
+                            const fm = typeof c.formula === 'string' && c.formula.match(/^\[Custom SQL\/([^\]]+)\]$/);
+                            if (!fm) continue;
+                            const outId = fm[1];
+                            for (const k of [c.name, outId]) {
+                                const nk = k && _nkey(k);
+                                if (nk && !(nk in _refToOutId)) _refToOutId[nk] = outId;
+                            }
+                        }
+                        let _qc = 0;
+                        const _qualifyCsRef = (formula, ownName) => {
+                            if (typeof formula !== 'string') return formula;
+                            return formula.replace(/\[([^\]]+)\]/g, (m, ref) => {
+                                if (/^Custom SQL\//.test(ref)) return m;
+                                if (ownName && ref.toLowerCase() === ownName.toLowerCase()) return m;
+                                const outId = _refToOutId[_nkey(ref)];
+                                if (!outId) return m;
+                                _qc++;
+                                return '[Custom SQL/' + outId + ']';
+                            });
+                        };
+                        const _isCsAlias = (f) => typeof f === 'string' && /^\[Custom SQL\/[^\]]+\]$/.test(f);
+                        for (const c of (factEl.columns || [])) { if (!_isCsAlias(c.formula)) c.formula = _qualifyCsRef(c.formula, c.name); }
+                        for (const mtr of (factEl.metrics || [])) mtr.formula = _qualifyCsRef(mtr.formula, mtr.name);
+                        if (_qc > 0) warnings.push('ℹ Qualified ' + _qc + ' sibling reference(s) to [Custom SQL/…] on the Custom SQL fact (kind:sql columns resolve only via the Custom SQL/ prefix).');
                     }
 
                     // Finalize LOD helper SQL statements now that all aggregates are registered
@@ -29596,7 +30222,7 @@ ${cleanedSql}`;
                 push(remote, isMeasure);
             }
             if (out.length === 0 && connection) {
-                const rel = connection.querySelector(':scope > relation');
+                const rel = tableauRootRelation(connection);
                 if (rel) for (const col of rel.querySelectorAll(':scope > columns > column')) {
                     const dt = (col.getAttribute('datatype') || '').toLowerCase();
                     push(col.getAttribute('name'), ['integer', 'real'].includes(dt));
@@ -29626,7 +30252,7 @@ ${cleanedSql}`;
             const primaryId = blendRels[0].getAttribute('source');
             const primary = dsById[primaryId];
             if (!primary) return null;
-            const primaryRel = primary.connection ? primary.connection.querySelector(':scope > relation') : null;
+            const primaryRel = tableauRootRelation(primary.connection);
             if (!primaryRel) return null;
 
             const links = [];
@@ -29634,7 +30260,7 @@ ${cleanedSql}`;
                 if (br.getAttribute('source') !== primaryId) continue;
                 const secId = br.getAttribute('target');
                 const sec = dsById[secId];
-                const secRel = sec && sec.connection ? sec.connection.querySelector(':scope > relation') : null;
+                const secRel = sec ? tableauRootRelation(sec.connection) : null;
                 if (!sec || !secRel) { warnings.push('⚠ Blend secondary \'' + secId + '\' has no warehouse table — skipped (publish/repoint it to a warehouse to include)'); continue; }
                 const pairs = [];
                 for (const m of br.querySelectorAll(':scope > column-mapping > map')) {
@@ -29803,8 +30429,12 @@ ${cleanedSql}`;
 
             try {
                 const isMulti = document.getElementById('tableauMultiConn')?.checked;
-                const dbOverride = document.getElementById('tableauDatabase').value.trim().toUpperCase();
-                const schOverride = document.getElementById('tableauSchema').value.trim().toUpperCase();
+                // Preserve the caller's exact db/schema case — warehouse identifiers are quoted
+                // per-segment in Sigma's path lookup, so a spaced/mixed-case schema ("Tableau Test")
+                // must NOT be folded to "TABLEAU TEST" (that path won't resolve). Type the exact
+                // warehouse case (standard Snowflake schemas are already uppercase).
+                const dbOverride = document.getElementById('tableauDatabase').value.trim();
+                const schOverride = document.getElementById('tableauSchema').value.trim();
                 const strategy = document.getElementById('tableauJoinStrategy').value;
 
                 // Build the list of datasources to convert, each with its connectionId
@@ -30576,6 +31206,100 @@ ${cleanedSql}`;
             const innerProj = [...groupCols, ...Object.values(helper.innerAggs).map(v => v.alias)];
             const outerProj = innerProj.concat(helper.overParts);
             helper.element.source.statement = `WITH base AS (${baseSelect}) SELECT ${outerProj.join(', ')} FROM base`;
+        }
+
+        // ── Time-intelligence → grouped DM elements (DateLookback / CumulativeSum) ──
+        // MIRROR of src/powerbi.ts (MCP). Standalone time-intel measures
+        // (SAMEPERIODLASTYEAR / DATEADD / TOTALYTD / running-total / hand-rolled
+        // prior-year) can't be scalar metrics (they need a date grouping) — emit them
+        // as grouped/leveled elements on the fact's "<T> View" (denormalized join),
+        // which is DM-native and verified exact vs Power BI.
+        function pbiClassifyTimeIntel(dax) {
+            const d = dax || '';
+            if (/\bTOTALYTD\s*\(|\bDATESYTD\s*\(/i.test(d)) return 'ytd';
+            if (/FILTER\s*\(\s*ALL\s*\([^)]*\)\s*,[^<]*<=\s*MAX\s*\(/i.test(d)) return 'ytd'; // running total
+            if (/\bSAMEPERIODLASTYEAR\s*\(/i.test(d)) return 'prior';
+            if (/\bDATEADD\s*\([^,]+,\s*-?\d+\s*,\s*(YEAR|QUARTER|MONTH|WEEK|DAY)/i.test(d)) return 'prior';
+            // hand-rolled prior-year: SELECTEDVALUE(Date[Year]) … ALL(Date[Year]) … [Year]=cy-1
+            if (/SELECTEDVALUE\s*\([^)]*\[Year\]/i.test(d) && /ALL\s*\([^)]*\[Year\]/i.test(d) && /-\s*1\b/.test(d)) return 'prior';
+            return null;
+        }
+        // Sigma's display name for a View column: [A/Col]->"Col"; [A/DIM/Col]->"Col (DIM)".
+        function pbiViewColDisplay(formula) {
+            const p = (formula || '').replace(/^\[|\]$/g, '').split('/');
+            return p.length <= 2 ? p[p.length - 1] : `${p[p.length - 1]} (${p[p.length - 2]})`;
+        }
+        function emitTimeIntelElements(model, elements, warnings) {
+            const AGG = { SUM: 'Sum', AVERAGE: 'Avg', AVG: 'Avg', MIN: 'Min',
+                MAX: 'Max', COUNT: 'Count', COUNTA: 'Count', DISTINCTCOUNT: 'CountDistinct' };
+            const views = elements.filter(e => e.name && /View$/.test(e.name) && e.source && e.source.kind === 'table');
+            if (!views.length) return;
+            const lastSeg = (f) => (f || '').replace(/^\[|\]$/g, '').split('/').pop() || '';
+            for (const t of (model.tables || [])) {
+                for (const m of (t.measures || [])) {
+                    const dax = Array.isArray(m.expression) ? m.expression.join(' ') : String(m.expression || '');
+                    const shape = pbiClassifyTimeIntel(dax);
+                    if (!shape) continue;
+                    const am = dax.match(/\b(SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT)\s*\(\s*'?[^'\[]*'?\[([^\]]+)\]/i);
+                    if (!am) continue;
+                    const agg = AGG[am[1].toUpperCase()]; const col = am[2];
+                    // find a View carrying both the value column and a date column.
+                    // Compare on a normalized key: lastSeg() yields the Sigma DISPLAY name
+                    // ("Incident Id") while `col` is the raw DAX token ("INCIDENT_ID"), so a
+                    // plain uppercase compare misses every multi-word column (single-word
+                    // ones like HOURS coincidentally matched). Strip spaces/underscores.
+                    const normCol = (s) => (s || '').toUpperCase().replace(/[\s_]/g, '');
+                    let parent = null, valDisp = '', dateDisp = '';
+                    for (const v of views) {
+                        const vc = (v.columns || []).find(c => normCol(lastSeg(c.formula)) === normCol(col));
+                        const dc = (v.columns || []).find(c => /full date/i.test(pbiViewColDisplay(c.formula)))
+                                || (v.columns || []).find(c => /date/i.test(lastSeg(c.formula)) && !/key/i.test(lastSeg(c.formula)));
+                        if (vc && dc) { parent = v; valDisp = pbiViewColDisplay(vc.formula); dateDisp = pbiViewColDisplay(dc.formula); break; }
+                    }
+                    if (!parent) continue;
+                    const pn = parent.name; const b = (m.name || 'TI').replace(/[^a-zA-Z0-9]/g, '').slice(0, 14);
+                    // Fidelity check: the synthesized element groups by the fact's OWN date
+                    // column. If the source measure's date dimension is reached only through
+                    // an INACTIVE relationship (and no measure activates it via
+                    // USERELATIONSHIP), the original DAX never filters by that dimension —
+                    // it returns an unfiltered grand total per period. Our element is the
+                    // "intended" per-period result, but that is a real divergence; flag it.
+                    const refTables = [...dax.matchAll(/([A-Za-z_]\w*)\s*\[/g)].map(x => x[1]);
+                    const dimTable = refTables.length ? refTables[refTables.length - 1] : null;
+                    if (dimTable && dimTable !== t.name) {
+                        const rel = (model.relationships || []).find(
+                            r => r.fromTable === t.name && r.toTable === dimTable);
+                        if (rel && rel.isActive === false) {
+                            warnings.push(`⚠ "${m.name}": the ${t.name}→${dimTable} relationship is INACTIVE and no measure activates it (USERELATIONSHIP), so the original Power BI measure does not filter by ${dimTable} — it returns an unfiltered total per ${dimTable} period. The synthesized element groups by ${t.name}'s own date instead, yielding a true per-period prior-year. Confirm this matches intent (the source measure may be silently mis-modeled).`);
+                        }
+                    }
+                    if (shape === 'prior') {
+                        const prior = `${valDisp} (Prior Year)`;
+                        const cols = [
+                            { id: `${b}_d`, formula: `DateTrunc("year", [${pn}/${dateDisp}])`, name: 'Year' },
+                            { id: `${b}_v`, formula: `${agg}([${pn}/${valDisp}])`, name: valDisp },
+                            { id: `${b}_p`, formula: `DateLookback([${valDisp}], [Year], 1, "year")`, name: prior },
+                            { id: `${b}_y`, formula: `([${valDisp}] - [${prior}]) / [${prior}]`, name: `${valDisp} YoY %`, format: { kind: 'number', formatString: ',.1%' } },
+                        ];
+                        elements.push({ id: `${b}PP`, kind: 'table', name: m.name, source: { kind: 'table', elementId: parent.id },
+                            columns: cols, order: cols.map(c => c.id), groupings: [{ id: `${b}_g`, groupBy: [`${b}_d`], calculations: [`${b}_v`, `${b}_p`, `${b}_y`] }] });
+                        warnings.push(`ℹ Time-intel measure "${m.name}" → grouped DateLookback element on "${pn}" (prior-year + YoY %).`);
+                    } else {
+                        const cols = [
+                            { id: `${b}_o`, formula: `DateTrunc("year", [${pn}/${dateDisp}])`, name: 'Year' },
+                            { id: `${b}_i`, formula: `DateTrunc("month", [${pn}/${dateDisp}])`, name: 'Month' },
+                            { id: `${b}_v`, formula: `${agg}([${pn}/${valDisp}])`, name: valDisp },
+                            { id: `${b}_c`, formula: `CumulativeSum([${valDisp}])`, name: `${valDisp} YTD` },
+                        ];
+                        // TWO grouping LEVELS so CumulativeSum resets per outer (year) period.
+                        elements.push({ id: `${b}YT`, kind: 'table', name: m.name, source: { kind: 'table', elementId: parent.id },
+                            columns: cols, order: cols.map(c => c.id), groupings: [
+                                { id: `${b}_go`, groupBy: [`${b}_o`] },
+                                { id: `${b}_gi`, groupBy: [`${b}_i`], calculations: [`${b}_v`, `${b}_c`] }] });
+                        warnings.push(`ℹ Time-intel measure "${m.name}" → grouped CumulativeSum (YTD, year-reset) element on "${pn}".`);
+                    }
+                }
+            }
         }
 
         // ── Family 1 (beads-sigma-fah8): USERELATIONSHIP inside CALCULATE ───────────
@@ -31746,23 +32470,37 @@ ${cleanedSql}`;
                             sigmaDisplayName((c.sourceColumn || c.name || '').replace(/^\[|\]$/g, '')));
                         const firstColName = ctColDisplayNames.length ? ctColDisplayNames[0] : 'Value';
                         const built = pbiBuildCalcTableSql(ctExpr, firstColName, ctColDisplayNames);
+                        const statement = built.ok
+                            ? built.sql
+                            : `-- TODO (beads-sigma-w9s): ${built.reason}\n-- Original DAX: ${ctExpr.replace(/\n/g, ' ').slice(0, 300)}\nSELECT 1 AS _placeholder`;
                         const ctColumns = [];
                         const ctOrder = [];
+                        const droppedCols = [];
                         for (const c of ctCols) {
                             const sourceCol = (c.sourceColumn || c.name || '').replace(/^\[|\]$/g, '');
                             const displayName = sigmaDisplayName(sourceCol);
+                            // Only surface a column the SQL statement actually emits (alias `AS
+                            // "Display Name"`). Skip any DAX-derived column the synthesizer couldn't
+                            // translate — otherwise its `[Custom SQL/X]` ref breaks the DM POST. (MCP)
+                            const aliasEmitted = built.ok &&
+                                new RegExp(`AS\\s+"${displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'i').test(statement);
+                            if (built.ok && !aliasEmitted) { droppedCols.push(displayName); continue; }
                             const colId = sigmaShortId();
                             tableColMap[tableName][c.name] = colId;
                             allPbiToSigmaNames[c.name] = displayName;
-                            const col = { id: colId, formula: `[${displayName}]` };
+                            // Reference the SQL alias with the QUALIFIED `[Custom SQL/Display Name]`
+                            // form (verified to resolve). The element-level `name` is OMITTED below
+                            // (rule 3) so the element resolves as "Custom SQL". (MCP parity)
+                            const col = { id: colId, formula: `[Custom SQL/${displayName}]` };
                             if (c.isHidden) col.hidden = true;
                             if (c.description) col.description = c.description;
                             ctColumns.push(col);
                             ctOrder.push(colId);
                         }
-                        let statement;
+                        if (droppedCols.length) {
+                            warnings.push(`⚠ Calculated table "${tableName}": dropped column(s) ${droppedCols.join(', ')} — their DAX (ADDCOLUMNS/SELECTCOLUMNS) expression wasn't translated into the synthesized SQL, so they have no warehouse source. Add them to the SQL statement manually or as Sigma calc columns.`);
+                        }
                         if (built.ok) {
-                            statement = built.sql;
                             if (/\bCALENDAR\s*\(/i.test(ctExpr)) {
                                 warnings.push(`ℹ Calculated table "${tableName}": DAX CALENDAR/ADDCOLUMNS → synthesized a Sigma SQL date-spine element (GENERATOR + DATEADD) with the derived columns translated to SQL.`);
                             } else if (ctCols.length > 1) {
@@ -31771,7 +32509,6 @@ ${cleanedSql}`;
                                 warnings.push(`ℹ Calculated table "${tableName}": DAX GENERATESERIES → synthesized Sigma SQL element (VALUES list).`);
                             }
                         } else {
-                            statement = `-- TODO (beads-sigma-w9s): ${built.reason}\n-- Original DAX: ${ctExpr.replace(/\n/g, ' ').slice(0, 300)}\nSELECT 1 AS _placeholder`;
                             warnings.push(`⛔ Calculated table "${tableName}": ${built.reason} Emitted a placeholder SQL element (NOT a warehouse-table). Original DAX preserved as a comment.`);
                         }
                         // Rule 3 (CLAUDE.md): a Custom SQL element MUST OMIT the element-level
@@ -32275,6 +33012,10 @@ ${cleanedSql}`;
                 // Add derived element for each table with outgoing relationships;
                 // move calculated columns with cross-element refs onto those derived elements.
                 buildDerivedElementsAndMoveCalcs(elements, warnings);
+
+                // Auto-emit grouped time-intel elements (DateLookback / CumulativeSum) for
+                // standalone time-intel measures, now that the "<T> View" join elements exist.
+                emitTimeIntelElements(model, elements, warnings);
 
                 const modelName = _pbiModel.name || model.name || 'Power BI Import';
                 const outputJson = {
@@ -34031,7 +34772,7 @@ models:
 <h3>What Gets Converted</h3>
 <ul>
     <li><b>Data sources</b> → Sigma elements with warehouse table paths (standard joins, virtual connections, and custom SQL)</li>
-    <li><b>Virtual connections (type=collection)</b> → Tableau 2020.2+ relationship model with role-playing dimensions (same table joined twice with different join keys, e.g. two date dimensions)</li>
+    <li><b>Virtual connections (type=collection)</b> → Tableau 2020.2+ relationship model with role-playing dimensions (same table joined twice with different join keys, e.g. two date dimensions). A <code>type='text'</code> child relation (object-model / DDMX <code>_.fcp.ObjectModelEncapsulateLegacy</code> Custom SQL) is recognized as Custom SQL and emitted as a <code>kind:sql</code> element carrying its inline <code>SELECT</code> — NOT as a warehouse table named after the relation (which would fail "Source not found"). For a single-source custom-SQL datasource the lone SQL element is named "Custom SQL" and its column formulas are remapped to the raw SQL output names so the model POSTs cleanly.</li>
     <li><b>Joins/Relationships</b> → Sigma relationships on the fact element. <b>Tableau 2020.2+ relationship model ("noodles")</b>: Tableau resolves join type and granularity at viz time — the converter maps these directly to Sigma relationships (which are also lazy / resolved at query time), so no semantic information is lost. Cardinality hints (1:1, 1:N, N:1, N:N) are preserved when present and default to <code>N:1</code> (the dominant fact-to-dim pattern) when Tableau leaves them unspecified. <b>Pre-2020.2 physical joins</b> (older Tableau Server on-prem versions, including 2018.x and 2019.x): handled via the Join Strategy dropdown — Auto routes <code>many_to_one</code> joins to relationships and others to physical joins; Force Relationships keeps everything lazy; Force Physical Joins keeps everything eager. Both code paths produce valid Sigma data models.</li>
     <li><b>Calculated fields</b> → Sigma calculated columns with formula conversion</li>
     <li><b>Simple aggregates</b> → Sigma metrics (SUM, COUNT, AVG, MIN, MAX, COUNTD)</li>
@@ -34039,9 +34780,9 @@ models:
     <li><b>Statistical / regex / date-construction functions</b> → <code>STDEV</code>→<code>StdDev</code>, <code>VAR</code>→<code>Variance</code>, <code>VARP</code>→<code>VariancePop</code>, <code>STDEVP</code>→<code>Sqrt(VariancePop(…))</code>, <code>PERCENTILE</code>→<code>PercentileCont</code>, <code>CORR</code>→<code>Corr</code> (routed to a metric), <code>REGEXP_EXTRACT/MATCH/REPLACE</code>→<code>Regexp*</code>, <code>SPLIT</code>→<code>SplitPart</code>, <code>MAKEDATE</code>→<code>MakeDate</code>, and <code>DATEPARSE(fmt, str)</code>→<code>DateParse(str, "&lt;strftime&gt;")</code> (Tableau's arg order is reversed and its Java date tokens are rewritten to strftime — review the pattern). <code>COVAR</code>/<code>COVARP</code> have no Sigma equivalent and are flagged, not emitted.</li>
     <li><b>User functions / row-level security</b> → User-context functions are translated (<code>USERNAME()</code>→<code>CurrentUserEmail()</code>, <code>ISMEMBEROF('g')</code>→<code>CurrentUserInTeam("g")</code>, <code>USERATTRIBUTE('a')</code>→<code>CurrentUserAttributeText("a")</code>, <code>ISUSERNAME('u')</code>→<code>CurrentUserEmail() = "u"</code>). Calcs that test the viewer's identity (the classic Tableau RLS / data-source-filter pattern) are <b>detected and reported, not injected</b>: the converter emits a 🔐 conversion note (and an RLS-rules badge) carrying the translated boolean formula plus the user attributes/teams to provision — it does NOT add the calc column to the spec, because a converter can't provision Sigma user attributes/teams and an injected filter would fail-closed to 0 rows for everyone. After saving, provision the listed attribute(s)/team(s), then apply the boolean calc column + an element filter keeping only <code>True</code> rows.</li>
     <li><b>Parameters</b> → Sigma controls (list, date-range, number-range, text)</li>
-    <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves.</li>
+    <li><b>LOD FIXED / INCLUDE / EXCLUDE expressions</b> → A <code>kind:sql</code> helper element per unique GROUP BY signature, plus a relationship from the base element. Multiple LODs that share the same effective grouping share one helper element. View context for INCLUDE/EXCLUDE is derived from worksheet rows/cols shelves. Warehouse columns whose real name is mixed-case or contains spaces (e.g. <code>"SFDC Oppty ID"</code>, recovered from the datasource's <code>&lt;metadata-record&gt;</code> <code>remote-name</code>) are emitted DOUBLE-QUOTED and aliased back to their upper-snake form (<code>"SFDC Oppty ID" AS SFDC_OPPTY_ID</code>) in the helper SQL — so the query matches the real Snowflake column and the helper's <code>[Custom SQL/…]</code> refs still resolve. Already-uppercase columns are emitted bare, unchanged. The same quoting applies to Top-N and window helpers. When the base is itself a <b>Custom SQL</b> (<code>kind:sql</code>) element, the helper wraps that verbatim statement as a subquery (<code>FROM (…) __base</code>) rather than a warehouse path. A Tableau conditional inside the LOD's inner aggregate (<code>SUM(IF [App Name]="EP1" THEN [Clicks] END)</code>) is lowered to SQL <code>CASE</code> with single-quoted string literals (<code>SUM(CASE WHEN "App Name"='EP1' THEN "Clicks" END)</code>). <b>Cross-table LODs</b> — a LOD that groups by a column on a JOINED dimension (not the fact) can't be a single-table fact helper, so instead of a bare skip the converter emits a <b>paste-ready Custom SQL</b> (the real fact→dim <code>LEFT JOIN</code> + <code>GROUP BY</code>, keys and aggregate resolved from the model) in the warnings; create that element in Sigma and relate it back on the grouping column(s).</li>
     <li><b>Window / table calculations</b> (<code>RUNNING_SUM</code>, <code>RUNNING_AVG</code>, <code>RUNNING_MIN</code>, <code>RUNNING_MAX</code>, <code>WINDOW_SUM</code>, <code>WINDOW_AVG</code>, <code>WINDOW_MIN</code>, <code>WINDOW_MAX</code>, <code>WINDOW_COUNT</code>, <code>LOOKUP</code>, <code>RANK</code>, <code>RANK_DENSE</code>, <code>RANK_UNIQUE</code>, <code>INDEX</code>, <code>FIRST</code>, <code>LAST</code>) → A <code>kind:sql</code> helper element with explicit Snowflake <code>OVER()</code> clauses (Sigma's DM formulas have no working partitioned/ordered window equivalents). Partition keys are derived from worksheet <code>rows</code> shelves, order keys from time-truncated <code>cols</code> shelves. The DATE_TRUNC grain is derived from the cols-shelf prefix (<code>yr:</code>→year, <code>qr:</code>→quarter, <code>mn:</code>→month, <code>wk:</code>→week, <code>dy:</code>/<code>md:</code>→day; no prefix → no DATE_TRUNC wrapper). Explicit "Compute Using" addressing (<code>&lt;table-calculation&gt;</code> with <code>&lt;address&gt;</code> children, plus Table Across/Down direction) overrides the rows/cols heuristic. Multiple window calcs sharing the same partition+order signature are emitted as separate aliases on a single helper element.</li>
-    <li><b>Table calcs the SQL lowering can't express → 🧩 workbook patterns</b> (reported with ready-to-place formulas, never injected as DM columns — Sigma window functions silently error in data-model calc columns and metrics). Validated mappings: <code>RUNNING_*(agg)</code>→<code>Cumulative*(agg)</code>; <code>WINDOW_AVG/SUM/MAX/MIN(agg, -n, 0)</code>→<code>Moving*(agg, n)</code> (and <code>(-n, m)</code>→<code>(agg, n, m)</code>); <code>WINDOW_STDEV</code>→<code>MovingStdDev</code>; <code>agg/WINDOW_SUM(agg)</code>→<code>PercentOfTotal(agg, "grand_total")</code>; <code>RUNNING_SUM(agg)/TOTAL(agg)</code>→<code>CumulativeSum(PercentOfTotal(…))</code>; <code>RANK/RANK_DENSE/RANK_PERCENTILE</code>→<code>Rank/RankDense/RankPercentile(agg, "desc")</code>; <code>INDEX()</code>→<code>RowNumber()</code>; <code>LOOKUP(agg, ±n)</code>→<code>Lag/Lead(agg, n)</code>. Place each formula in a GROUPED workbook element (group by the chart's dimensions). The converter never emits <code>*Over</code> functions (SumOver/CountOver resolve as 'Unknown function' in spec contexts).</li>
+    <li><b>Table calcs the SQL lowering can't express → 🧩 workbook patterns</b> (reported with ready-to-place formulas, never injected as DM columns — Sigma window functions silently error in data-model calc columns and metrics). Validated mappings: <code>RUNNING_*(agg)</code>→<code>Cumulative*(agg)</code>; <code>WINDOW_AVG/SUM/MAX/MIN(agg, -n, 0)</code>→<code>Moving*(agg, n)</code> (and <code>(-n, m)</code>→<code>(agg, n, m)</code>); <code>WINDOW_STDEV</code>→<code>MovingStdDev</code>; <code>agg/WINDOW_SUM(agg)</code> or <code>agg/TOTAL(agg)</code>→<code>PercentOfTotal(agg, "grand_total")</code>; <code>RUNNING_SUM(agg)/TOTAL(agg)</code>→<code>CumulativeSum(PercentOfTotal(…))</code>; <code>RANK/RANK_DENSE/RANK_PERCENTILE</code>→<code>Rank/RankDense/RankPercentile(agg, "desc")</code>; <code>INDEX()</code>→<code>RowNumber()</code>; <code>LOOKUP(agg, ±n)</code>→<code>Lag/Lead(agg, n)</code>. Place each formula in a GROUPED workbook element (group by the chart's dimensions). The converter never emits <code>*Over</code> functions (SumOver/CountOver resolve as 'Unknown function' in spec contexts).</li>
     <li><b>Sets</b> → Boolean calculated columns in a "Sets" folder; condition sets → formula column, member sets → <code>In([Field], ...)</code> column. Add a filter control on these columns in your Sigma workbook to replicate set-based filtering. If a set's formula references a related-element column (e.g. <code>In([Customer Segment], ...)</code> on a fact element where Customer Segment lives on a dim), the set column is automatically moved to the derived element and scrubbed from the source element's "Sets" folder so the model saves cleanly.</li>
     <li><b>Top N / Bottom N sets</b> (global, parameterized, partitioned) → A <code>kind:sql</code> RANK helper element + relationship from the base on the dim key (and partition cols, if any). The helper exposes <code>IS_TOP_N</code> as a boolean. For literal-N sets the boolean is computed in SQL (<code>(rnk &lt;= N) AS IS_TOP_N</code>); for parameter-driven N a Sigma calc col references both the local Rank column and a number control derived from the Tableau parameter. Bottom-N is the same with <code>ASC</code> ordering. Partitioned sets emit <code>PARTITION BY</code> in the OVER clause.</li>
     <li><b>Derived element</b> → For fact tables with relationships, a derived element is created that surfaces all own columns plus related dimension columns via <code>[FACT_TABLE/RELATIONSHIP_NAME/Col]</code> cross-element formulas — no manual wiring required</li>
@@ -34057,8 +34798,8 @@ models:
     <li><b>Cross-element calculated columns</b> — Tableau calculated fields that reference columns from related tables are automatically moved to the derived child element (Sigma calculated columns can only reference columns local to their element). Related dimension columns are accessible via the derived element using <code>[FACT/RELATIONSHIP/Col]</code> formulas.</li>
     <li><b>Role-playing dimensions</b> — Multiple relationships from a fact table to the same dimension are now supported. Each relationship gets a unique name including the join key (e.g. "DATE_DIM via Order Date Key"). Review the generated names for clarity.</li>
     <li><b>Bins</b> — Converted to bucketed <code>Floor()</code> calculated columns.</li>
-    <li><b>Custom SQL data sources</b> — Converted to Sigma custom SQL elements. The raw SQL is passed through as-is. Tableau-specific SQL syntax may need manual adjustment.</li>
-    <li><b>Extracts (.hyper)</b> — Extract-only fields and extract filters are not converted. The converter reads the logical model definition, not the physical extract.</li>
+    <li><b>Custom SQL data sources</b> (<code>&lt;relation type='text'&gt;</code>) — Converted to a Sigma custom SQL element with the raw SQL preserved verbatim; output columns are surfaced from the datasource's column metadata and self-reference via the source-qualified <code>[Custom SQL/COL]</code> form (the only form that resolves). A column produced by a <b>quoted</b> alias (<code>… AS "SFDC Oppty ID"</code>) keeps its exact spelling in Snowflake, so it is referenced by that exact name (<code>[Custom SQL/SFDC Oppty ID]</code>) rather than the upper-snake form; already-uppercase (unquoted-alias) columns are referenced bare, unchanged. A <code>/</code> in a column name is a Sigma bracket-ref path separator, so it is sanitized to <code>-</code> in the ref and the statement is wrapped to re-alias the real output column to match. Calculated fields on the SQL element that reference sibling output columns (including inner LOD conditionals) are automatically qualified to the <code>[Custom SQL/COL]</code> form — a bare sibling ref would type-error. Verify column display names match the query output, and adjust any Tableau-specific SQL syntax.</li>
+    <li><b>Extracts (.hyper / packaged .twbx)</b> — Extract-only fields and extract filters are not converted (the converter reads the logical model, not the physical extract). A packaged extract names its logical table after the extract sheet (e.g. <code>Orders$</code>); the trailing <code>$</code> is stripped automatically so the source path targets the warehouse table (<code>ORDERS</code>). Enter the exact Database/Schema case in the override fields — a spaced/mixed-case schema (<code>Tableau Test</code>) is used verbatim (NOT upper-cased), since Sigma quotes each path segment. Column names containing <code>/</code> or <code>-</code> (<code>Country/Region</code>, <code>Sub-Category</code>) are folded to spaces so they resolve to the underscore-named warehouse columns instead of erroring. When the extract sheet name still differs from the physical table after stripping <code>$</code>, rename the table in the generated JSON before saving.</li>
     <li><b>Data blending</b> — Same-warehouse blends (workbook-level <code>&lt;datasource-relationships&gt;</code>) are converted to one merged model (see "What Gets Converted"). Limitations: a published/unpublished secondary with no warehouse table is skipped with a warning (repoint it to a warehouse first); a 3+-source blend is handled as one primary plus N secondaries that each link to it (arbitrary connected-component graphs are not yet decomposed); when the primary is grouped by dimensions finer than the link key, the secondary value repeats across the finer groups (faithful to Tableau, but verify column totals).</li>
     <li><b>Parameters with calculations</b> — Parameter values are captured but formulas that reference parameters using Tableau's parameter syntax may not convert correctly.</li>
 </ul>
@@ -34089,6 +34830,7 @@ models:
     <li><b><code>FILTER(ALL(Table), pred)</code></b> → <code>GrandTotal(AggIf(…))</code> (context strip = total over all matching rows); whole-table <code>ALL</code>/<code>REMOVEFILTERS</code> → <code>GrandTotal(agg)</code>; single-column <code>ALL(T[col])</code>/<code>REMOVEFILTERS(T[col])</code> → <code>GrandTotal(…)</code> with a loud caveat (exact only when that column is the visual's sole grouping)</li>
     <li><b>USERELATIONSHIP over an inactive relationship</b> → the inactive model relationship is activated as a distinctly-named alternate join path (<code>TOTABLE_VIA_FROMCOLUMN</code>); the aggregate emits unchanged and the derived view surfaces the alternate-keyed columns. Inactive relationships no measure activates are skipped (avoids name collisions); metrics combining measures that resolve through different join paths are refused with a rebuild recipe</li>
     <li><b>EARLIER window idioms in calc columns</b> → SQL window helper elements (Sigma window functions silently error in data-model calc columns): the rank idiom (<code>COUNTROWS(FILTER(…EARLIER…)) + 1</code> → <code>DENSE_RANK() OVER</code>), running totals (<code>&lt;=/&gt;= EARLIER</code> → <code>agg(col) OVER (… ORDER BY …)</code>), group share/total (<code>= EARLIER</code> equality terms → <code>agg(col) OVER (PARTITION BY …)</code>), and peer counts (<code>COUNT(*) OVER</code>)</li>
+    <li><b>Standalone time-intelligence measures</b> (<code>TOTALYTD</code>/<code>DATESYTD</code>/running totals, and <code>SAMEPERIODLASTYEAR</code>/<code>DATEADD</code>/hand-rolled prior-year) → auto-synthesized as grouped/leveled elements on the fact's "<code>&lt;T&gt; View</code>" join element (these need a date grouping and can't be scalar metrics): prior-year → a <code>DateLookback</code> element (prior-year value + YoY %); YTD → a two-level <code>CumulativeSum</code> element (year-reset). The value column is matched space/underscore-insensitively so multi-word columns resolve. If the measure's date dimension is reached only through an INACTIVE relationship with no <code>USERELATIONSHIP</code> activator, a fidelity warning flags the per-period divergence</li>
     <li><b>DIVIDE</b> → Null-safe division with <code>If(den = 0, alt, num / den)</code></li>
     <li><b>Math functions</b> → <code>LN</code>→<code>Ln</code>; <code>LOG10</code> and <code>LOG(x, [base])</code>→Sigma <code>Log(value, [base])</code> (base-10 default matches DAX); <code>CEILING/FLOOR(n, significance)</code>→<code>Ceiling(n / s) * s</code> / <code>Floor(n / s) * s</code> (Sigma's Ceiling/Floor take no significance argument)</li>
     <li><b>RELATED(Table[Col])</b> → <code>Lookup([TABLE/Col], [LocalKey], [TABLE/ForeignKey])</code> — resolved automatically using the model's relationship definitions</li>
@@ -34847,6 +35589,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <li>If your RWS JSON looks empty of real columns/SQL, that's expected. Use it for <b>inventory/discovery</b>.</li>
     <li>To migrate the actual <b>columns + calculations</b>, feed an <b>SL-SDK / IDT XML export</b> instead. The skill ships a Semantic Layer SDK extractor recipe (<code>scripts/extract-universe-sdk.groovy</code>) that walks each object's <code>RelationalBinding</code> (<code>getSelect()/getWhere()/getTables()</code>) plus the data foundation and emits this XML (or the equivalent JSON).</li>
 </ul>
+<p><b>The converter tells you which you gave it.</b> Its first warning states the detected <code>Input format</code> (RWS outline JSON vs. SL-SDK / IDT XML) and whether that format can carry joins. And if a <b>multi-table</b> universe converts to <b>0 relationships</b>, it emits a loud guard warning — because a workbook bound to a joinless model can only reach <i>one</i> table's columns (the common "my dashboard only has ~15 columns" symptom). Heed it before handing the model off: either supply the XML export, or fix the join expressions it flags.</p>
 
 <h3>What Gets Converted</h3>
 <ul>
@@ -34854,7 +35597,7 @@ Authorization: Bearer &lt;API_KEY&gt;</pre>
     <li><b>Dimensions / details</b> → Sigma columns; the universe <b>business name</b> is preserved via the column <code>name</code> while the formula references the underlying physical column</li>
     <li><b>Measures</b> → Sigma <b>metrics</b> (Sum / Count / Count Distinct / Avg / Min / Max / StdDev / Variance) of the underlying column; the backing physical column is also kept so the metric resolves</li>
     <li><b>Object expressions</b> (functions, CASE, concatenation) → Sigma calculated columns</li>
-    <li><b>Joins</b> → Sigma relationships; FK/PK keys are parsed directly from the join's <code>Table.col = Table.col</code> SQL, and join-key columns are surfaced (hidden) so the relationship resolves. Tables with outgoing joins also get a derived <b>View</b> element exposing own + joined columns via <code>[SRC/TARGET/Col]</code> cross-element formulas</li>
+    <li><b>Joins</b> → Sigma relationships; FK/PK keys are parsed from the join's equi-join SQL — including schema/catalog-<b>qualified</b> refs (<code>"DB"."TABLE"."COL" = …</code>) and bracketed identifiers (<code>[schema].[table].[col]</code>), taking the last two segments as <code>table.col</code>; the first equality of a multi-condition join is used. Join-key columns are surfaced (hidden) so the relationship resolves. Tables with outgoing joins also get a derived <b>View</b> element exposing own + joined columns via <code>[SRC/TARGET/Col]</code> cross-element formulas. <b>Direction:</b> a Sigma relationship is a <b>many→one lookup</b>, so the source (the View base) must be the <b>many</b> side — otherwise looked-up columns come back as <b>"multiple values"</b>. The converter reads the join cardinality (<code>one-to-many</code>/<code>many-to-one</code>, <code>1:N</code>/<code>N:1</code>, <code>1..*</code>, per-side multiplicity); if it's absent it makes the <b>measure-bearing (fact)</b> table the many side, and warns when it can't tell — flip the relationship in Sigma if columns show "multiple values"</li>
 </ul>
 
 <h3>Target-layer remap (restructured / platinum layer)</h3>
