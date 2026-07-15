@@ -28426,17 +28426,50 @@ ${cleanedSql}`;
             guidIndex = guidIndex || {};
             const _guidCaption = guidIndex.guidCaption || {};
 
+            // Custom-SQL relation text is stored XML-escaped in the .twb. DOM textContent
+            // decodes exactly ONE level of entities, so round-tripped custom SQL that was
+            // DOUBLE-escaped (&amp;lt;= / &amp;gt;=) arrives with a residual &lt;= / &gt;=
+            // — invalid SQL that Sigma rejects at POST ("Failed to resolve source"); a
+            // human reads it as "<<" / ">>=". Decode to a FIXED POINT so any escaping
+            // depth collapses to real operators (a bare "&" that isn't a valid entity,
+            // e.g. `A & B`, is left intact). Mirrors the MCP unescapeCustomSqlEntities.
+            const unescapeCustomSqlEntities = (s) => {
+                const decodeOnce = (t) => t
+                    .replace(/&#x([0-9a-fA-F]+);/g, (_m, h) => String.fromCodePoint(parseInt(h, 16)))
+                    .replace(/&#(\d+);/g, (_m, d) => String.fromCodePoint(parseInt(d, 10)))
+                    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+                    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+                    .replace(/&amp;/g, '&');
+                let out = s || '';
+                for (let i = 0; i < 5; i++) { const next = decodeOnce(out); if (next === out) break; out = next; }
+                return out;
+            };
+
+            // Tableau's _.fcp.ObjectModelEncapsulateLegacy wrapper can serialize custom-SQL
+            // comparison operators DOUBLED inside its CDATA (< → <<, >= → >>=; field-observed
+            // "High Risk Bets", 5/5 doubled, no entities). CDATA is verbatim, so the doubled
+            // form would break the warehouse query. << / >> are not comparison operators in
+            // the target warehouses (Snowflake/BigQuery/Databricks use BITSHIFT* functions),
+            // so a run of 2+ identical angle brackets collapses to one (<<→<, >>=→>=); <> and
+            // <=/>= are untouched. Returns the rewrite count so the caller warns (never silent).
+            const collapseDoubledComparisonOps = (sql) => {
+                let rewrites = 0;
+                const out = (sql || '').replace(/<{2,}|>{2,}/g, (m) => { rewrites++; return m[0]; });
+                return { sql: out, rewrites };
+            };
+
             if (relType === 'text') {
                 // Custom SQL data source: <relation type='text'>SELECT …</relation> →
-                // one Sigma SQL element. DOM textContent auto-decodes XML entities
-                // (incl. numeric &#13;&#10;). Columns come from the relation's inline
+                // one Sigma SQL element. Columns come from the relation's inline
                 // <columns> or the connection's <metadata-record class='column'>, and
                 // self-reference their own output via the fixed "Custom SQL" keyword —
                 // verified live (mirrors MCP + LookML): bare [Display]/[COL] and the
                 // element's own name as qualifier resolve to type "error"; only
                 // [Custom SQL/COL] resolves, and an empty columns[] yields a
                 // zero-column (unqueryable) element.
-                const sql = rootRel.textContent.trim();
+                const _sqlCollapsed = collapseDoubledComparisonOps(unescapeCustomSqlEntities(rootRel.textContent).trim());
+                if (_sqlCollapsed.rewrites > 0) warnings.push('⚠ Custom SQL datasource: collapsed ' + _sqlCollapsed.rewrites + ' doubled comparison operator(s) (<<→<, >>=→>=) — a Tableau ObjectModel encapsulation artifact. VERIFY these are comparisons, not bit-shift operators.');
+                const sql = _sqlCollapsed.sql;
                 // caption overrides from datasource-level <column caption='…' name='[remote]'>
                 const dsEl = connection ? connection.closest('datasource') : null;
                 const capByName = {};
@@ -28665,9 +28698,12 @@ ${cleanedSql}`;
                     // the relation's text content. Emit a kind:'sql' element with that
                     // statement rather than a warehouse-table path keyed on the relation
                     // NAME (which is not a real table → "Source not found" at POST).
-                    const sqlText = isCustomSqlRel
-                        ? qualifyTwoPartFqns((rel.textContent || '').trim(), dbOverride)
-                        : '';
+                    let sqlText = '';
+                    if (isCustomSqlRel) {
+                        const _c = collapseDoubledComparisonOps(qualifyTwoPartFqns(unescapeCustomSqlEntities(rel.textContent).trim(), dbOverride));
+                        sqlText = _c.sql;
+                        if (_c.rewrites > 0) warnings.push('⚠ Custom SQL relation "' + fullName + '": collapsed ' + _c.rewrites + ' doubled comparison operator(s) (<<→<, >>=→>=) — a Tableau ObjectModel encapsulation artifact. VERIFY these are comparisons, not bit-shift operators.');
+                    }
                     const source = (isCustomSqlRel && sqlText)
                         ? { connectionId, kind: 'sql', statement: sqlText }
                         : { connectionId, kind: 'warehouse-table', path };
@@ -34850,7 +34886,7 @@ models:
     <li><b>Cross-element calculated columns</b> — Tableau calculated fields that reference columns from related tables are automatically moved to the derived child element (Sigma calculated columns can only reference columns local to their element). Related dimension columns are accessible via the derived element using <code>[FACT/RELATIONSHIP/Col]</code> formulas.</li>
     <li><b>Role-playing dimensions</b> — Multiple relationships from a fact table to the same dimension are now supported. Each relationship gets a unique name including the join key (e.g. "DATE_DIM via Order Date Key"). Review the generated names for clarity.</li>
     <li><b>Bins</b> — Converted to bucketed <code>Floor()</code> calculated columns.</li>
-    <li><b>Custom SQL data sources</b> (<code>&lt;relation type='text'&gt;</code>) — Converted to a Sigma custom SQL element with the raw SQL preserved verbatim; output columns are surfaced from the datasource's column metadata and self-reference via the source-qualified <code>[Custom SQL/COL]</code> form (the only form that resolves). A column produced by a <b>quoted</b> alias (<code>… AS "SFDC Oppty ID"</code>) keeps its exact spelling in Snowflake, so it is referenced by that exact name (<code>[Custom SQL/SFDC Oppty ID]</code>) rather than the upper-snake form; already-uppercase (unquoted-alias) columns are referenced bare, unchanged. A <code>/</code> in a column name is a Sigma bracket-ref path separator, so it is sanitized to <code>-</code> in the ref and the statement is wrapped to re-alias the real output column to match. Calculated fields on the SQL element that reference sibling output columns (including inner LOD conditionals) are automatically qualified to the <code>[Custom SQL/COL]</code> form — a bare sibling ref would type-error. Verify column display names match the query output, and adjust any Tableau-specific SQL syntax.</li>
+    <li><b>Custom SQL data sources</b> (<code>&lt;relation type='text'&gt;</code>) — Converted to a Sigma custom SQL element with the raw SQL preserved verbatim; output columns are surfaced from the datasource's column metadata and self-reference via the source-qualified <code>[Custom SQL/COL]</code> form (the only form that resolves). A column produced by a <b>quoted</b> alias (<code>… AS "SFDC Oppty ID"</code>) keeps its exact spelling in Snowflake, so it is referenced by that exact name (<code>[Custom SQL/SFDC Oppty ID]</code>) rather than the upper-snake form; already-uppercase (unquoted-alias) columns are referenced bare, unchanged. A <code>/</code> in a column name is a Sigma bracket-ref path separator, so it is sanitized to <code>-</code> in the ref and the statement is wrapped to re-alias the real output column to match. Calculated fields on the SQL element that reference sibling output columns (including inner LOD conditionals) are automatically qualified to the <code>[Custom SQL/COL]</code> form — a bare sibling ref would type-error. XML-escaped comparison operators are normalized to real SQL: single- <em>and</em> double-escaped forms (<code>&amp;lt;=</code> → <code>&lt;=</code>) plus numeric line-break refs (<code>&amp;#13;&amp;#10;</code>) are decoded to a fixed point. Separately, Tableau's <code>_.fcp.ObjectModelEncapsulateLegacy</code> wrapper can serialize comparison operators <b>doubled</b> in its CDATA (<code>&lt;</code> → <code>&lt;&lt;</code>, <code>&gt;=</code> → <code>&gt;&gt;=</code>); these are collapsed back to the intended operator (with a loud verify warning), so a round-tripped filter never lands as invalid <code>&lt;&lt;</code> / <code>&gt;&gt;=</code> text. Verify column display names match the query output, and adjust any Tableau-specific SQL syntax.</li>
     <li><b>Extracts (.hyper / packaged .twbx)</b> — Extract-only fields and extract filters are not converted (the converter reads the logical model, not the physical extract). A packaged extract names its logical table after the extract sheet (e.g. <code>Orders$</code>); the trailing <code>$</code> is stripped automatically so the source path targets the warehouse table (<code>ORDERS</code>). Enter the exact Database/Schema case in the override fields — a spaced/mixed-case schema (<code>Tableau Test</code>) is used verbatim (NOT upper-cased), since Sigma quotes each path segment. Column names containing <code>/</code> or <code>-</code> (<code>Country/Region</code>, <code>Sub-Category</code>) are folded to spaces so they resolve to the underscore-named warehouse columns instead of erroring. When the extract sheet name still differs from the physical table after stripping <code>$</code>, rename the table in the generated JSON before saving.</li>
     <li><b>Data blending</b> — Same-warehouse blends (workbook-level <code>&lt;datasource-relationships&gt;</code>) are converted to one merged model (see "What Gets Converted"). Limitations: a published/unpublished secondary with no warehouse table is skipped with a warning (repoint it to a warehouse first); a 3+-source blend is handled as one primary plus N secondaries that each link to it (arbitrary connected-component graphs are not yet decomposed); when the primary is grouped by dimensions finer than the link key, the secondary value repeats across the finer groups (faithful to Tableau, but verify column totals).</li>
     <li><b>Parameters with calculations</b> — Parameter values are captured but formulas that reference parameters using Tableau's parameter syntax may not convert correctly.</li>
