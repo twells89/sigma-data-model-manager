@@ -32402,6 +32402,31 @@ ${cleanedSql}`;
             return null;
         }
 
+        // Detect a NON-warehouse source (Fabric Dataflow / Lakehouse / OneLake /
+        // Dataverse / file) from a Power Query M expression. These don't resolve
+        // to a warehouse table Sigma can query, and any transform logic they carry
+        // lives OUTSIDE the semantic model. Mirrors pbiDetectNonWarehouseSource in
+        // the MCP converter (src/powerbi.ts). Runs only after pbiExtractPathFromM
+        // fails, so a Fabric Warehouse reached via Sql.Database is unaffected.
+        function pbiDetectNonWarehouseSource(mExpr) {
+            if (!mExpr) return null;
+            const m = mExpr;
+            const first = (re) => { const mm = m.match(re); return mm ? mm[1] : null; };
+            if (/\b(?:PowerPlatform|PowerBI)\.Dataflows\s*\(/i.test(m)) {
+                return { kind: 'dataflow', entity: first(/\[\s*entity\s*=\s*"([^"]+)"/i) };
+            }
+            if (/\bLakehouse\.Contents\s*\(/i.test(m) || /\bOneLake\b/i.test(m)) {
+                return { kind: 'lakehouse', entity: first(/\[\s*Id\s*=\s*"([^"]+)"\s*,\s*ItemKind\s*=/i) || first(/\[\s*Name\s*=\s*"([^"]+)"/i) };
+            }
+            if (/\bCommonDataService\.Database\s*\(/i.test(m) || /\bCds\.Contents\s*\(/i.test(m)) {
+                return { kind: 'dataverse', entity: first(/\[\s*EntitySetName\s*=\s*"([^"]+)"/i) || first(/\[\s*Name\s*=\s*"([^"]+)"/i) };
+            }
+            if (/\bExcel\.Workbook\s*\(|\bCsv\.Document\s*\(|\bSharePoint\.[A-Za-z]+\s*\(|\bWeb\.Contents\s*\(|\bAzureStorage\.DataLake\s*\(/i.test(m)) {
+                return { kind: 'file', entity: first(/\[\s*(?:Name|Item)\s*=\s*"([^"]+)"/i) };
+            }
+            return null;
+        }
+
         // ── Main conversion ───────────────────────────────────────────────
         function runPbiConversion() {
             phTrack('conversion_run', { converter: 'power_bi' });
@@ -32599,8 +32624,39 @@ ${cleanedSql}`;
                         if (schOverride && path.length >= 3) path[1] = schOverride;
                         else if (schOverride && path.length === 2) path[0] = schOverride;
                     } else {
-                        path = [dbOverride || 'DATABASE', schOverride || 'SCHEMA', tableName.toUpperCase()];
-                        warnings.push(`⚠ Table "${tableName}": could not extract source path from M expression — using default. Update the path manually.`);
+                        // No warehouse path from M. A NON-warehouse source (Fabric
+                        // Dataflow / Lakehouse / Dataverse / file) — which Sigma can't
+                        // query directly and whose transform logic isn't in the model —
+                        // gets an actionable ⛔ warning + an entity-named placeholder;
+                        // a merely-unparsed warehouse M keeps the generic warning.
+                        const mText = Array.isArray(partition && partition.source && partition.source.expression)
+                            ? partition.source.expression.join('\n')
+                            : ((partition && partition.source && partition.source.expression) || '');
+                        const nonWh = pbiDetectNonWarehouseSource(mText);
+                        if (nonWh) {
+                            // Placeholder tail = the PBI table NAME uppercased — the SAME form
+                            // the base column formulas use, so --table-map's formula rewrite
+                            // matches. NOT the source entity (surfaced in the warning instead).
+                            path = [dbOverride || 'DATABASE', schOverride || 'SCHEMA', tableName.toUpperCase()];
+                            const KIND_LABEL = {
+                                dataflow: 'Fabric/Power BI Dataflow',
+                                lakehouse: 'Fabric Lakehouse/OneLake',
+                                dataverse: 'Dataverse',
+                                file: 'file source (Excel/CSV/SharePoint/web)',
+                            };
+                            warnings.push(
+                                `⛔ Table "${tableName}" is sourced from a ${KIND_LABEL[nonWh.kind]}` +
+                                (nonWh.entity ? ` (entity "${nonWh.entity}")` : '') +
+                                `, not a warehouse Sigma can query. Any transformation logic in the ${nonWh.kind} ` +
+                                `is NOT in the semantic model and cannot be translated. To migrate: (1) land the ` +
+                                `data in your warehouse — run the powerbi-import-to-snowflake skill for Import-mode ` +
+                                `models — then (2) repoint this element with convert-model.rb --table-map. ` +
+                                `Emitted placeholder path ${path.join('.')} — it will NOT resolve until repointed.`
+                            );
+                        } else {
+                            path = [dbOverride || 'DATABASE', schOverride || 'SCHEMA', tableName.toUpperCase()];
+                            warnings.push(`⚠ Table "${tableName}": could not extract source path from M expression — using default. Update the path manually.`);
+                        }
                     }
 
                     // Columns
@@ -34905,6 +34961,7 @@ models:
     <li><b>Complex DAX</b> — CALCULATE conditional aggregates (boolean predicates, IN lists, FILTER(ALL) context strips, multi-predicate args), simple VAR/RETURN blocks, simple iterators, USERELATIONSHIP measures, and the common EARLIER window idioms now auto-convert. Still warned-not-converted: ALLEXCEPT/ALLSELECTED subtotal re-scopes, iterators with nested aggregates, time intelligence (TOTALYTD, SAMEPERIODLASTYEAR, DATEADD — use Period over Period), predicates comparing to a measure/aggregate, and unrecognized EARLIER patterns. These warnings preserve the original DAX so you can rebuild manually.</li>
     <li><b>Cross-element columns</b> — <code>RELATED()</code> and <code>LOOKUPVALUE()</code> are converted to <code>Lookup()</code> formulas inline. DAX calculated columns with other cross-table patterns are automatically moved to the derived child element. Metrics with unresolved cross-element refs must be added manually in the Sigma UI after saving.</li>
     <li><b>Composite models</b> — Models combining DirectQuery and Import mode tables are treated uniformly. The storage mode distinction is not carried over.</li>
+    <li><b>Non-warehouse sources (Dataflows, Lakehouse/OneLake, Dataverse, files)</b> — Tables whose data lives in a Fabric Dataflow, a Lakehouse/OneLake table, Dataverse, or a file (Excel/CSV/SharePoint) are not warehouse tables Sigma can query, and any transformation logic in the dataflow/query is NOT in the semantic model (so it can't be translated). These are flagged with a ⛔ warning and emitted with a placeholder warehouse path named from the source entity. To migrate: land the data in your warehouse — the <code>powerbi-import-to-snowflake</code> skill does this for Import-mode models — then repoint the element via <code>convert-model.rb --table-map</code> (which reads the landing manifest).</li>
     <li><b>Calculation groups</b> — DAX calculation groups are not converted. These need to be recreated as Sigma calculated columns or parameters.</li>
     <li><b>Row-level security (RLS)</b> — Simple PBI RLS roles with equality filters (e.g. <code>[Region] = "East"</code>) are converted to Sigma RLS calculated columns using <code>CurrentUserAttributeText()</code>. You must create the corresponding user attribute in Sigma and add a <code>True</code> filter on the generated column. Complex DAX filter expressions in RLS roles generate a warning with guidance.</li>
     <li><b>Field parameters</b> — Power BI field parameters (dynamic dimension/measure selection) are flagged but not converted. Recreate using Sigma's control-based column switching.</li>
