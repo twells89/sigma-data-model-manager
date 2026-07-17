@@ -32428,6 +32428,14 @@ ${cleanedSql}`;
                     else if (kind === 'table' || kind === 'view') tbl = m[1];
                 }
                 if (tbl) {
+                    // BigQuery (default/v1): the PROJECT tier is a bare {[Name="proj"]}[Data]
+                    // nav (no Kind) while dataset/table are Kind-tagged, so `db` is null and the
+                    // project would be dropped — recover it from the first bare-Name nav
+                    // (beads-sigma-lanq.9; Impl="2.0" tags the project Kind="Database" already).
+                    if (!db && sch) {
+                        const bare0 = mExpr.match(/\{\s*\[\s*Name\s*=\s*"([^"]+)"\s*\]\s*\}\s*\[\s*Data\s*\]/i);
+                        if (bare0) db = bare0[1];
+                    }
                     const parts = [db, sch, tbl].filter(Boolean);
                     if (parts.length >= 2) return parts.map(x => x.toUpperCase());
                 }
@@ -32441,6 +32449,42 @@ ${cleanedSql}`;
             }
             if (nameNavMatches.length === 2) {
                 return [nameNavMatches[0][1].toUpperCase(), nameNavMatches[1][1].toUpperCase()];
+            }
+
+            // Pattern 2c: FLAT single-record connector nav {[...Item="T"...]} (beads-sigma-lanq.9;
+            // grounded against real public PBIP 2026-07-17): SQL Server / Synapse / Postgres
+            // ({[Schema="dbo",Item="T"]}) + Databricks shape-B DatabricksMultiCloud.Catalogs
+            // ({[Item="t",Schema="s",Catalog="c"]}). Keys appear in any order in one record.
+            const flatRec = mExpr.match(/\{\s*\[([^\]]*\bItem\s*=\s*"[^"]+"[^\]]*)\]\s*\}/i);
+            if (flatRec) {
+                const body = flatRec[1];
+                const key = (k) => (body.match(new RegExp('\\b' + k + '\\s*=\\s*"([^"]+)"', 'i')) || [])[1] || null;
+                const item = key('Item'), schema = key('Schema'), recCatalog = key('Catalog'), recDatabase = key('Database');
+                const sqlServerDb = (mExpr.match(/\bSql\.Database\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"/i) || [])[1] || null;
+                const top = recCatalog || recDatabase || sqlServerDb; // null for Postgres → [schema, table]
+                if (item) {
+                    const parts = [top, schema, item].filter(Boolean);
+                    if (parts.length >= 2) return parts.map(x => x.toUpperCase());
+                }
+            }
+
+            // Pattern 3: native-query / raw-SQL fallback — Value.NativeQuery(<nav>, "SELECT … FROM
+            // sch.tbl") and Sql.Database(…,[Query="… FROM dbo.T"]). #(lf)/#(tab)-tolerant; a 2-part
+            // schema.table FROM prepends the wrapping nav's catalog/db (beads-sigma-lanq.9).
+            const sql = mExpr.replace(/#\(lf\)|#\(tab\)|#\(cr\)/gi, ' ');
+            const fromM = sql.match(/\bFROM\s+([`"\[]?[\w$-]+[`"\]]?(?:\s*\.\s*[`"\[]?[\w$-]+[`"\]]?){1,2})/i);
+            if (fromM) {
+                let parts = fromM[1].split('.').map(s => s.replace(/[`"\[\]\s]/g, '')).filter(Boolean);
+                if (parts.length === 2) {
+                    const navDb = (sql.match(/\[\s*Name\s*=\s*"([^"]+)"\s*,\s*Kind\s*=\s*"Database"\s*\]/i) || [])[1]
+                        || (sql.match(/\bCatalog\s*=\s*"([^"]+)"/i) || [])[1]
+                        || (sql.match(/\bSql\.Database\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"/i) || [])[1]
+                        || null;
+                    if (navDb && !/\bPostgreSQL\.Database\s*\(|\bAmazonRedshift\.Database\s*\(/i.test(mExpr)) {
+                        parts = [navDb, ...parts];
+                    }
+                }
+                if (parts.length >= 2) return parts.map(s => s.toUpperCase());
             }
 
             return null;
