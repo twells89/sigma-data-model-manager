@@ -31738,14 +31738,56 @@ ${cleanedSql}`;
         // DAX calculated table (GENERATESERIES series / CALENDAR spine) -> Sigma SQL,
         // or a structured { ok:false } refusal — never a path-guessed warehouse-table.
         // (beads-sigma-w9s / 7mn)
+        // FORMAT(<numeric date expr>, "fmt") -> Text(<expr>) (dax-fidelity #10). Only fires
+        // for a pure numeric/date-function expression; a real date-column FORMAT still routes
+        // to the generic FORMAT->DateFormat rename.
+        function pbiRewriteFormatNumeric(f) {
+            const re = /\bFORMAT\s*\(/gi;
+            for (let guard = 0; guard < 20; guard++) {
+                re.lastIndex = 0;
+                const m = re.exec(f);
+                if (!m) break;
+                const { args, endPos } = pbiSplitCallArgs(f, m.index + m[0].length);
+                if (args.length !== 2) break;
+                const expr = args[0].trim();
+                if (/^[A-Za-z0-9_()\-+*/. ]+$/.test(expr) && /[A-Za-z]\s*\(/.test(expr) && !/["'\[]/.test(expr)) {
+                    f = f.slice(0, m.index) + `Text(${pbiRecaseDateFns(expr)})` + f.slice(endPos);
+                    continue;
+                }
+                break;
+            }
+            return f;
+        }
         function pbiBuildCalcTableSql(dax, seriesColName, colDisplayNames) {
             // CALENDAR(a,b) / ADDCOLUMNS(CALENDAR(a,b), ...) -> real date spine.
             if (/\bCALENDAR\s*\(/i.test(dax)) {
                 return pbiBuildCalendarSpineSql(dax, colDisplayNames);
             }
+            // A one-row "today" calc table (ROW("Date", TODAY()) / { TODAY() }) -> real
+            // CURRENT_DATE/CURRENT_TIMESTAMP SQL element, not a placeholder stub (dax-fidelity #11).
+            if (/\b(TODAY|NOW)\s*\(\s*\)/i.test(dax) && !/\bGENERATESERIES|\bADDCOLUMNS/i.test(dax) && !/\[[^\]]+\]/.test(dax)) {
+                const isNow = /\bNOW\s*\(\s*\)/i.test(dax);
+                const col = seriesColName || (isNow ? 'Now' : 'Date');
+                return { ok: true, sql: `SELECT ${isNow ? 'CURRENT_TIMESTAMP' : 'CURRENT_DATE'} AS "${col}"` };
+            }
+            // A hardcoded literal list { v1, v2, ... } -> real VALUES/UNION ALL element (#11).
+            const braceList = dax.match(/\{\s*([^{}]*?)\s*\}/);
+            if (braceList && braceList[1].trim() && !/\[[^\]]+\]/.test(braceList[1])) {
+                const items = pbiSplitInList(braceList[1]).filter(Boolean);
+                const isLiteral = v => /^(".*"|'.*'|-?\d+(\.\d+)?)$/.test(v.trim());
+                if (items.length && items.every(isLiteral)) {
+                    const col = seriesColName || 'Value';
+                    const rows = items.map(v => {
+                        const tkn = v.trim();
+                        const sqlv = /^["']/.test(tkn) ? `'${tkn.slice(1, -1).replace(/'/g, "''")}'` : tkn;
+                        return `SELECT ${sqlv} AS "${col}"`;
+                    }).join(' UNION ALL ');
+                    return { ok: true, sql: rows };
+                }
+            }
             const gm = dax.match(/\bGENERATESERIES\s*\(/i);
             if (!gm) {
-                return { ok: false, reason: 'DAX calculated table is not a GENERATESERIES or CALENDAR — no warehouse source exists; recreate manually as a Sigma SQL element or input table.' };
+                return { ok: false, reason: 'DAX calculated table is not a GENERATESERIES / CALENDAR / TODAY / literal-list constructor — no warehouse source exists; recreate manually as a Sigma SQL element or input table.' };
             }
             const { args } = pbiSplitCallArgs(dax, gm.index + gm[0].length);
             if (args.length < 2) return { ok: false, reason: 'GENERATESERIES with non-literal bounds — recreate the series manually.' };
@@ -31923,6 +31965,20 @@ ${cleanedSql}`;
         function pbiTranslateDaxPredicate(predRaw) {
             let p = (predRaw || '').trim();
             if (!p) return { ok: false, reason: 'empty predicate' };
+            // Current-period date-part filter (dax-fidelity #6): MONTH/YEAR/DAY(TODAY())
+            // compared to MONTH/YEAR/DAY(<date column>), in either order. Row-level, so
+            // translate directly (the generic path refuses a bracketed-ref RHS).
+            {
+                const capDp = s2 => ({ MONTH: 'Month', YEAR: 'Year', DAY: 'Day' })[s2.toUpperCase()] || s2;
+                const bareDp = x => x.replace(/'[^']+'\[([^\]]+)\]/g, '[$1]').replace(/\b[A-Za-z_]\w*\[([^\]]+)\]/g, '[$1]');
+                const DP_TODAY = String.raw`(MONTH|YEAR|DAY)\s*\(\s*TODAY\s*\(\s*\)\s*\)`;
+                const DP_COL = String.raw`(MONTH|YEAR|DAY)\s*\(\s*('?[A-Za-z_][\w ]*'?\[[^\]]+\])\s*\)`;
+                const OP = String.raw`(<>|>=|<=|=|>|<)`;
+                let dpm = p.match(new RegExp(`^\\s*${DP_TODAY}\\s*${OP}\\s*${DP_COL}\\s*$`, 'i'));
+                if (dpm) return { ok: true, sigma: `${capDp(dpm[1])}(Today()) ${dpm[2] === '<>' ? '!=' : dpm[2]} ${capDp(dpm[3])}(${bareDp(dpm[4])})` };
+                dpm = p.match(new RegExp(`^\\s*${DP_COL}\\s*${OP}\\s*${DP_TODAY}\\s*$`, 'i'));
+                if (dpm) return { ok: true, sigma: `${capDp(dpm[1])}(${bareDp(dpm[2])}) ${dpm[3] === '<>' ? '!=' : dpm[3]} ${capDp(dpm[4])}(Today())` };
+            }
             if (/\b(CALCULATE|FILTER|ALL|ALLEXCEPT|ALLSELECTED|REMOVEFILTERS|KEEPFILTERS|VALUES|RELATEDTABLE|EARLIER|TREATAS|USERELATIONSHIP|SELECTEDVALUE)\s*\(/i.test(p)) {
                 return { ok: false, reason: `predicate contains filter-context functions (${p.slice(0, 60)})` };
             }
@@ -31952,7 +32008,7 @@ ${cleanedSql}`;
                     : items.map(v => `${ref} = ${v}`).join(' or ');
                 p = p.slice(0, m.index) + `(${chain})` + p.slice(i + 1);
             }
-            p = p.replace(/\bNOT\s*\(/gi, 'Not(');
+            p = p.replace(/\bNOT\s*\(/gi, 'Not ('); // space: Not (x), the proven Sigma form (dax-fidelity #2)
             p = p.replace(/\bISBLANK\s*\(/gi, 'IsNull(');
             p = p.replace(/\bTRUE\s*\(\s*\)/gi, 'True').replace(/\bFALSE\s*\(\s*\)/gi, 'False');
             p = p.replace(/<>/g, '!=');
@@ -31975,6 +32031,12 @@ ${cleanedSql}`;
         // NOT be claimed by the conditional-aggregate rewrite — the dedicated time-intel
         // guard handles them.
         const PBI_CALC_TIME_INTEL_RE = /\b(TOTALYTD|TOTALQTD|TOTALMTD|SAMEPERIODLASTYEAR|DATEADD|DATESYTD|DATESBETWEEN|DATESINPERIOD|PARALLELPERIOD|PREVIOUSMONTH|PREVIOUSQUARTER|PREVIOUSYEAR|PREVIOUSDAY|NEXTMONTH|NEXTQUARTER|NEXTYEAR)\s*\(/i;
+        // Same set MINUS DATESBETWEEN, which is a self-contained window handled inline (dax-fidelity #6).
+        const PBI_CALC_TIME_INTEL_DEFER_RE = /\b(TOTALYTD|TOTALQTD|TOTALMTD|SAMEPERIODLASTYEAR|DATEADD|DATESYTD|DATESINPERIOD|PARALLELPERIOD|PREVIOUSMONTH|PREVIOUSQUARTER|PREVIOUSYEAR|PREVIOUSDAY|NEXTMONTH|NEXTQUARTER|NEXTYEAR)\s*\(/i;
+        function pbiRecaseDateFns(expr) {
+            const map = { TODAY: 'Today', NOW: 'Now', DATE: 'Date', YEAR: 'Year', MONTH: 'Month', DAY: 'Day' };
+            return expr.replace(/\b(TODAY|NOW|DATE|YEAR|MONTH|DAY)\b/gi, w => map[w.toUpperCase()] || w);
+        }
 
         // Rewrite every translatable CALCULATE(...) occurrence into a Sigma conditional
         // aggregate, splicing in place so surrounding expressions (DIVIDE, COALESCE,
@@ -32035,7 +32097,7 @@ ${cleanedSql}`;
                     continue; // re-scan from the same cursor
                 }
                 // Time-intel filter → leave for the time-intelligence guard.
-                if (PBI_CALC_TIME_INTEL_RE.test(args.join(','))) { cursor = m.index + m[0].length; continue; }
+                if (PBI_CALC_TIME_INTEL_DEFER_RE.test(args.join(','))) { cursor = m.index + m[0].length; continue; }
 
                 // Resolve the aggregate arg (bead qx16: may be a bare measure ref).
                 let aggExpr = args[0].trim();
@@ -32066,15 +32128,27 @@ ${cleanedSql}`;
                 };
                 const sigmaAggCond = (fn, arg, combinedPred) => {
                     const F = fn.toUpperCase();
-                    if (F === 'COUNTROWS' || F === 'COUNT' || F === 'COUNTA') return `CountIf(${combinedPred})`; // ONE logical arg (beads-sigma-862)
-                    if (F === 'DISTINCTCOUNT') return `CountDistinctIf(${bareRef(arg.trim())}, ${combinedPred})`;
+                    const col = bareRef(arg.trim());
+                    const hasCol = /\[[^\]]+\]/.test(col);
+                    // Sigma CountIf takes ONE boolean arg (beads-sigma-862). COUNT(col)/COUNTA(col)
+                    // count only NON-NULL values, so re-express as CountIf(cond and IsNotNull(col))
+                    // to match DAX COUNT semantics (dax-fidelity #1).
+                    if (F === 'COUNTROWS' || ((F === 'COUNT' || F === 'COUNTA') && !hasCol)) return `CountIf(${combinedPred})`;
+                    if (F === 'COUNT' || F === 'COUNTA') return `CountIf(${combinedPred} and IsNotNull(${col}))`;
+                    // DISTINCTCOUNT → CountDistinct(If(cond, col, null)); the two-arg CountDistinctIf
+                    // misreads its args in this DM-metric path (dax-fidelity #1).
+                    if (F === 'DISTINCTCOUNT') return `CountDistinct(If(${combinedPred}, ${col}, null))`;
                     const map = { SUM: 'SumIf', AVERAGE: 'AvgIf', MIN: 'MinIf', MAX: 'MaxIf' };
-                    return `${map[F] || 'SumIf'}(${bareRef(arg.trim())}, ${combinedPred})`;
+                    return `${map[F] || 'SumIf'}(${col}, ${combinedPred})`;
                 };
 
                 // Classify each filter arg.
                 let grandTotal = false;
                 const preds = [];
+                // Columns whose filter context a single-column ALL(T[col]) removes → a
+                // filter-scoped metric (plain aggregate + note to ignore that one control),
+                // NOT a GrandTotal (dax-fidelity #5).
+                const filterRemovalCols = [];
                 let flagged = null;
                 for (let a of args.slice(1).map(x => x.trim())) {
                     // bead qx16: unwrap KEEPFILTERS — it modifies filter-MERGE semantics, not
@@ -32085,17 +32159,33 @@ ${cleanedSql}`;
                         if (kr.args.length >= 1) a = kr.args.join(', ').trim();
                     }
                     if (wholeTableStripRe.test(a)) { grandTotal = true; continue; }
-                    // Single-column ALL/REMOVEFILTERS → GrandTotal approximation, loudly flagged.
+                    // Single-column ALL/REMOVEFILTERS → FILTER-SCOPED metric (dax-fidelity #5):
+                    // ignore any control bound to that column, NOT a GrandTotal over every row.
                     const colStrip = a.match(/^(ALL|REMOVEFILTERS)\s*\(\s*('?[A-Za-z_][\w ]*'?\[[^\]]+\])\s*\)$/i);
                     if (colStrip) {
-                        grandTotal = true;
-                        if (warnings) warnings.push(`⚠ "${measureName}": ${colStrip[1].toUpperCase()}(${colStrip[2]}) strips filter context on ONE column — translated as GrandTotal(…), which is EXACT when ${colStrip[2].replace(/^.*\[/, '[')} is the only grouping in the visual. In a multi-dimension visual, re-express as a window total over the remaining dimensions in a grouped workbook element. Original DAX: ${daxNote}`);
+                        filterRemovalCols.push(colStrip[2]);
+                        if (warnings) warnings.push(`⚠ "${measureName}": ${colStrip[1].toUpperCase()}(${colStrip[2]}) removes filter context on ONE column — translated as a filter-scoped metric that IGNORES any control bound to ${colStrip[2].replace(/^.*\[/, '[')}. Configure this metric in the workbook to ignore that control; it must NOT collapse to a GrandTotal. Original DAX: ${daxNote}`);
                         continue;
                     }
                     // ALLEXCEPT / ALLSELECTED / multi-col ALL → subtotal re-scope, no faithful
                     // scalar metric. Flag-not-drop with the DAX preserved.
                     if (/^(ALLEXCEPT|ALLSELECTED|ALL|REMOVEFILTERS)\s*\(/i.test(a)) {
                         flagged = `⚠ "${measureName}": CALCULATE filter ${a.slice(0, 70)} re-scopes filter context (subtotal semantics) — no faithful Sigma scalar-metric equivalent. Recreate as a grouped workbook element (group by the kept dimensions, aggregate, then window-total). Original DAX: ${daxNote}`;
+                        break;
+                    }
+                    // DATESBETWEEN('Date'[col], start, end) → a self-contained date window (dax-fidelity #6).
+                    const dbm = a.match(/^DATESBETWEEN\s*\(/i);
+                    if (dbm) {
+                        const dbr = pbiSplitCallArgs(a, dbm[0].length);
+                        const colM = dbr.args.length === 3 ? dbr.args[0].match(/('?[A-Za-z_][\w ]*'?\[[^\]]+\])\s*$/) : null;
+                        if (colM) {
+                            const col = bareRef(colM[1]);
+                            const start = pbiRecaseDateFns(dbr.args[1].trim());
+                            const end = pbiRecaseDateFns(dbr.args[2].trim());
+                            preds.push(`${col} >= ${start} and ${col} <= ${end}`);
+                            continue;
+                        }
+                        flagged = `⚠ "${measureName}": DATESBETWEEN filter isn't the <date column>, <start>, <end> shape — recreate the window manually. Original DAX: ${daxNote}`;
                         break;
                     }
                     // FILTER(<table> | ALL(<table>), predicate)
@@ -32124,22 +32214,29 @@ ${cleanedSql}`;
                     return { f, dropped: true };
                 }
                 const aggFnEarly = aggM ? aggM[1].toUpperCase() : '';
+                const plainAgg = () => {
+                    if (composite) return `(${composite.replace(PBI_SIMPLE_AGG_RE, (_mm, fn, arg) => sigmaAggPlain(fn, arg))})`;
+                    if (aggFnEarly === 'COUNTROWS') return 'Count()';
+                    const map = { SUM: 'Sum', AVERAGE: 'Avg', MIN: 'Min', MAX: 'Max', COUNT: 'Count', COUNTA: 'Count', DISTINCTCOUNT: 'CountDistinct' };
+                    return `${map[aggFnEarly]}(${bareRef(aggM[2].trim())})`;
+                };
                 if (!preds.length) {
-                    if (!grandTotal) { cursor = m.index + m[0].length; continue; } // nothing usable — leave for the guards
-                    // ALL/REMOVEFILTERS-only (incl. the single-column strip): GrandTotal(agg).
-                    let aggSigma;
-                    if (composite) {
-                        // beads-sigma-p146: plain-aggregate each leaf, GrandTotal the whole.
-                        aggSigma = `(${composite.replace(PBI_SIMPLE_AGG_RE, (_mm, fn, arg) => sigmaAggPlain(fn, arg))})`;
-                    } else if (aggFnEarly === 'COUNTROWS') aggSigma = 'Count()';
-                    else {
-                        const map = { SUM: 'Sum', AVERAGE: 'Avg', MIN: 'Min', MAX: 'Max', COUNT: 'Count', COUNTA: 'Count', DISTINCTCOUNT: 'CountDistinct' };
-                        aggSigma = `${map[aggFnEarly]}(${bareRef(aggM[2].trim())})`;
+                    if (grandTotal) {
+                        // Whole-table ALL/REMOVEFILTERS or FILTER(ALL(T)) → GrandTotal(agg) (%-of-total).
+                        const gOut = `GrandTotal(${plainAgg()})`;
+                        f = f.slice(0, m.index) + gOut + f.slice(endPos);
+                        cursor = m.index + gOut.length;
+                        continue;
                     }
-                    const gOut = `GrandTotal(${aggSigma})`;
-                    f = f.slice(0, m.index) + gOut + f.slice(endPos);
-                    cursor = m.index + gOut.length;
-                    continue;
+                    if (filterRemovalCols.length) {
+                        // Single-column ALL(T[col]) with no other predicate → filter-scoped plain
+                        // aggregate, flagged to ignore that one control. NOT GrandTotal (dax-fidelity #5).
+                        const frOut = plainAgg();
+                        f = f.slice(0, m.index) + frOut + f.slice(endPos);
+                        cursor = m.index + frOut.length;
+                        continue;
+                    }
+                    cursor = m.index + m[0].length; continue; // nothing usable — leave for the guards
                 }
                 const combined = preds.length === 1
                     ? preds[0]
@@ -32149,13 +32246,8 @@ ${cleanedSql}`;
                 if (composite) {
                     // beads-sigma-p146: distribute the predicate over every leaf aggregate.
                     out = `(${composite.replace(PBI_SIMPLE_AGG_RE, (_mm, fn, arg) => sigmaAggCond(fn, arg, combined))})`;
-                } else if (aggFn === 'COUNTROWS' || aggFn === 'COUNT' || aggFn === 'COUNTA') {
-                    out = `CountIf(${combined})`; // Sigma CountIf takes ONE logical arg (beads-sigma-862)
-                } else if (aggFn === 'DISTINCTCOUNT') {
-                    out = `CountDistinctIf(${bareRef(aggM[2].trim())}, ${combined})`;
                 } else {
-                    const aggMap = { SUM: 'SumIf', AVERAGE: 'AvgIf', MIN: 'MinIf', MAX: 'MaxIf' };
-                    out = `${aggMap[aggFn] || 'SumIf'}(${bareRef(aggM[2].trim())}, ${combined})`;
+                    out = sigmaAggCond(aggFn, aggM[2], combined);
                 }
                 if (grandTotal) out = `GrandTotal(${out})`; // FILTER(ALL(T), pred): context-strip = total over matching rows
                 f = f.slice(0, m.index) + out + f.slice(endPos);
@@ -32195,6 +32287,7 @@ ${cleanedSql}`;
             }
             f = pbiRewriteStatIterators(f);
             f = pbiRewriteCombineValues(f);
+            f = pbiRewriteFormatNumeric(f);     // FORMAT(<numeric date expr>) -> Text(expr) (dax-fidelity #10)
             f = pbiRewriteSingleValue(f);
             f = pbiRewriteSwitchTrue(f);
             f = pbiRewriteCountRowsFilter(f);   // COUNTROWS/COUNT(FILTER) -> CountIf (r9oz)
@@ -32291,7 +32384,10 @@ ${cleanedSql}`;
                     if (alt && alt.trim()) {
                         replacement = `If((${den}) = 0, ${alt.trim()}, (${num}) / (${den}))`;
                     } else {
-                        replacement = `(${num}) / (${den})`;
+                        // DAX DIVIDE(a,b) returns BLANK on a zero denominator; a bare a/b instead
+                        // ERRORS the Snowflake query on b=0. NullIf((b),0) restores DAX semantics
+                        // (b=0 → null denominator → a/null → null) (dax-fidelity #10).
+                        replacement = `(${num}) / NullIf((${den}), 0)`;
                     }
                     // Find the actual end position (after the closing paren of DIVIDE)
                     let d2 = 1, endPos = startIdx;
@@ -32338,7 +32434,7 @@ ${cleanedSql}`;
             f = f.replace(/\bISBLANK\s*\(/gi, 'IsNull(');
             f = f.replace(/\bCOALESCE\s*\(/gi, 'Coalesce(');
             f = f.replace(/\bBLANK\s*\(\s*\)/gi, 'null');
-            f = f.replace(/\bNOT\s*\(/gi, 'Not(');
+            f = f.replace(/\bNOT\s*\(/gi, 'Not ('); // space: Not (x), the proven Sigma form (dax-fidelity #2)
             f = f.replace(/\bTRUE\s*\(\s*\)/gi, 'True');
             f = f.replace(/\bFALSE\s*\(\s*\)/gi, 'False');
             f = f.replace(/\b&&\b/g, ' and ');
@@ -32889,14 +32985,30 @@ ${cleanedSql}`;
                     // Find the best fact element (most columns or has relationships)
                     const factEl = elements.reduce((best, e) =>
                         (e.columns || []).length > (best.columns || []).length ? e : best, elements[0]);
+                    // dax-fidelity #4: re-home each measure to the element that OWNS its aggregated
+                    // column (via tableColMap); fall back to the biggest element. Prevents a measure
+                    // whose column lives on another fact from mis-binding to the largest one.
+                    const homeElFor = (rawDax) => {
+                        const refs = [...String(rawDax).matchAll(/(?:'([^']+)'|\b([A-Za-z_]\w*))\s*\[([^\]]+)\]/g)];
+                        for (const r of refs) {
+                            const tbl = (r[1] || r[2] || '').trim();
+                            const colName = r[3];
+                            const elId = tableIdMap[tbl];
+                            if (!elId || !(tableColMap[tbl] && (colName in tableColMap[tbl]))) continue;
+                            const el = elements.find(e => e.id === elId);
+                            if (el && (el.columns || []).length) return el;
+                        }
+                        return factEl;
+                    };
                     if (factEl) {
                         for (const tName of measureOnlyTables) {
                             const t = model.tables.find(tb => tb.name === tName);
                             if (!t) continue;
                             for (const m of (t.measures || [])) {
-                                if (m.name) measureToElementId[m.name] = factEl.id; // m1a cross-table detection
                                 const _moExpr = processUseRelationships(m.name,
                                     Array.isArray(m.expression) ? m.expression.join('\n') : String(m.expression || ''));
+                                const homeEl = homeElFor(_moExpr);
+                                if (m.name) measureToElementId[m.name] = homeEl.id; // m1a cross-table detection
                                 let sigmaFormula = pbiDaxToSigma(_moExpr, warnings, m.name, measureDaxMap);
                                 if (sigmaFormula && pbiHasBareWindowFn(sigmaFormula)) {  // bead jzd8 (measure path)
                                     warnings.push(`⛔ "${m.name}": window-function measure has no Sigma DM-metric equivalent — use a workbook Rank()/ordered table or a grouped element. Dropped.`);
@@ -32907,15 +33019,18 @@ ${cleanedSql}`;
                                     sigmaFormula = sigmaFormula.replace(/\[([^\]\/]+)\]/g, (m2, colName) => {
                                         return allPbiToSigmaNames[colName] ? `[${allPbiToSigmaNames[colName]}]` : m2;
                                     });
-                                    if (!factEl.metrics) factEl.metrics = [];
+                                    if (!homeEl.metrics) homeEl.metrics = [];
                                     const metric = { id: sigmaShortId(), formula: sigmaFormula, name: m.name };
                                     if (m.description) metric.description = m.description;
                                     const _pFmt2 = (m.formatMask ? _excelFormatToSigma(m.formatMask) : null) || _inferSigmaFormat(sigmaFormula, m.name);
                                     if (_pFmt2) metric.format = _pFmt2;
-                                    factEl.metrics.push(metric);
+                                    homeEl.metrics.push(metric);
+                                    if (homeEl !== factEl && homeEl.source && homeEl.source.path) {
+                                        warnings.push(`ℹ "${m.name}": bound to its home fact element "${homeEl.source.path[homeEl.source.path.length - 1]}" (owns its aggregated column) (dax-fidelity #4).`);
+                                    }
                                 }
                             }
-                            warnings.push(`ℹ Measures table "${tName}" → measures moved to "${factEl.source.path[factEl.source.path.length - 1]}"`);
+                            warnings.push(`ℹ Measures table "${tName}" → measures moved to their home fact element(s).`);
                         }
                     }
                 }
