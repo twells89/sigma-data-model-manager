@@ -3779,7 +3779,7 @@ How it works:
                             <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Drop Qlik metadata JSON or .qvd files here</div>
                             <div style="font-size: 11px; color: var(--text-muted);">REST API export · QVD files · or paste below</div>
                         </div>
-                        <input type="file" id="qlikFileInput" accept=".json,.qvd" multiple style="display:none" onchange="handleQlikFileInput(event)">
+                        <input type="file" id="qlikFileInput" accept=".json,.qvd,.txt,.xml,.qvs" multiple style="display:none" onchange="handleQlikFileInput(event)">
                         <div style="flex-shrink: 0; padding: 6px 8px; background: var(--bg-tertiary); border-left: 3px solid var(--accent-primary); border-radius: 4px; font-size: 10px; color: var(--text-muted); line-height: 1.4;">
                             <b>QVD files:</b> only header metadata is read (table + fields + types). Set Database/Schema overrides for the warehouse path — QVDs don't include the load script.
                         </div>
@@ -19483,13 +19483,129 @@ views:
             };
         }
 
+        // ── QlikView "-prj" project-folder ingestion ─────────────────────────
+        // QlikView .qvw binaries have no parser; the migration surface is the
+        // developer-opt-in <name>-prj/ folder (QlikView Desktop "Create project
+        // folder"): LoadScript.txt (data model) + CH*.xml (expression measures).
+        // Mirrors convertQvwPrjToSigma in sigma-data-model-mcp — the parsed tables
+        // + measures feed the SAME Qlik convert pipeline (runQlikConversion) below.
+        // Spec: help.qlik.com/.../QV_QlikView/QlikView_Project_Files.htm
+
+        // LOAD script → tables + in-memory (post-rename) field names. Uses the alias
+        // side of `expr AS Field`, the source file name for unlabeled tables, and
+        // skips bare expressions without an alias. (No row counts in a -prj folder.)
+        function _qParseLoadScript(script) {
+            const s = script.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/.*$/gm, ' ');
+            const tables = [];
+            const blockRe = /(?:^|\n)[ \t]*(?:([A-Za-z_]\w*)\s*:\s*)?(?:[A-Za-z]+[ \t]+)?\b(?:LOAD|SQL\s+SELECT)\b([\s\S]*?)(?:\b(?:FROM|RESIDENT|INLINE|AUTOGENERATE)\b([\s\S]*?))?;/gi;
+            let m;
+            while ((m = blockRe.exec(s))) {
+                const label = m[1];
+                const body = m[2] || '';
+                const tail = m[3] || '';
+                const fields = [];
+                for (const raw of _qSplitTop(body)) {
+                    let f = raw.trim();
+                    if (!f || f === '*') continue;
+                    const asM = f.match(/\s+AS\s+(.+)$/is);
+                    if (asM) f = asM[1].trim();
+                    f = f.replace(/^[\["']+|[\]"']+$/g, '').trim();
+                    if (!/^[A-Za-z_][\w ]*$/.test(f)) continue;
+                    fields.push(f);
+                }
+                if (!fields.length) continue;
+                let name = label;
+                if (!name) {
+                    const fileM = tail.match(/\[[^\]]*?([A-Za-z0-9_]+)\.(?:qvd|csv|txt|xlsx?)\b/i) || tail.match(/\b([A-Za-z0-9_]+)\s*$/);
+                    name = fileM ? fileM[1] : `Table${tables.length + 1}`;
+                }
+                tables.push({ name, fields });
+            }
+            return tables;
+        }
+
+        // Chart object XML (CH*.xml) → expression "measures". Defensive: pull every
+        // <Definition>/<Expression> body and pair it with the nearest <Label>.
+        function _qParseChartXml(xml) {
+            const measures = [];
+            const seen = new Set();
+            const stripTags = (s) => s.replace(/<[^>]+>/g, ' ');
+            const decodeEnt = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+            const clean = (s) => decodeEnt(s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')).trim();
+            const defs = [...xml.matchAll(/<Definition>([\s\S]*?)<\/Definition>/gi)];
+            const useFallback = defs.length === 0;
+            const blocks = useFallback ? [...xml.matchAll(/<Expression>([\s\S]*?)<\/Expression>/gi)] : defs;
+            for (const m of blocks) {
+                let def = clean(useFallback ? stripTags(m[1]) : m[1]);
+                if (!def || def.length > 2000) continue;
+                if (!/^=/.test(def) && !/\b(Sum|Count|Avg|Min|Max|Only|Aggr)\s*\(/i.test(def)) continue;
+                if (seen.has(def)) continue;
+                seen.add(def);
+                const idx = (m.index || 0) + m[0].length;
+                const after = xml.slice(idx, idx + 300);
+                const lm = after.match(/<Label>([\s\S]*?)<\/Label>/i);
+                const label = lm ? clean(stripTags(lm[1])) : '';
+                measures.push({ title: label || `Expr ${measures.length + 1}`, qDef: def });
+            }
+            return { measures, dimensions: [] };
+        }
+
+        async function processQlikPrjFiles(prjFiles) {
+            const readText = (f) => (f.text ? f.text() : new Promise((res, rej) => {
+                const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsText(f);
+            }));
+            const scriptFile = prjFiles.find(f => /^LoadScript\.txt$/i.test(f.name)) || prjFiles.find(f => /\.qvs$/i.test(f.name));
+            if (!scriptFile) {
+                showToast('❌ No LoadScript.txt / .qvs in the -prj folder — enable "Create project folder" in QlikView Desktop', 'error');
+                return;
+            }
+            const tables = _qParseLoadScript(await readText(scriptFile));
+            if (!tables.length) {
+                showToast('❌ LoadScript.txt parsed but no LOAD tables recovered — check the script', 'error');
+                _qlikModel = null;
+                return;
+            }
+            const seen = new Set();
+            const masterMeasures = [];
+            const chartFiles = prjFiles.filter(f => /^CH.*\.xml$/i.test(f.name));
+            for (const cf of chartFiles) {
+                for (const meas of _qParseChartXml(await readText(cf)).measures) {
+                    if (!seen.has(meas.qDef)) { seen.add(meas.qDef); masterMeasures.push(meas); }
+                }
+            }
+            const rel = scriptFile.webkitRelativePath || scriptFile.name;
+            const appName = (rel.match(/([^\/\\]+?)-prj[\/\\]/i) || [])[1] || 'QlikView App';
+            const qtr = tables.map(t => ({ qName: t.name, qNoOfRows: 0, qFields: t.fields.map(name => ({ qName: name })) }));
+            _qlikModel = { appName, qtr, masterMeasures, masterDimensions: [] };
+
+            const { tables: parsedTables } = _qlikParseInput(_qlikModel);
+            const fieldCount = parsedTables.reduce((n, t) => n + (t.fields || []).length, 0);
+
+            document.getElementById('qlikFileList').innerHTML = prjFiles.map(f =>
+                `<div style="display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-tertiary);border-radius:6px;font-size:11px;"><span>🔮</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${f.name}">${f.name}</span></div>`
+            ).join('');
+            document.getElementById('qlikInputStats').innerHTML = [
+                `<span class="dbt-stat-badge dimensions">${parsedTables.length} table${parsedTables.length !== 1 ? 's' : ''}</span>`,
+                fieldCount ? `<span class="dbt-stat-badge">${fieldCount} fields</span>` : '',
+                masterMeasures.length ? `<span class="dbt-stat-badge measures">${masterMeasures.length} measures</span>` : '',
+                `<span class="dbt-stat-badge">QlikView -prj</span>`
+            ].filter(Boolean).join('');
+            document.getElementById('qlikConvertBtn').disabled = false;
+            showToast(`Loaded QlikView -prj: ${parsedTables.length} tables · ${fieldCount} fields · ${masterMeasures.length} measures`, 'success');
+        }
+
         async function processQlikFiles(files) {
             // Branch by extension. Mixed extensions are not supported — a single
             // .json carries the whole model, while .qvd files are accumulated.
             const qvds = files.filter(f => f.name.toLowerCase().endsWith('.qvd'));
             const jsons = files.filter(f => f.name.toLowerCase().endsWith('.json'));
+            // QlikView .qvw migrates via its "-prj" project folder (LoadScript.txt + CH*.xml).
+            const prj = files.filter(f => /^LoadScript\.txt$/i.test(f.name) || /\.qvs$/i.test(f.name) || /^CH.*\.xml$/i.test(f.name));
+            if (prj.length && !qvds.length && !jsons.length) {
+                return processQlikPrjFiles(prj);
+            }
             if (!qvds.length && !jsons.length) {
-                showToast('❌ Please provide .json or .qvd files', 'error');
+                showToast('❌ Please provide .json / .qvd files or a QlikView -prj folder (LoadScript.txt + CH*.xml)', 'error');
                 return;
             }
             if (qvds.length && jsons.length) {
