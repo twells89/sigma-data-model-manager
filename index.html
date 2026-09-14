@@ -25123,14 +25123,32 @@ ${cleanedSql}`;
                 const jType = (j.type || 'left_outer').toLowerCase().replace('_join','').replace(' ','_');
 
                 // Extract join keys from sql_on: ${a.key} = ${b.key}
-                const sqlOn = j.sql_on || '';
-                const keyMatch = sqlOn.match(/\$\{(\w+)\.(\w+)\}\s*=\s*\$\{(\w+)\.(\w+)\}/);
-                const keys = keyMatch ? [{
-                    leftView: keyMatch[1], leftCol: keyMatch[2].toUpperCase(),
-                    rightView: keyMatch[3], rightCol: keyMatch[4].toUpperCase()
-                }] : [];
+                // Liquid {% condition %} blocks inject running filter state; their inner
+                // text ("store.chain_id") would be mis-read as a key. Strip before parsing.
+                const sqlOnRaw = j.sql_on || '';
+                const sqlOn = sqlOnRaw
+                    .replace(/\{%\s*condition[\s\S]*?\{%\s*endcondition\s*%\}/gi, ' ')
+                    .replace(/\{%[\s\S]*?%\}/g, ' ')
+                    .replace(/\{\{[\s\S]*?\}\}/g, ' ');
 
-                if (!keyMatch && sqlOn) {
+                // A sql_on routinely ANDs several ${a.b} = ${c.d} pairs (a composite key).
+                // Sigma relationships take an ARRAY of key pairs, so capture EVERY one —
+                // matching only the first silently emits an under-constrained join that
+                // still POSTs and still queries, but fans out.
+                const keys = [...sqlOn.matchAll(/\$\{(\w+)\.(\w+)\}\s*=\s*\$\{(\w+)\.(\w+)\}/g)].map(m => ({
+                    leftView: m[1], leftCol: m[2].toUpperCase(),
+                    rightView: m[3], rightCol: m[4].toUpperCase()
+                }));
+
+                // Literal predicates (${view.col} = 5) are join-time scoping, not keys.
+                // A Sigma relationship carries no predicate — surface, never drop silently.
+                const literalPreds = [...sqlOn.matchAll(/\$\{(\w+)\.(\w+)\}\s*=\s*('[^']*'|-?\d+(?:\.\d+)?)/g)]
+                    .map(m => `${m[1]}.${m[2]} = ${m[3]}`);
+                if (literalPreds.length) {
+                    warnings.push(`ℹ Join "${alias}": sql_on carries ${literalPreds.length} literal predicate(s) a Sigma relationship cannot express — ${literalPreds.join(', ')}. Apply as an element filter on the joined table if the scoping matters.`);
+                }
+
+                if (!keys.length && sqlOnRaw) {
                     // Detect range-based joins (>=, <=, >, <) — these can't be Sigma relationships
                     const isRangeJoin = /\$\{[^}]+\}\s*[><]|[><]=?\s*\$\{/.test(sqlOn);
                     if (isRangeJoin) {
@@ -25211,6 +25229,11 @@ ${cleanedSql}`;
                 }
                 const isTargetView = (name) => name === j.alias || name === j.viewName;
 
+                // Resolve every key pair first, grouped by the element that owns the FK.
+                // A composite key must become ONE relationship carrying N key pairs —
+                // emitting per key would produce N single-key relationships instead.
+                const bySource = new Map();
+
                 j.keys.forEach(k => {
                     // A join's sql_on names the joined ("target") view on one side and
                     // the FK-owning ("source") view on the other. The source is NOT
@@ -25243,13 +25266,28 @@ ${cleanedSql}`;
                         return;
                     }
 
-                    const pairKey = `${targetRes.elementId}|${tgtColId}`;
-                    if (usedTargetCols.has(pairKey)) {
-                        // Role-playing dim — same physical table already wired via different FK
-                        warnings.push(`ℹ Role-playing join "${j.alias}" (→ ${j.viewName}) shares a physical table already used by another relationship. Add this relationship manually in Sigma's ERD view after import: ${k.leftCol} → ${k.rightCol}`);
+                    const grp = bySource.get(srcRes.elementId) || { srcRes, srcView, pairs: [] };
+                    if (!grp.pairs.some(p => p.sourceColumnId === srcColId && p.targetColumnId === tgtColId)) {
+                        grp.pairs.push({ sourceColumnId: srcColId, targetColumnId: tgtColId });
+                    }
+                    bySource.set(srcRes.elementId, grp);
+                });
+
+                if (j.keys.length && bySource.size === 0) {
+                    warnings.push(`⚠ Relationship "${j.alias}": no key pair could be resolved to real columns — add join keys manually in Sigma's ERD view.`);
+                }
+
+                bySource.forEach(({ srcRes, srcView, pairs }) => {
+                    // Dedup on the FULL relationship signature. Role-playing joins (same
+                    // physical table, different SOURCE columns) have distinct signatures
+                    // and are legitimately separate relationships; only true duplicates skip.
+                    const sig = `${srcRes.elementId}|${targetRes.elementId}|` +
+                        pairs.map(p => `${p.sourceColumnId}>${p.targetColumnId}`).sort().join(',');
+                    if (usedTargetCols.has(sig)) {
+                        warnings.push(`ℹ Join "${j.alias}" (→ ${j.viewName}): duplicate of an existing relationship on the same key set — skipped.`);
                         return;
                     }
-                    usedTargetCols.add(pairKey);
+                    usedTargetCols.add(sig);
 
                     if (isBaseView(srcView)) directRelAliases.add(j.alias);
 
@@ -25268,7 +25306,7 @@ ${cleanedSql}`;
                     srcEl.relationships.push({
                         id: sigmaShortId(),
                         targetElementId: targetRes.elementId,
-                        keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
+                        keys: pairs,
                         name: j.alias,
                         relationshipType: relType
                     });
@@ -25801,14 +25839,19 @@ ${cleanedSql}`;
                         return;
                     }
 
-                    const sqlOn = j.sql_on || '';
-                    const keyMatch = sqlOn.match(/\$\{(\w+)\.(\w+)\}\s*=\s*\$\{(\w+)\.(\w+)\}/);
-                    const keys = keyMatch ? [{
-                        leftView: keyMatch[1], leftCol: keyMatch[2].toUpperCase(),
-                        rightView: keyMatch[3], rightCol: keyMatch[4].toUpperCase()
-                    }] : [];
+                    // Strip Liquid, then capture EVERY key pair — a composite sql_on
+                    // reduced to its first pair silently under-constrains the join.
+                    const sqlOnRaw = j.sql_on || '';
+                    const sqlOn = sqlOnRaw
+                        .replace(/\{%\s*condition[\s\S]*?\{%\s*endcondition\s*%\}/gi, ' ')
+                        .replace(/\{%[\s\S]*?%\}/g, ' ')
+                        .replace(/\{\{[\s\S]*?\}\}/g, ' ');
+                    const keys = [...sqlOn.matchAll(/\$\{(\w+)\.(\w+)\}\s*=\s*\$\{(\w+)\.(\w+)\}/g)].map(m => ({
+                        leftView: m[1], leftCol: m[2].toUpperCase(),
+                        rightView: m[3], rightCol: m[4].toUpperCase()
+                    }));
 
-                    if (!keyMatch && sqlOn) {
+                    if (!keys.length && sqlOnRaw) {
                         const isRangeJoin = /\$\{[^}]+\}\s*[><!]|[><!]=?\s*\$\{/.test(sqlOn);
                         warnings.push(`⚠ [${exploreName}] Join "${alias}": ${isRangeJoin ? 'range join' : 'complex sql_on'} — add relationship manually in Sigma ERD`);
                     }
@@ -25834,14 +25877,20 @@ ${cleanedSql}`;
 
                 // Build set of already-wired target pairs so role-playing and cross-explore
                 // duplicates don't produce multiple relationships to the same target column
+                // Signature = target element + the FULL sorted key set, matching the
+                // signature built when wiring below (composite keys included).
                 const usedTargetCols = new Set(
-                    baseEl.relationships.map(r => `${r.targetElementId}|${r.keys[0]?.targetColumnId}`)
+                    baseEl.relationships.map(r => `${r.targetElementId}|` +
+                        (r.keys || []).map(p => `${p.sourceColumnId}>${p.targetColumnId}`).sort().join(','))
                 );
 
                 for (const j of joinDefs) {
                     const targetRes = globalPhysViewMap[j.viewName];
                     if (!targetRes) continue;
 
+                    // Collect ALL resolved key pairs, then emit ONE relationship carrying
+                    // them — a composite key is a single relationship with N pairs.
+                    const pairs = [];
                     for (const k of j.keys) {
                         const isTarget = (name) => name === j.alias || name === j.viewName;
                         const srcColName = isBaseView(k.leftView) ? k.leftCol : k.rightCol;
@@ -25853,20 +25902,27 @@ ${cleanedSql}`;
                             warnings.push(`⚠ [${exploreName}] Relationship "${j.alias}": could not find column IDs for (${srcColName} / ${tgtColName}) — add manually in Sigma ERD`);
                             continue;
                         }
-
-                        const pairKey = `${targetRes.elementId}|${tgtColId}`;
-                        if (usedTargetCols.has(pairKey)) {
-                            warnings.push(`ℹ [${exploreName}] Role-playing join "${j.alias}" (→ ${j.viewName}): target column already wired — add this relationship manually in Sigma ERD view`);
-                            continue;
+                        if (!pairs.some(p => p.sourceColumnId === srcColId && p.targetColumnId === tgtColId)) {
+                            pairs.push({ sourceColumnId: srcColId, targetColumnId: tgtColId });
                         }
-                        usedTargetCols.add(pairKey);
+                    }
 
-                        baseEl.relationships.push({
-                            id: sigmaShortId(),
-                            targetElementId: targetRes.elementId,
-                            keys: [{ sourceColumnId: srcColId, targetColumnId: tgtColId }],
-                            name: j.alias
-                        });
+                    if (pairs.length) {
+                        // Dedup on the full key signature so role-playing joins (distinct
+                        // source columns onto the same target) are not wrongly skipped.
+                        const sig = `${targetRes.elementId}|` +
+                            pairs.map(p => `${p.sourceColumnId}>${p.targetColumnId}`).sort().join(',');
+                        if (usedTargetCols.has(sig)) {
+                            warnings.push(`ℹ [${exploreName}] Join "${j.alias}" (→ ${j.viewName}): duplicate of an existing relationship on the same key set — skipped.`);
+                        } else {
+                            usedTargetCols.add(sig);
+                            baseEl.relationships.push({
+                                id: sigmaShortId(),
+                                targetElementId: targetRes.elementId,
+                                keys: pairs,
+                                name: j.alias
+                            });
+                        }
                     }
                 }
             }
@@ -35224,6 +35280,7 @@ models:
     <li><b>Ratio / computed measures</b> → A <code>type:number</code> measure whose <code>sql:</code> references other measures (e.g. AOV = <code>1.0 * \${total_revenue} / NULLIF(\${order_count}, 0)</code>) is emitted as a <b>metric</b>: each <code>\${measure}</code> is substituted with that measure's Sigma aggregate formula and SQL funcs are mapped (<code>NULLIF→NullIf</code>, <code>COALESCE/NVL/IFNULL→Coalesce</code>, <code>IFF/IIF→If</code>). It is no longer split into a phantom physical column (which turned decimals like <code>1.0</code> into <code>0</code>)</li>
     <li><b>Legacy <code>case: { when … else }</code> dimensions</b> → Nested <code>If(cond, "label", If(…))</code> calculated columns (previously a passthrough to a nonexistent physical column)</li>
     <li><b>Explore joins</b> → Sigma relationships plus a <b>derived explore element</b> that surfaces all base-view and joined-view fields together. Joined-view fields appear as <code>[BASE_TABLE/join_alias/Col]</code> cross-element formulas, so the full explore is browsable in one flat element without navigating relationships manually. Use <b>Convert Explore</b> for a single explore or <b>All Explores</b> to batch-convert all explores at once into one combined data model — shared views (e.g. <code>date_dim</code>, <code>store_dim</code>) are deduplicated into a single element with relationships wired from each fact table. One-to-many and many-to-many joins are skipped in batch mode (use single-explore mode for those). The derived explore element is only created for warehouse-table base views; SQL-based (derived-table) base views are already flat Custom SQL elements. <b>Snowflake joins</b> — where a join's foreign key lives on another joined view rather than the base (e.g. <code>\${inventory_items.product_id} = \${products.id}</code>) — are wired to the correct intermediate element; their columns are reachable via the relationship graph (or that element's own derived view), not the single flat explore element.</li>
+    <li><b>Composite join keys</b> → A <code>sql_on</code> that ANDs several <code>\${a.b} = \${c.d}</code> pairs together (e.g. <code>chain_id + store_id + source_system_id + entity_id</code>) produces <b>one relationship carrying every key pair</b>, matching Sigma's <code>keys[]</code> array. Previously only the <b>first</b> pair was captured, which silently emitted an under-constrained join — it still POSTed and still queried, but fanned out and returned wrong values with <em>no</em> warning. Liquid <code>{% condition %}</code> blocks are stripped before key extraction so their inner text is never mistaken for a key. <b>Literal predicates</b> in a join (<code>\${view.col} = 5</code>) are join-time scoping that a Sigma relationship cannot express — these are now reported in the warnings so you can apply them as an element filter instead of losing them silently.</li>
     <li><b>Dimension groups (type:time)</b> → Expanded into individual columns per timeframe (DateTrunc / DatePart), all grouped into a folder named after the group. Supported standard timeframes: raw, date, week, month, quarter, year, hour, minute, day_of_week, day_of_month, week_of_year, month_num, quarter_of_year, hour_of_day. Binned timeframes (e.g. <code>minute15</code>, <code>hour4</code>) use <code>DateAdd + Floor</code> arithmetic. Fiscal timeframes (<code>fiscal_year</code>, <code>fiscal_quarter_of_year</code>, etc.) are skipped with a warning — they require <code>fiscal_month_offset</code> from the model-level config, which is not available in view files. A group never clobbers a physical column already owned by a dimension or another group (no duplicate ids), timeframe lists without <code>raw</code> still emit the physical column (so measures and filters resolve), and <code>\${group}</code>/<code>\${group_raw}</code>/<code>\${group_date}</code> references in measures resolve to the underlying column. <code>CAST(\${TABLE}.col AS TYPE)</code>-wrapped group sql is treated as a plain column ref.</li>
     <li><b>Dimension groups (type:duration)</b> → <code>DateDiff()</code> columns per interval (day, week, month, quarter, year, hour, minute, second), grouped into a folder named after the group</li>
     <li><b>datatype: epoch</b> → <code>DateFromUnix()</code> wrapper applied automatically to all timeframe and duration formulas</li>
