@@ -13,7 +13,7 @@ The Data Model Manager is a self-contained HTML file that runs entirely in your 
 - **Diff Viewer** — Line-by-line unified diff against the original loaded model (Ctrl+D)
 - **AI Assistant** — Generate columns, metrics, descriptions, RLS, and more using natural language (Claude, OpenAI, or Gemini)
 - **Fix with AI** — When a save fails, the error banner offers one-click AI repair of common structural issues
-- **Converters** — Import from dbt, Snowflake Cortex Analyst, LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, Omni Analytics, ThoughtSpot TML, Qlik, Oracle Analytics Cloud, Cube.dev, Tableau Prep, and raw SQL
+- **Converters** — Import from dbt, Snowflake semantic views (YAML or DDL), LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, Omni Analytics, ThoughtSpot TML, Qlik, Oracle Analytics Cloud, Cube.dev, Tableau Prep, and raw SQL
 - **Bulk Upload** — Create multiple elements from warehouse tables at once
 - **MCP Server** — Use these converters inside Claude Code, Claude Desktop, Cursor, and other MCP-compatible AI tools
 
@@ -213,36 +213,29 @@ Converts dbt semantic model YAML files and `semantic_manifest.json` artifacts to
 
 ---
 
-### Snowflake (Cortex Analyst)
+### Snowflake semantic views
 
-Converts Snowflake Cortex Analyst semantic view YAML files to Sigma data model JSON.
+Converts a Snowflake semantic view — native YAML or `CREATE SEMANTIC VIEW` DDL (`SELECT GET_DDL('SEMANTIC_VIEW','DB.SCHEMA.NAME')` in Snowsight) — to a Sigma data model using the shared [semantic-tools](https://github.com/sigmacomputing/semantic-tools) engine (internal Sigma repo), embedded in `index.html` between the `BEGIN/END semantic-tools` markers. Refresh it with `node scripts/sync-semantic-tools.mjs <path-to-sigma-data-model-mcp>` (`--check` verifies it is current; pinned commit in `vendor/semantic-tools/PROVENANCE.json`).
 
 **What gets converted:**
-- Tables with `base_table` → Sigma elements with database / schema / table paths
-- Dimensions → Sigma columns (text, number, date based on `data_type`); complex `expr` values auto-converted
-- Time dimensions → Sigma columns (datetime type)
-- Facts → Sigma columns + optional `Sum()` metrics when "Auto-generate metrics" is checked
-- Relationships → Sigma relationships using target table name; source tables with outgoing relationships get a derived element surfacing all own + related columns
-- Descriptions → Preserved on elements and columns; `synonyms:` appended as "Also known as: …" for natural language discoverability
+- Logical tables → Sigma elements over the physical tables; dimensions / time dimensions / facts → columns (expressions translated to Sigma formulas)
+- Metrics → Sigma metrics, **only** those defined in the view (nothing is invented; the old "Auto-generate metrics" `Sum()` option was removed)
+- Relationships → Sigma relationships
+- Cross-table columns (dimensions/facts/metrics reading another table's column) move to a derived `TABLE (joined)` element (e.g. `ORDERS (joined)`) — Sigma resolves cross-table references only there; relationships into the base table are retargeted to the joined element, and metrics on it reference the joined columns (finding: CROSS_TABLE_REFERENCES_MOVED)
+- Descriptions preserved; synonyms appended as "Also known as: …" by default (Sigma has no synonyms field; untick "Add synonyms to descriptions" to drop them)
+- Optional "Infer number formats": currency / integer / percent / percent points only where the evidence supports it (`data_type` or column types, `sample_values`, name words, propagated through each formula); ambiguous items stay unformatted and FORMATS_NOT_INFERRED says what would settle them (an integer ÷ integer such as units per order stays plain unless its name says rate/percent/ratio/share; a bare `hourly_rate` / `shipping_rate` is not a percentage)
+- Several files at once: each is converted separately, with a view picker
 
-**Expression conversion:**
+**Refusals:** constructs that would return different numbers than Snowflake (semi-additive metrics, as-of / range relationships, window metrics, …) are refused with a finding (code, message, fix); recoverable ones offer "Convert anyway (best effort)", which applies **only to the view currently selected in the picker** (other views keep their normal result) and lists the overridden refusals. Clicking Convert again returns every view to strict mode. Files that cannot be read are reported as a FILE_READ_ERROR finding; converting with empty input clears the previous output.
 
-| Snowflake YAML expr | Sigma formula |
-|---|---|
-| `CASE WHEN … THEN … END` | `If(…, …, …)` |
-| `CONCAT(a, b)` | `a & b` |
-| `ROUND(x, n)` | `Round(x, n)` |
-| `DATEDIFF('day', a, b)` | `DateDiff("day", [A], [B])` |
-| `NULLIF(x, 0)` | `If(x = 0, null, x)` |
-| `COALESCE(a, b)` | `Coalesce([A], [B])` |
+**Database / Schema** inputs appear only when table references are not fully qualified. An optional **Column types** box (with a ready-made Snowflake SQL) enables TIMESTAMP_TZ checks.
 
 **Known limitations:**
-- No Snowflake SQL execution — parses YAML definition only; does not validate column existence
-- Unsupported SQL functions (FLATTEN, LATERAL, QUALIFY, PIVOT, etc.) — automatically skipped with a warning
-- Semantic view filters — Not converted; add as RLS in Sigma after import
-- Multiple semantic views in one YAML — All tables merged into a single Sigma data model
+- No Snowflake SQL execution — reads the definition only; does not validate column existence
+- Legacy in-table `relationships:` (older Cortex Analyst layout) is not converted — flagged as UNRECOGNIZED_YAML_KEY
+- Formulas assume friendly names; a FRIENDLY_NAMES_OFF warning appears for connections with them off
 
-**Useful resources:** [Cortex Analyst Semantic Model Spec](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-analyst/semantic-model-spec)
+**Useful resources:** [Snowflake Semantic Views](https://docs.snowflake.com/en/user-guide/views-semantic/overview)
 
 ---
 
@@ -740,7 +733,7 @@ The same converter logic is available as a hosted [Model Context Protocol](https
 
 **Available tools:**
 - `convert_dbt_to_sigma` — dbt semantic model YAML → Sigma JSON
-- `convert_snowflake_to_sigma` — Snowflake Cortex Analyst YAML → Sigma JSON
+- `convert_snowflake_to_sigma` — Snowflake semantic view (YAML or CREATE SEMANTIC VIEW DDL) → Sigma JSON (semantic-tools engine)
 - `convert_lookml_to_sigma` — LookML project files → Sigma JSON
 - `convert_powerbi_to_sigma` — Power BI model (`.bim` / TOM JSON) → Sigma JSON
 - `convert_tableau_to_sigma` — Tableau workbook / data source (`.twb` / `.tds` XML) → Sigma JSON
