@@ -180,6 +180,33 @@ for (const [base, expectCode] of Object.entries(refusals)) {
     !!r.model && sameJson(stripName(r.model), JSON.parse(readFileSync(join(GOLD, '12-unqualified-names.json'), 'utf8'))));
   const h2 = convert(readFileSync(join(FIX, '01-single-table.sql'), 'utf8'), { db: 'ANALYTICS', schema: 'MODELS' });
   check('fully qualified view: Database/Schema row stays hidden', !h2.dbRowVisible);
+  convert(src12);
+  $('snowYamlInput').value = readFileSync(join(FIX, '01-single-table.sql'), 'utf8');
+  window.runSnowConversion();
+  check('switching from unqualified to qualified view hides Database/Schema row', !read().dbRowVisible);
+  $('snowYamlInput').value = '';
+  window.runSnowConversion();
+  check('empty conversion hides Database/Schema row', !read().dbRowVisible);
+}
+
+// ── 3b. Warehouse references use Sigma's small-word casing ─────────────────
+{
+  const yaml = `name: CALENDAR
+tables:
+  - name: dates
+    base_table: { database: ANALYTICS, schema: MODELS, table: DATES }
+    dimensions:
+      - { name: day_of_week, expr: day_of_week }
+    metrics:
+      - { name: days_to_date, expr: COUNT(day_of_week) }
+`;
+  const r = convert(yaml);
+  const formulas = r.model
+    ? r.model.pages.flatMap(p => p.elements).flatMap(e =>
+        [...(e.columns || []), ...(e.metrics || [])].map(item => item.formula))
+    : [];
+  check('warehouse refs lowercase Sigma small words', formulas.includes('[DATES/Day of Week]') && formulas.includes('Count([Day of Week])'), formulas.join('|'));
+  check('warehouse refs do not retain title-cased small words', !formulas.some(f => /Day Of Week/.test(f)), formulas.join('|'));
 }
 
 // ── 4. PLUGS: nothing invented ──────────────────────────────────────────────

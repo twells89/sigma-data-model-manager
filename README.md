@@ -233,7 +233,7 @@ Converts a Snowflake semantic view — native YAML or `CREATE SEMANTIC VIEW` DDL
 **Known limitations:**
 - No Snowflake SQL execution — reads the definition only; does not validate column existence
 - Legacy in-table `relationships:` (older Cortex Analyst layout) is not converted — flagged as UNRECOGNIZED_YAML_KEY
-- Formulas assume friendly names; a FRIENDLY_NAMES_OFF warning appears for connections with them off
+- Formulas use Sigma-compatible friendly names, including lowercase connecting words such as `of` and `to`; a FRIENDLY_NAMES_OFF warning appears for connections with them off
 
 **Useful resources:** [Snowflake Semantic Views](https://docs.snowflake.com/en/user-guide/views-semantic/overview)
 

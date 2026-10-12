@@ -11206,6 +11206,56 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             };
         }
 
+        // Match warehouse references to Sigma's auto-generated friendly column names.
+        function snowNormalizeWarehouseRefs(spec) {
+            const model = JSON.parse(spec);
+            const elements = (model.pages || []).flatMap(p => p.elements || []);
+            const refsByElement = new Map();
+
+            elements.forEach(element => {
+                if (!element.source || element.source.kind !== 'warehouse-table') return;
+                const tableName = (element.source.path || []).slice(-1)[0];
+                const renamedRefs = new Map();
+                (element.columns || []).forEach(column => {
+                    const match = typeof column.formula === 'string'
+                        ? column.formula.match(/^\[([^/\]]+)\/([^\]]+)\]$/)
+                        : null;
+                    if (!match || match[1] !== tableName) return;
+                    const oldName = match[2];
+                    const sigmaName = sigmaDisplayName(oldName, true);
+                    if (sigmaName === oldName) return;
+                    column.formula = `[${tableName}/${sigmaName}]`;
+                    if (!column.name) renamedRefs.set(oldName, sigmaName);
+                });
+                refsByElement.set(element.id, renamedRefs);
+            });
+
+            elements.forEach(element => {
+                const localRefs = refsByElement.get(element.id) || new Map();
+                const relationships = new Map((element.relationships || []).flatMap(r => [
+                    [r.id, r.targetElementId], [r.name, r.targetElementId]
+                ]));
+                [...(element.columns || []), ...(element.metrics || [])].forEach(item => {
+                    if (typeof item.formula !== 'string') return;
+                    item.formula = item.formula.replace(/\[([^\]]+)\]/g, (whole, path) => {
+                        const parts = path.split('/');
+                        let refs = localRefs;
+                        if (parts.length > 2) {
+                            const targetId = relationships.get(parts[parts.length - 2]);
+                            refs = refsByElement.get(targetId) || refs;
+                        }
+                        const last = parts.length - 1;
+                        const replacement = refs.get(parts[last]);
+                        if (!replacement) return whole;
+                        parts[last] = replacement;
+                        return '[' + parts.join('/') + ']';
+                    });
+                });
+            });
+
+            return JSON.stringify(model, null, 2);
+        }
+
         function snowBadge(cls, text) { return snowEl('span', text, null, 'dbt-stat-badge ' + cls); }
 
         // Empty input: drop the previous run entirely (output, findings, stats, buttons) instead of leaving stale results on screen.
@@ -11284,6 +11334,9 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
                         const loose = SemanticTools.convertSemanticView(src.text, Object.assign({}, engineOpts, { bestEffort: true }));
                         run.results = run.results.map((v, vi) => (snowBestEffortKeys.has(si + ':' + vi) && loose.results[vi]) ? loose.results[vi] : v);
                     }
+                    run.results.forEach(v => {
+                        if (v.ok) v.spec = snowNormalizeWarehouseRefs(v.spec);
+                    });
                 }
                 catch (e) { fatal.push((src.name ? src.name + ': ' : '') + (e && e.message || String(e))); return; }
                 snowFormat = run.format || snowFormat;
@@ -11425,7 +11478,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
 
             // Database / Schema: hidden unless the engine asked for them.
             const dbRow = document.getElementById('snowDbSchemaRow');
-            if (needDb || needSchema) dbRow.style.display = 'flex';
+            dbRow.style.display = (needDb || needSchema) ? 'flex' : 'none';
             const hi = (id, on) => { const el = document.getElementById(id); if (el) el.style.borderColor = on ? 'var(--warning)' : ''; };
             hi('snowDatabase', needDb);
             hi('snowSchema', needSchema);
@@ -35510,7 +35563,7 @@ FROM (
 <p>The expected JSON is <code>{"DB.SCHEMA.TABLE": {"COL": "TIMESTAMP_TZ"}}</code>. Invalid JSON shows an inline error and the conversion still runs without types.</p>
 
 <h3>Friendly names</h3>
-<p>The engine always emits friendly-name formula references (e.g. <code>[Order Date]</code>). If the selected connection has <i>Use Friendly Names</i> turned off, a FRIENDLY_NAMES_OFF warning is shown: formulas may not resolve on that connection. Conversion is not blocked.</p>
+<p>The engine always emits friendly-name formula references (e.g. <code>[Order Date]</code>), matching Sigma's auto-titling of warehouse columns, including lowercase connecting words such as <code>of</code> and <code>to</code>. If the selected connection has <i>Use Friendly Names</i> turned off, a FRIENDLY_NAMES_OFF warning is shown: formulas may not resolve on that connection. Conversion is not blocked.</p>
 
 <h3>Known Limitations</h3>
 <ul>
