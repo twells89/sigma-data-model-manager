@@ -10,3 +10,7 @@ tableau-local/
 !test/
 !test/*.mjs
 !test/*.md
+
+# semantic-tools engine sync (inlines the MCP repo's IIFE build into index.html) — keep tracked despite *.mjs ignore
+!scripts/
+!scripts/sync-semantic-tools.mjs
