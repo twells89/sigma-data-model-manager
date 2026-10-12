@@ -226,14 +226,15 @@ Converts a Snowflake semantic view — native YAML or `CREATE SEMANTIC VIEW` DDL
 - Optional "Infer number formats": currency / integer / percent / percent points only where the evidence supports it (`data_type` or column types, `sample_values`, name words, propagated through each formula); ambiguous items stay unformatted and FORMATS_NOT_INFERRED says what would settle them (an integer ÷ integer such as units per order stays plain unless its name says rate/percent/ratio/share; a bare `hourly_rate` / `shipping_rate` is not a percentage)
 - Several files at once: each is converted separately, with a view picker
 
-**Refusals:** constructs that would return different numbers than Snowflake (semi-additive metrics, as-of / range relationships, window metrics, …) are refused with a finding (code, message, fix); recoverable ones offer "Convert anyway (best effort)", which applies **only to the view currently selected in the picker** (other views keep their normal result) and lists the overridden refusals. Clicking Convert again returns every view to strict mode. Files that cannot be read are reported as a FILE_READ_ERROR finding; converting with empty input clears the previous output.
+**Refusals:** constructs that would return different numbers than Snowflake (semi-additive metrics, as-of / range relationships, window metrics, …) are refused with a finding (code, message, fix); recoverable ones offer "Convert anyway (best effort)", which applies **only to the view currently selected in the picker** (other views keep their normal result) and lists the overridden refusals. Clicking Convert again returns every view to strict mode. For metrics pinned with `USING (<relationship>)` (METRIC_JOIN_PATH_SELECTOR), best effort puts each pinned metric on a `<FACT> (via <relationship>)` element that joins only through the pinned relationship, so its numbers follow Snowflake's USING path (finding: USING_METRICS_PATH_BOUND; an unmatched relationship leaves the metric in place with USING_PATH_UNRESOLVED). Files that cannot be read are reported as a FILE_READ_ERROR finding; converting with empty input clears the previous output.
 
 **Database / Schema** inputs appear only when table references are not fully qualified. An optional **Column types** box (with a ready-made Snowflake SQL) enables TIMESTAMP_TZ checks.
 
 **Known limitations:**
 - No Snowflake SQL execution — reads the definition only; does not validate column existence
 - Legacy in-table `relationships:` (older Cortex Analyst layout) is not converted — flagged as UNRECOGNIZED_YAML_KEY
-- Formulas use Sigma-compatible friendly names, including lowercase connecting words such as `of` and `to`; a FRIENDLY_NAMES_OFF warning appears for connections with them off
+- Formulas use friendly-name references; Sigma normalises their casing on save (e.g. `Days To Ship` is stored as `Days to Ship`). A FRIENDLY_NAMES_OFF warning appears for connections with friendly names off
+- `join_type: inner` relationships (YAML exported from Snowflake) are flagged JOIN_TYPE_INNER: Sigma relationships keep fact rows without a match, so counts can be higher in Sigma for rows whose key has no match
 
 **Useful resources:** [Snowflake Semantic Views](https://docs.snowflake.com/en/user-guide/views-semantic/overview)
 
