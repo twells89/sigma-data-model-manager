@@ -11210,6 +11210,7 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
         function snowNormalizeWarehouseRefs(spec) {
             const model = JSON.parse(spec);
             const elements = (model.pages || []).flatMap(p => p.elements || []);
+            const elementsById = new Map(elements.map(element => [element.id, element]));
             const refsByElement = new Map();
 
             elements.forEach(element => {
@@ -11231,8 +11232,16 @@ EXAMPLE — Adding 2 metrics to element "aw_abc123":
             });
 
             elements.forEach(element => {
-                const localRefs = refsByElement.get(element.id) || new Map();
-                const relationships = new Map((element.relationships || []).flatMap(r => [
+                const sourceElement = element.source && element.source.kind === 'table'
+                    ? elementsById.get(element.source.elementId)
+                    : null;
+                const localRefs = refsByElement.get(element.id)
+                    || refsByElement.get(sourceElement && sourceElement.id)
+                    || new Map();
+                const relationshipList = (element.relationships || []).length
+                    ? element.relationships
+                    : (sourceElement && sourceElement.relationships) || [];
+                const relationships = new Map(relationshipList.flatMap(r => [
                     [r.id, r.targetElementId], [r.name, r.targetElementId]
                 ]));
                 [...(element.columns || []), ...(element.metrics || [])].forEach(item => {

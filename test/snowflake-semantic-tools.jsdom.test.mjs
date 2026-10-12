@@ -209,6 +209,41 @@ tables:
   check('warehouse refs do not retain title-cased small words', !formulas.some(f => /Day Of Week/.test(f)), formulas.join('|'));
 }
 
+// ── 3c. Joined elements inherit warehouse renames and relationships ─────────
+{
+  const spec = {
+    pages: [{
+      elements: [
+        {
+          id: 'orders',
+          source: { kind: 'warehouse-table', path: ['ANALYTICS', 'MODELS', 'ORDERS'] },
+          columns: [{ id: 'ytd', formula: '[ORDERS/Year To Date]' }],
+          relationships: [{ id: 'calendar_rel', name: 'Orders To Calendar', targetElementId: 'calendar' }]
+        },
+        {
+          id: 'calendar',
+          source: { kind: 'warehouse-table', path: ['ANALYTICS', 'MODELS', 'CALENDAR'] },
+          columns: [{ id: 'dow', formula: '[CALENDAR/Day Of Week]' }]
+        },
+        {
+          id: 'orders__joined',
+          source: { kind: 'table', elementId: 'orders' },
+          columns: [
+            { id: 'joined_ytd', formula: '[ORDERS/Year To Date]' },
+            { id: 'joined_dow', formula: '[ORDERS/Orders To Calendar/Day Of Week]' }
+          ]
+        }
+      ]
+    }]
+  };
+  const normalized = JSON.parse(window.snowNormalizeWarehouseRefs(JSON.stringify(spec)));
+  const joinedFormulas = normalized.pages[0].elements
+    .find(e => e.id === 'orders__joined').columns.map(c => c.formula);
+  check('joined warehouse refs lowercase Sigma small words',
+    sameJson(joinedFormulas, ['[ORDERS/Year to Date]', '[ORDERS/Orders To Calendar/Day of Week]']),
+    joinedFormulas.join('|'));
+}
+
 // ── 4. PLUGS: nothing invented ──────────────────────────────────────────────
 {
   const r = convert(readFileSync(PLUGS, 'utf8'));
