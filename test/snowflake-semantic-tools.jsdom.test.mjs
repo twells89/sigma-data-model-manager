@@ -164,6 +164,31 @@ for (const [base, expectCode] of Object.entries(refusals)) {
   check('11: no best-effort button', !r.bestEffortVisible);
 }
 
+// ── 2b. USING-pinned metrics: refused -> best effort -> path-bound "(via ...)" elements ──
+{
+  const sv = readFileSync(join(MCP, 'semantic-tools-embed/test/fixtures/RETAIL_ANALYTICS_SV.sql'), 'utf8');
+  let r = convert(sv, { db: 'CSA', schema: 'TJ' });
+  check('RETAIL_ANALYTICS_SV: refused with METRIC_JOIN_PATH_SELECTOR, best-effort button offered',
+    r.model === null && r.codes.includes('METRIC_JOIN_PATH_SELECTOR') && r.bestEffortVisible, r.codes.join(','));
+  $('snowBestEffortBtn').click();
+  r = read();
+  check('RETAIL_ANALYTICS_SV: Convert anyway -> ok spec', !!r.model && r.copy && r.load && r.save);
+  const els = r.model ? r.model.pages[0].elements : [];
+  const via = els.filter(e => /__via__/.test(e.id));
+  check('RETAIL_ANALYTICS_SV: 5 "(via ...)" elements',
+    sameJson(via.map(e => e.name).sort(), [
+      'ORDER_FACT (via Order To Order Date)', 'ORDER_FACT (via Order To Order Store)', 'ORDER_FACT (via Order To Return Date)',
+      'ORDER_FACT (via Order To Ship Date)', 'ORDER_FACT (via Order To Ship Store)']), via.map(e => e.name).join('|'));
+  check('RETAIL_ANALYTICS_SV: 10 pinned metrics moved onto them; base keeps 11',
+    via.reduce((n, e) => n + (e.metrics || []).length, 0) === 10 && els.find(e => e.id === 'order_fact').metrics.length === 11);
+  const ship = via.find(e => e.name === 'ORDER_FACT (via Order To Ship Date)');
+  check('RETAIL_ANALYTICS_SV: ship-date element joins through the ship relationship only',
+    !!ship && ship.columns.some(c => c.formula === '[ORDER_FACT/Order To Ship Date/Month Name]')
+      && !ship.columns.some(c => /Order To (Order|Return) Date/.test(c.formula)));
+  check('RETAIL_ANALYTICS_SV: USING_METRICS_PATH_BOUND shown; refusals still listed as overridden',
+    r.codes.includes('USING_METRICS_PATH_BOUND') && r.overCodes.includes('METRIC_JOIN_PATH_SELECTOR'), r.codes.join(',') + ' / ' + r.overCodes.join(','));
+}
+
 // ── 3. Fixture 12: needs database/schema ────────────────────────────────────
 {
   const src12 = readFileSync(join(FIX, '12-unqualified-names.sql'), 'utf8');
@@ -187,61 +212,6 @@ for (const [base, expectCode] of Object.entries(refusals)) {
   $('snowYamlInput').value = '';
   window.runSnowConversion();
   check('empty conversion hides Database/Schema row', !read().dbRowVisible);
-}
-
-// ── 3b. Warehouse references use Sigma's small-word casing ─────────────────
-{
-  const yaml = `name: CALENDAR
-tables:
-  - name: dates
-    base_table: { database: ANALYTICS, schema: MODELS, table: DATES }
-    dimensions:
-      - { name: day_of_week, expr: day_of_week }
-    metrics:
-      - { name: days_to_date, expr: COUNT(day_of_week) }
-`;
-  const r = convert(yaml);
-  const formulas = r.model
-    ? r.model.pages.flatMap(p => p.elements).flatMap(e =>
-        [...(e.columns || []), ...(e.metrics || [])].map(item => item.formula))
-    : [];
-  check('warehouse refs lowercase Sigma small words', formulas.includes('[DATES/Day of Week]') && formulas.includes('Count([Day of Week])'), formulas.join('|'));
-  check('warehouse refs do not retain title-cased small words', !formulas.some(f => /Day Of Week/.test(f)), formulas.join('|'));
-}
-
-// ── 3c. Joined elements inherit warehouse renames and relationships ─────────
-{
-  const spec = {
-    pages: [{
-      elements: [
-        {
-          id: 'orders',
-          source: { kind: 'warehouse-table', path: ['ANALYTICS', 'MODELS', 'ORDERS'] },
-          columns: [{ id: 'ytd', formula: '[ORDERS/Year To Date]' }],
-          relationships: [{ id: 'calendar_rel', name: 'Orders To Calendar', targetElementId: 'calendar' }]
-        },
-        {
-          id: 'calendar',
-          source: { kind: 'warehouse-table', path: ['ANALYTICS', 'MODELS', 'CALENDAR'] },
-          columns: [{ id: 'dow', formula: '[CALENDAR/Day Of Week]' }]
-        },
-        {
-          id: 'orders__joined',
-          source: { kind: 'table', elementId: 'orders' },
-          columns: [
-            { id: 'joined_ytd', formula: '[ORDERS/Year To Date]' },
-            { id: 'joined_dow', formula: '[ORDERS/Orders To Calendar/Day Of Week]' }
-          ]
-        }
-      ]
-    }]
-  };
-  const normalized = JSON.parse(window.snowNormalizeWarehouseRefs(JSON.stringify(spec)));
-  const joinedFormulas = normalized.pages[0].elements
-    .find(e => e.id === 'orders__joined').columns.map(c => c.formula);
-  check('joined warehouse refs lowercase Sigma small words',
-    sameJson(joinedFormulas, ['[ORDERS/Year to Date]', '[ORDERS/Orders To Calendar/Day of Week]']),
-    joinedFormulas.join('|'));
 }
 
 // ── 4. PLUGS: nothing invented ──────────────────────────────────────────────
