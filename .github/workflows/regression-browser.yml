@@ -40,6 +40,12 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Embedded semantic-tools engine matches MCP main
+        # Fails when sigma-data-model-mcp main ships a new engine build that index.html
+        # has not been re-synced to (the two surfaces would emit different specs).
+        # Fix: node scripts/sync-semantic-tools.mjs <path-to-sigma-data-model-mcp>
+        run: node smm/scripts/sync-semantic-tools.mjs mcp-checkout --check
+
       - name: Install MCP deps (incl. puppeteer)
         working-directory: mcp-checkout
         run: npm ci

@@ -681,7 +681,7 @@ The AI Assistant (Claude, OpenAI, or Gemini) generates data model content from n
 - `"Add a relationship to the customer dim"` → Relationship
 - `"Create an ORDER_FACT table with these columns"` → New element
 
-**Fix with AI:** When a save to Sigma fails, a red error banner appears with a **🤖 Fix with AI** button. This sends the failed JSON and the error message to your configured AI provider to attempt automatic repair. The AI can fix structural issues (empty arrays, casing mismatches, circular dependencies) but cannot verify warehouse column names against your actual schema.
+**Fix with AI:** When a save to Sigma fails, a red error banner appears with a **🤖 Fix with AI** button. This sends the failed JSON and the error message to your configured AI provider to attempt automatic repair. The AI can fix structural issues (empty arrays, casing mismatches, circular dependencies) but cannot verify warehouse column names against your actual schema. Because the AI must re-emit the whole model, very large models (roughly >24k tokens on OpenAI, >8k on Gemini, >4k on Claude) are refused up front with a "too large for Fix with AI" warning; fix the save error directly in that case.
 
 **Formula syntax rules for AI-generated formulas:**
 - Local columns: `[Column Name]` — no table prefix
