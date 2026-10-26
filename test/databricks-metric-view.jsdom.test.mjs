@@ -263,6 +263,13 @@ measures:
   }
   typeFullName(D_CUSTOMER);
   check('valid full name: message hidden, name applied', $('dbxFullNameMsg').style.display === 'none' && read().model.name === 'D Customer Metric View');
+  // an invalid entry typed AFTER a valid one must not leave the old valid name applied
+  typeFullName(D_CUSTOMER);
+  const stale = typeFullName('oops');
+  check('invalid entry after a valid one: the old name is cleared (file-derived name again), message shown',
+    stale.model && stale.model.name === 'D Customer' && $('dbxFullNameMsg').style.display !== 'none', stale.model && stale.model.name);
+  check('invalid entry after a valid one: the dependent no longer resolves through the cleared name', pick(1).codes.includes('POSSIBLE_METRIC_VIEW'));
+  pick(0);
   typeFullName('');
   check('empty full name: no message', $('dbxFullNameMsg').style.display === 'none');
   // hidden for views that already carry a name

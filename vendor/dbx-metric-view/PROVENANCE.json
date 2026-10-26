@@ -1,10 +1,10 @@
 {
   "engineVersion": "0.1.0",
-  "mcpCommit": "1ec2d782fd22302fbcb4e4717d1b70dcb6cd6fa5",
+  "mcpCommit": "6145e1edf6b94b1b6426e5b9c90e0d43584502c5",
   "builtWith": {
     "esbuild": "0.27.7"
   },
   "sha256": {
-    "dbx-metric-view-embed.iife.min.js": "c8141175d64747183107c55e29f68b456799aefb7ca9a921764c6b821f491d37"
+    "dbx-metric-view-embed.iife.min.js": "babd6ff8fe5fdefc8ecdb2e625babbfa1e32a9129297287d0a2bba22d7620203"
   }
 }
