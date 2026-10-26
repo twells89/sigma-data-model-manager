@@ -13,7 +13,7 @@ The Data Model Manager is a self-contained HTML file that runs entirely in your 
 - **Diff Viewer** — Line-by-line unified diff against the original loaded model (Ctrl+D)
 - **AI Assistant** — Generate columns, metrics, descriptions, RLS, and more using natural language (Claude, OpenAI, or Gemini)
 - **Fix with AI** — When a save fails, the error banner offers one-click AI repair of common structural issues
-- **Converters** — Import from dbt, Snowflake semantic views (YAML or DDL), LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, Omni Analytics, ThoughtSpot TML, Qlik, Oracle Analytics Cloud, Cube.dev, Tableau Prep, and raw SQL
+- **Converters** — Import from dbt, Snowflake semantic views (YAML or DDL), Databricks metric views (YAML or Unity Catalog JSON), LookML, Tableau, Power BI, Alteryx, Atlan Data Contracts, Omni Analytics, ThoughtSpot TML, Qlik, Oracle Analytics Cloud, Cube.dev, Tableau Prep, and raw SQL
 - **Bulk Upload** — Create multiple elements from warehouse tables at once
 - **MCP Server** — Use these converters inside Claude Code, Claude Desktop, Cursor, and other MCP-compatible AI tools
 
@@ -237,6 +237,32 @@ Converts a Snowflake semantic view — native YAML or `CREATE SEMANTIC VIEW` DDL
 - `join_type: inner` relationships (YAML exported from Snowflake) are flagged JOIN_TYPE_INNER: Sigma relationships keep fact rows without a match, so counts can be higher in Sigma for rows whose key has no match
 
 **Useful resources:** [Snowflake Semantic Views](https://docs.snowflake.com/en/user-guide/views-semantic/overview)
+
+---
+
+### Databricks metric views
+
+Converts a Databricks Unity Catalog metric view — its YAML (`databricks api get /api/2.1/unity-catalog/tables/<catalog.schema.view> | jq -r .view_definition`), or the Unity Catalog table JSON as is — to a Sigma data model using the bundled metric view engine (built in [sigma-data-model-mcp](https://github.com/twells89/sigma-data-model-mcp) from `src/databricks.ts`), embedded in `index.html` between the `BEGIN/END dbx-metric-view` markers. Refresh it with `node scripts/sync-dbx-metric-view.mjs <path-to-mcp-repo>` (`--check` fails when stale); the pinned build is `vendor/dbx-metric-view/PROVENANCE.json`. Conversion runs in the browser — nothing is sent to Databricks.
+
+**What gets converted:**
+- `source` and `joins` → one hidden Sigma element per physical table, with relationships built from the join conditions
+- Dimensions → columns of one derived element; measures → Sigma metrics, **only** those defined in the view (nothing is invented)
+- **Every metric gets a number format**: the measure's explicit `format:`, else one inferred from its name and expression, else a default for its kind. The "Infer number formats" checkbox (on by default) turns the inference off, keeping explicit formats only
+- Dimensions / measures that use a Databricks SQL function with no exact Sigma equivalent are computed by Databricks in a Custom SQL element (`SQL_FALLBACK`) and listed as "SQL fallback columns"
+- Several files at once, or several pasted documents (JSON array of table objects, or YAML separated by `---`): converted in one pass with a view picker. When a metric view uses another metric view as its source or in a join, drop or paste **all** of them together (name files `catalog.schema.view.yaml`, or use the JSON, so they can be matched)
+
+**Refusals:** anything Sigma cannot reproduce exactly is refused with a finding (code, object, message, fix) while the rest of the view still converts; refused measures / dimensions are listed by name. `window:` measures (trailing / cumulative / semiadditive) are **always refused** (`WINDOW_MEASURE_REFUSED`) — rebuild them in a workbook with `MovingSum` / `CumulativeSum`. There is no "Convert anyway" for them; the best-effort button appears only if a finding says it would help (none does today).
+
+**Time zones:** `TIME_ZONE_DEPENDENT` marks dimensions / measures / filters that read the current date or time — Databricks uses its session time zone, Sigma uses UTC.
+
+**Catalog / Schema** inputs appear only when a source or join is not fully qualified.
+
+**Known limitations:**
+- Reads the definition only; does not connect to Databricks or validate that tables and columns exist
+- `window:` measures are refused (see above); `materialization:` settings are ignored (MATERIALIZATION_IGNORED)
+- Formulas use friendly-name references; a FRIENDLY_NAMES_OFF warning appears for connections with friendly names off
+
+**Useful resources:** [Databricks metric views](https://docs.databricks.com/aws/en/metric-views/)
 
 ---
 
