@@ -254,6 +254,17 @@ measures:
   pick(0);
   typeFullName('');
   check('clearing the full name returns to the file-derived name and the unresolved reference', read().model.name === 'D Customer' && pick(1).codes.includes('POSSIBLE_METRIC_VIEW'));
+  // a full name must have exactly three parts: anything else gets an inline message and is not applied
+  pick(0);
+  for (const bad of ['d_customer', 'sch.d_customer', 'a.b.c.d', 'cat..view']) {
+    const rb = typeFullName(bad);
+    check(`invalid full name "${bad}": inline message shown, name not applied`,
+      $('dbxFullNameMsg').style.display !== 'none' && /catalog\.schema\.view/.test($('dbxFullNameMsg').textContent) && rb.model && rb.model.name === 'D Customer', `${$('dbxFullNameMsg').textContent} | ${rb.model && rb.model.name}`);
+  }
+  typeFullName(D_CUSTOMER);
+  check('valid full name: message hidden, name applied', $('dbxFullNameMsg').style.display === 'none' && read().model.name === 'D Customer Metric View');
+  typeFullName('');
+  check('empty full name: no message', $('dbxFullNameMsg').style.display === 'none');
   // hidden for views that already carry a name
   reset(); setConn(CONN);
   await window.loadDbxFiles([file(D_CUSTOMER + '.yaml', fx(D_CUSTOMER)), file(F_SALES + '.yaml', fx(F_SALES))]);
