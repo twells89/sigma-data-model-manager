@@ -169,6 +169,9 @@ measures:
   const only = WINDOW_YAML.replace(/  - name: total_revenue\n    expr: SUM\(amount\)\n/, '');
   const r = convert(only);
   check('only-window view: finding shown, no best-effort', r.codes.includes('WINDOW_MEASURE_REFUSED') && !r.bestEffortVisible, r.codes.join(','));
+  check('only-window view: converts with zero metrics (model present, "0 metrics" badge, Save enabled)', !!r.model && metricNames(r.model).length === 0 && /0 metrics/.test($('dbxOutputStats').textContent) && r.save, $('dbxOutputStats').textContent);
+  check('only-window view: summary does not claim other measures converted', /Refused measures/.test(r.summary) && /No measure converted, so the model has no metrics/.test(r.summary) && !/every other/i.test(r.summary), r.summary);
+  check('window + SUM view: summary says how many other measures converted', /The other 1 measure converted/.test(convert(WINDOW_YAML).summary));
 }
 
 // ── 3. several files together ───────────────────────────────────────────────
@@ -212,6 +215,95 @@ measures:
   check('file name rule: other names get no view name', nm('orders.yaml') === undefined && nm('my metrics.yaml') === undefined && nm('a.b.yaml') === undefined && nm('a.b.c.d.yaml') === undefined, [nm('orders.yaml'), nm('a.b.yaml'), nm('a.b.c.d.yaml')].join(','));
 }
 
+// ── 3b. Fix round 1: unnamed sources ────────────────────────────────────────
+{
+  const unnamed = (n) => n === 'Metric View';
+  const pick = (i) => { const p = $('dbxViewPicker'); p.value = [...p.options][i].value; p.dispatchEvent(new window.Event('change')); return read(); };
+  const labels = () => [...$('dbxViewPicker').options].map(o => o.textContent);
+  const typeFullName = (v) => { $('dbxFullName').value = v; $('dbxFullName').dispatchEvent(new window.Event('change')); return read(); };
+
+  // (a) files not named catalog.schema.view: the MODEL is named after the file, the engine is not given a name
+  reset(); setConn(CONN);
+  await window.loadDbxFiles([file('d_customer.yaml', fx(D_CUSTOMER)), file('f_sales.yaml', fx(F_SALES))]);
+  let dc = pick(0), fs_ = pick(1);
+  check('unnamed files: models are named from the file names (D Customer / F Sales), not both "Metric View"',
+    dc.model && fs_.model && dc.model.name === 'D Customer' && fs_.model.name === 'F Sales', `${dc.model && dc.model.name} | ${fs_.model && fs_.model.name}`);
+  check('unnamed files: the two model names are distinct (no collision at save)', dc.model.name !== fs_.model.name);
+  check('unnamed files: picker labels use the file names', labels().join('|') === 'D Customer|F Sales', labels().join('|'));
+  check('unnamed files: dependency does NOT resolve (engine got no name): POSSIBLE_METRIC_VIEW on f_sales', fs_.codes.includes('POSSIBLE_METRIC_VIEW'), fs_.codes.join(','));
+  check('unnamed files: Load into Editor carries the file-derived name', (() => { window.loadDbxOutputToEditor(); return JSON.parse($('jsonEditor').value).name === 'F Sales'; })());
+  await window.loadDbxFiles([file('d_customer.yaml', fx(D_CUSTOMER))]);
+  check('single unnamed file: model named from the file', read().model && read().model.name === 'D Customer', read().model && read().model.name);
+  check('named file (catalog.schema.view.yaml) keeps the engine name', (await window.loadDbxFiles([file(D_CUSTOMER + '.yaml', fx(D_CUSTOMER))]), read().model.name === 'D Customer Metric View'), read().model && read().model.name);
+  convert(fx(D_CUSTOMER));
+  check('pasted YAML with no name stays "Metric View"', unnamed(read().model.name), read().model.name);
+
+  // (b) full-name box
+  reset(); setConn(CONN);
+  await window.loadDbxFiles([file('d_customer.yaml', fx(D_CUSTOMER)), file('f_sales.yaml', fx(F_SALES))]);
+  pick(0);
+  check('full-name box shown for an unnamed view', $('dbxFullName').style.display !== 'none');
+  const r1 = typeFullName(D_CUSTOMER);
+  check('full name typed: view converts with the engine name (D Customer Metric View)', r1.model && r1.model.name === 'D Customer Metric View', r1.model && r1.model.name);
+  check('full name typed: box stays visible and keeps its value after the rerun', $('dbxFullName').style.display !== 'none' && $('dbxFullName').value === D_CUSTOMER);
+  check('full name typed: selection stays on the same view', $('dbxViewPicker').selectedIndex === 0);
+  const f2 = pick(1);
+  check('full name typed on d_customer: f_sales now resolves its join (no POSSIBLE_METRIC_VIEW)', f2.model && !f2.codes.includes('POSSIBLE_METRIC_VIEW'), f2.codes.join(','));
+  check('f_sales (unnamed) is still named from its file', f2.model.name === 'F Sales', f2.model.name);
+  check('full-name box shown for f_sales too (still unnamed)', $('dbxFullName').style.display !== 'none' && $('dbxFullName').value === '');
+  pick(0);
+  typeFullName('');
+  check('clearing the full name returns to the file-derived name and the unresolved reference', read().model.name === 'D Customer' && pick(1).codes.includes('POSSIBLE_METRIC_VIEW'));
+  // hidden for views that already carry a name
+  reset(); setConn(CONN);
+  await window.loadDbxFiles([file(D_CUSTOMER + '.yaml', fx(D_CUSTOMER)), file(F_SALES + '.yaml', fx(F_SALES))]);
+  pick(0);
+  check('full-name box hidden for views named by their file name', $('dbxFullName').style.display === 'none');
+  convert(JSON.stringify({ full_name: D_CUSTOMER, table_type: 'METRIC_VIEW', view_definition: fx(D_CUSTOMER) }));
+  check('full-name box hidden for UC JSON (it carries full_name)', $('dbxFullName').style.display === 'none');
+  // pasted --- documents: type a name for the first
+  convert(fx(D_CUSTOMER) + '\n---\n' + fx(F_SALES));
+  pick(1);
+  check('--- pasted: f_sales unresolved without names', read().codes.includes('POSSIBLE_METRIC_VIEW'));
+  pick(0); typeFullName(D_CUSTOMER);
+  check('--- pasted: typing the full name of the first document resolves the second', !pick(1).codes.includes('POSSIBLE_METRIC_VIEW'));
+  // plain Convert click keeps the typed names
+  window.runDbxConversion();
+  check('re-running Convert keeps typed full names', !pick(1).codes.includes('POSSIBLE_METRIC_VIEW'));
+
+  // (d) the single-file name survives edits of the same view, not a different view
+  reset(); setConn(CONN);
+  await window.loadDbxFiles([file('d_customer.yaml', fx(D_CUSTOMER))]);
+  const edit = (txt) => { $('dbxYamlInput').value = txt; $('dbxYamlInput').dispatchEvent(new window.Event('input')); window.runDbxConversion(); return read(); };
+  check('single unnamed file: edit of the same view keeps the file-derived name', edit(fx(D_CUSTOMER) + '\n# edited\n').model.name === 'D Customer');
+  check('single unnamed file: another edit still keeps it', edit(fx(D_CUSTOMER) + '\n# edited again\n').model.name === 'D Customer');
+  check('single unnamed file: pasting a different view (other source:) drops the file name', unnamed(edit(fx(DEMO)).model.name));
+  await window.loadDbxFiles([file(D_CUSTOMER + '.yaml', fx(D_CUSTOMER))]);
+  check('single named file: edit of the same view keeps the full name', edit(fx(D_CUSTOMER) + '\n# edited\n').model.name === 'D Customer Metric View');
+  check('single named file: pasting a different view drops the full name', unnamed(edit(fx(DEMO)).model.name));
+  await window.loadDbxFiles([file('d_customer.yaml', fx(D_CUSTOMER))]);
+  edit(fx(D_CUSTOMER));
+  typeFullName(D_CUSTOMER);
+  check('typed full name survives a same-view edit', edit(fx(D_CUSTOMER) + '\n# x\n').model.name === 'D Customer Metric View' && $('dbxFullName').value === D_CUSTOMER);
+  // multi-file: typing in the textarea still drops the files (and their names)
+  await window.loadDbxFiles([file('a.yaml', fx(D_CUSTOMER)), file('b.yaml', fx(F_SALES))]);
+  $('dbxYamlInput').value = fx(D_CUSTOMER); $('dbxYamlInput').dispatchEvent(new window.Event('input'));
+  window.runDbxConversion();
+  check('multi-file: typing drops the files; the pasted view is unnamed again', $('dbxViewPicker').options.length === 1 && unnamed(read().model.name));
+
+  // (c) wording: references resolve only with a full name; --- paste is not claimed to resolve them
+  const help = window.eval('HELP_CONTENT.dbx');
+  const strip = (h) => h.replace(/<[^>]+>/g, '').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ');
+  const h = strip(help);
+  check('help: references resolve only with a full name (file name / UC JSON / Full name box)', /resolves only when the referenced view has its full/.test(h) && /Full name/.test(h) && /full_name/.test(h), h.slice(h.indexOf('Views that reference'), h.indexOf('Views that reference') + 200));
+  check('help: says pasted/--- YAML does not resolve references until a full name is supplied', /does not resolve references until its full name is supplied/.test(h));
+  check('help does not claim --- paste resolves references', !/---[^.]*(resolve|matched by full name)/.test(h.replace(/does not resolve references until its full name is supplied/, '')) );
+  const readme = readFileSync(join(__dirname, '..', 'README.md'), 'utf8');
+  check('README: same rule (only with a full name; Full name box; plain YAML does not resolve)', /resolves \*\*only\*\* when the referenced view has its full/.test(readme) && /Full name/.test(readme) && /do not resolve references until a full name is supplied/.test(readme));
+  const hint = strip(html.slice(html.indexOf('id="subPanelDbx"'), html.indexOf('<!-- 🔍 LookML Converter Panel -->')));
+  check('panel hint: references resolve only with a full name', /resolves only when the referenced view has its full name/.test(hint));
+}
+
 // ── 4. catalog / schema (source: orders) ────────────────────────────────────
 const ORDERS_YAML = `version: 1.1
 source: orders
@@ -225,6 +317,7 @@ measures:
 {
   let r = convert(ORDERS_YAML);
   check('source: orders: refused (no spec), Save disabled', r.model === null && !r.save);
+  check('source: orders: output explains the missing catalog / schema', /Catalog \/ Schema/.test(r.raw) && r.raw.startsWith('//'), r.raw.slice(0, 120));
   check('source: orders: NEEDS_CATALOG / NEEDS_SCHEMA findings', r.codes.includes('NEEDS_CATALOG') && r.codes.includes('NEEDS_SCHEMA'), r.codes.join(','));
   check('source: orders: catalog / schema inputs revealed and highlighted', r.catRowVisible && $('dbxCatalog').style.borderColor !== '' && $('dbxSchema').style.borderColor !== '');
   convert(ORDERS_YAML);
@@ -243,6 +336,15 @@ measures:
   $('dbxYamlInput').value = '';
   window.runDbxConversion();
   check('empty conversion hides the catalog / schema row', !read().catRowVisible);
+  // unqualified JOIN source: the view is refused with NEEDS_* findings and the output still carries the catalog / schema hint
+  const j = convert(`version: 1.1\nsource: main.s.t\njoins:\n  - name: j\n    source: orders2\n    "on": source.a = j.a\ndimensions:\n  - name: d\n    expr: source.a\nmeasures:\n  - name: s\n    expr: SUM(source.x)\n`);
+  check('unqualified join source: refused, catalog / schema row revealed, output hints at it', j.model === null && j.catRowVisible && /Catalog \/ Schema/.test(j.raw) && j.codes.includes('NEEDS_CATALOG'), j.raw.slice(0, 100) + ' ' + j.codes.join(','));
+  // the hint is driven by the view's own NEEDS_* findings, not only by a per-view `needs` field
+  window.eval(`var __realDbx = DbxMetricView; DbxMetricView = Object.assign({}, __realDbx, { convertDatabricksMetricViews: function (v, o) { var r = __realDbx.convertDatabricksMetricViews(v, o); r.results.forEach(function (x) { delete x.needs; }); return r; } });`);
+  try {
+    const k = convert(ORDERS_YAML);
+    check('hint shown even when the per-view result carries no `needs` (top-level needs + NEEDS_* findings)', /Catalog \/ Schema/.test(k.raw) && k.catRowVisible, k.raw.slice(0, 100));
+  } finally { window.eval('DbxMetricView = __realDbx'); }
 }
 
 // ── 5. Unity Catalog JSON, several documents pasted ─────────────────────────

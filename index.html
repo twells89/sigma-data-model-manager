@@ -2953,7 +2953,7 @@ How it works:
 
                         <div class="dbt-badge-row" id="dbxInputStats"></div>
 
-                        <textarea id="dbxYamlInput" style="flex: 1; min-height: 80px; font-size: 11px; resize: none;" placeholder="Or paste metric view YAML, or the Unity Catalog table JSON, here..." oninput="dbxClearFiles()"></textarea>
+                        <textarea id="dbxYamlInput" style="flex: 1; min-height: 80px; font-size: 11px; resize: none;" placeholder="Or paste metric view YAML, or the Unity Catalog table JSON, here..." oninput="dbxOnTextInput()"></textarea>
 
                         <div class="dbt-convert-row">
                             <button class="btn btn-primary" style="flex: 1;" id="dbxConvertBtn" onclick="runDbxConversion()">
@@ -2965,7 +2965,7 @@ How it works:
                             <strong>How to get the definition:</strong><br>
                             • <b>YAML</b>: <code>databricks api get /api/2.1/unity-catalog/tables/&lt;catalog.schema.view&gt; | jq -r .view_definition</code><br>
                             • <b>JSON</b>: paste the Unity Catalog table JSON as is (no <code>jq</code>)<br>
-                            • <b>Views that reference each other</b>: if a metric view uses another one as its source or in a join, drop or paste <b>all</b> of them together. Name dropped files <code>catalog.schema.view.yaml</code> (or use the JSON) so they can be matched<br>
+                            • <b>Views that reference each other</b>: if a metric view uses another one as its source or in a join, drop or paste <b>all</b> of them together. A reference resolves only when the referenced view has its full name: from a <code>catalog.schema.view.yaml</code> file name, from the UC JSON, or typed into the <b>Full name</b> box above the output<br>
                             • Metrics come only from the view's own measures<br>
                             • <code>window:</code> measures are not converted</div>
                     </div>
@@ -2974,7 +2974,8 @@ How it works:
                     <div class="dbt-pane">
                         <div class="dbt-pane-header">
                             <span class="dbt-pane-title">Sigma Data Model JSON</span>
-                            <div style="display: flex; gap: 8px; align-items: center;">
+                            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end;">
+                                <input type="text" id="dbxFullName" class="form-input" style="display:none; font-size: 11px; width: 190px;" placeholder="Full name: catalog.schema.view" title="Full Unity Catalog name of the selected view. Fill it in so a metric view that uses this one as its source or in a join can resolve it. Press Enter or leave the box to convert again." autocomplete="off" onchange="dbxSetFullName(this.value)">
                                 <select id="dbxViewPicker" class="form-input" style="display:none; font-size: 11px; width: auto; max-width: 260px;" title="Pick which converted metric view to show" onchange="dbxSelectView(this.value)"></select>
                                 <button class="btn btn-secondary btn-small" onclick="copyDbxOutput()" id="dbxCopyBtn" disabled>📋 Copy</button>
                                 <button class="btn btn-secondary btn-small" onclick="loadDbxOutputToEditor()" id="dbxLoadBtn" disabled>→ Load into Editor</button>
@@ -12036,7 +12037,10 @@ relationships:
         // All source-derived text is rendered with textContent — never innerHTML.
 
         let dbxFiles = [];         // multi-file uploads: [{ name, size, text }] (a single file lives in the textarea)
-        let dbxPasteName = '';     // view name of a single dropped file (its text lives in the textarea)
+        let dbxPasteName = '';     // catalog.schema.view name of a single dropped file (its text lives in the textarea)
+        let dbxPasteFile = '';     // file name of that single dropped file (names the model when the view has no full name)
+        let dbxSigAtRun = '';      // content signature of the textarea at the last conversion (see dbxContentSig)
+        let dbxFullNames = {};     // user-typed full names by source key ("0", "1", ...) — passed to the engine as `name`
         let dbxResults = [];       // [{ fileName, view (engine DatabricksViewResult), key }] in input order
         let dbxSelectedKey = '';   // key of the view driving output/stats/buttons
         let dbxAppFindings = [];   // findings raised by this app (connection / friendly names / engine errors)
@@ -12061,9 +12065,40 @@ relationships:
         function dbxClearFiles() {
             dbxFiles = [];
             dbxPasteName = '';
+            dbxPasteFile = '';
+            dbxSigAtRun = '';
+            dbxFullNames = {};
             dbxLoadFindings = [];
             const fl = document.getElementById('dbxFileList');
             if (fl) fl.textContent = '';
+        }
+
+        // What identifies the pasted view: the Unity Catalog JSON's full_name, else the YAML's top-level `source:` line.
+        function dbxContentSig(text) {
+            const t = (text || '').trim();
+            if (t.startsWith('{')) {
+                try { const j = JSON.parse(t); if (j && j.full_name) return 'uc:' + j.full_name; } catch (_) {}
+            }
+            const m = /^source:[ \t]*(.+?)[ \t]*$/m.exec(text || '');
+            return m ? 'src:' + m[1] : '';
+        }
+
+        // Typing in the textarea drops multi-file sources. A single dropped file's name (and any typed full name) survives
+        // edits that keep the same view (same full_name / `source:`) and is dropped when the pasted view itself changes.
+        function dbxOnTextInput() {
+            const keep = dbxFiles.length === 0 && dbxSigAtRun && dbxContentSig(document.getElementById('dbxYamlInput').value) === dbxSigAtRun;
+            const name = dbxPasteName, file = dbxPasteFile, full = dbxFullNames, sig = dbxSigAtRun;
+            dbxClearFiles();
+            if (keep) { dbxPasteName = name; dbxPasteFile = file; dbxFullNames = full; dbxSigAtRun = sig; }
+        }
+
+        // Display name for a view the engine could not name (no catalog.schema.view file name, no UC JSON, no typed full name).
+        function dbxIsUnnamed(view) { return /^view \d+$/.test(view.viewName || ''); }
+        function dbxBaseName(fileName) {
+            return (fileName || '').replace(/^.*[\\/]/, '').replace(/\.(?:ya?ml|json)$/i, '');
+        }
+        function dbxPrettyName(base) {
+            return base.split(/[_\-\s]+/).filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
         }
 
         // The textarea may hold several metric views: a JSON array of Unity Catalog table objects, or YAML documents separated by `---` lines.
@@ -12086,18 +12121,24 @@ relationships:
             if (pasted.trim()) {
                 const parts = dbxSplitPasted(pasted);
                 parts.forEach(p => sources.push({
-                    fileName: dbxPasteName && parts.length === 1 ? dbxPasteName : '',
+                    fileName: parts.length === 1 ? dbxPasteFile : '',
                     name: parts.length === 1 && dbxPasteName ? dbxPasteName : undefined,
                     source: p
                 }));
             }
+            // A typed full name wins over a file-derived one; it is what makes references between views resolve.
+            sources.forEach((src, i) => {
+                src.autoName = !!src.name;
+                const typed = (dbxFullNames[String(i)] || '').trim();
+                if (typed) src.name = typed;
+            });
             return sources;
         }
 
         function dbxViewLabel(entry, multiFile) {
             const v = entry.view;
-            const base = v.viewName || '(unnamed view)';
-            const file = multiFile && entry.fileName && entry.fileName !== v.viewName ? ' — ' + entry.fileName : '';
+            const base = entry.modelName || v.viewName || '(unnamed view)';
+            const file = multiFile && entry.fileName && !entry.modelName && entry.fileName !== v.viewName ? ' — ' + entry.fileName : '';
             const partial = v.ok && ((v.refusedMeasures || []).length || (v.refusedDimensions || []).length);
             return base + file + (v.ok ? (partial ? ' (partial)' : '') : ' (refused)');
         }
@@ -12162,7 +12203,21 @@ relationships:
             } catch (e) {
                 dbxAppFindings.push({ code: 'ENGINE_ERROR', severity: 'error', source: 'dmm', message: (e && e.message) || String(e) });
             }
-            const entries = run ? run.results.map((view, i) => ({ fileName: sources[i] ? sources[i].fileName : '', view: view, key: String(i) })) : [];
+            const entries = run ? run.results.map((view, i) => {
+                const src = sources[i] || {};
+                const base = dbxBaseName(src.fileName);
+                return {
+                    fileName: src.fileName || '',
+                    view: view,
+                    key: String(i),
+                    // Unnamed view from a named file: the model takes the file's name (NOT passed to the engine as `name`,
+                    // which would change how views that reference each other are matched).
+                    modelName: dbxIsUnnamed(view) && base ? dbxPrettyName(base) : '',
+                    // The full-name box is offered for views whose name did not come from a file name; UC JSON already carries one.
+                    canTypeName: !src.autoName && (dbxIsUnnamed(view) || !!dbxFullNames[String(i)])
+                };
+            }) : [];
+            dbxSigAtRun = dbxFiles.length ? '' : dbxContentSig(document.getElementById('dbxYamlInput').value);
             dbxNeeds = run && run.needs ? run.needs : null;
 
             dbxResults = entries;
@@ -12181,10 +12236,19 @@ relationships:
             const sel = dbxResults.find(e => e.key === dbxSelectedKey);
             if (sel && sel.view.ok) {
                 const st = sel.view.stats || {};
-                showToast('Converted ' + (sel.view.viewName || 'view') + ' → ' + (st.elements || 0) + ' element' + (st.elements !== 1 ? 's' : '') + ' · ' + (st.relationships || 0) + ' relationship' + (st.relationships !== 1 ? 's' : '') + ' · ' + (st.metrics || 0) + ' metrics', 'success');
+                showToast('Converted ' + (sel.modelName || sel.view.viewName || 'view') + ' → ' + (st.elements || 0) + ' element' + (st.elements !== 1 ? 's' : '') + ' · ' + (st.relationships || 0) + ' relationship' + (st.relationships !== 1 ? 's' : '') + ' · ' + (st.metrics || 0) + ' metrics', 'success');
             } else {
                 showToast('Not converted — see the findings for details', 'warning');
             }
+        }
+
+        // Typed catalog.schema.view for the selected view: passed to the engine as its `name` (this is how a reference from
+        // another supplied view resolves without renaming files) and the conversion reruns.
+        function dbxSetFullName(value) {
+            if (!dbxSelectedKey) return;
+            const v = (value || '').trim();
+            if (v) dbxFullNames[dbxSelectedKey] = v; else delete dbxFullNames[dbxSelectedKey];
+            runDbxConversion();
         }
 
         function dbxSelectView(key) {
@@ -12213,6 +12277,7 @@ relationships:
         // Refused measures / dimensions and Databricks-computed (SQL fallback) columns of the selected view, by their YAML names.
         function dbxSummaryNodes(v) {
             const out = [];
+            const metrics = (v.stats && v.stats.metrics) || 0;
             const block = (title, note, names) => {
                 if (!names || !names.length) return;
                 const d = dbxEl('div', null, 'margin: 2px 0 6px 0;');
@@ -12222,8 +12287,10 @@ relationships:
                 d.appendChild(dbxEl('div', note, 'opacity: 0.85;'));
                 out.push(d);
             };
-            block('Refused measures', 'Not in the Sigma model; every other measure converted. See the findings for the reason and the fix.', v.refusedMeasures);
-            block('Refused dimensions', 'Not in the Sigma model; every other dimension converted. See the findings for the reason and the fix.', v.refusedDimensions);
+            const rest = !v.ok ? 'The view itself was not converted.'
+                : (metrics > 0 ? 'The other ' + metrics + ' measure' + (metrics !== 1 ? 's' : '') + ' converted.' : 'No measure converted, so the model has no metrics.');
+            block('Refused measures', 'Not in the Sigma model. ' + rest + ' See the findings for the reason and the fix.', v.refusedMeasures);
+            block('Refused dimensions', 'Not in the Sigma model. ' + (v.ok ? 'The rest of the view converted.' : 'The view itself was not converted.') + ' See the findings for the reason and the fix.', v.refusedDimensions);
             block('SQL fallback columns', 'Computed by Databricks in a Custom SQL element because Sigma has no exact equivalent; Sigma reads the values instead of recomputing them.', v.fallbackColumns);
             return out;
         }
@@ -12240,6 +12307,12 @@ relationships:
             });
             picker.value = dbxSelectedKey;
             picker.style.display = dbxResults.length > 1 ? '' : 'none';
+
+            // Full-name box for the selected view when its name did not come from a catalog.schema.view file name or UC JSON.
+            const selEntry = dbxResults.find(e => e.key === dbxSelectedKey);
+            const fnBox = document.getElementById('dbxFullName');
+            fnBox.style.display = selEntry && selEntry.canTypeName ? '' : 'none';
+            fnBox.value = selEntry ? (dbxFullNames[selEntry.key] || '') : '';
 
             const out = document.getElementById('dbxJsonOutput');
             const copyBtn = document.getElementById('dbxCopyBtn');
@@ -12267,9 +12340,10 @@ relationships:
                 out.value = '// Nothing converted.';
             } else {
                 const v = sel.view;
-                const name = v.viewName || 'This view';
+                const name = sel.modelName || v.viewName || 'This view';
                 if (v.ok && v.model) {
-                    out.value = JSON.stringify(v.model, null, 2);
+                    const model = sel.modelName ? Object.assign({}, v.model, { name: sel.modelName }) : v.model;
+                    out.value = JSON.stringify(model, null, 2);
                     canUse = true;
                     const st = v.stats || {};
                     outStats.appendChild(dbxBadge('models', '🗃️ ' + (st.tables || 0) + ' table' + (st.tables !== 1 ? 's' : '')));
@@ -12277,7 +12351,7 @@ relationships:
                     outStats.appendChild(dbxBadge('dimensions', (st.columns || 0) + ' columns'));
                     outStats.appendChild(dbxBadge('measures', (st.metrics || 0) + ' metrics'));
                     if (st.relationships) outStats.appendChild(dbxBadge('entities', st.relationships + ' relationship' + (st.relationships !== 1 ? 's' : '')));
-                } else if (v.needs) {
+                } else if (v.needs || v.findings.some(f => f.code === 'NEEDS_CATALOG' || f.code === 'NEEDS_SCHEMA')) {
                     out.value = '// ' + name + ' was not converted: a source or join is not fully qualified.\n// Fill in the Catalog / Schema fields on the left and convert again.';
                 } else {
                     out.value = '// ' + name + ' was refused — see the findings above for why and how to fix it.';
@@ -12376,6 +12450,8 @@ relationships:
             // One file lives in the (editable) textarea; several are kept as separate sources.
             dbxFiles = loaded.length > 1 ? loaded : [];
             dbxPasteName = loaded.length === 1 ? (dbxViewNameFromFile(loaded[0].name) || '') : '';
+            dbxPasteFile = loaded.length === 1 ? loaded[0].name : '';
+            dbxFullNames = {};
             document.getElementById('dbxYamlInput').value = loaded.length === 1 ? loaded[0].text : '';
             const fl = document.getElementById('dbxFileList');
             fl.textContent = '';
@@ -36178,7 +36254,9 @@ FROM (
 <ul>
     <li><b>YAML</b>: <code>databricks api get /api/2.1/unity-catalog/tables/&lt;catalog.schema.view&gt; | jq -r .view_definition</code>, then paste the result (or save it as a <code>.yaml</code> file).</li>
     <li><b>JSON</b>: paste the output of <code>databricks api get /api/2.1/unity-catalog/tables/&lt;catalog.schema.view&gt;</code> as is (<code>table_type: METRIC_VIEW</code> with a <code>view_definition</code>) &mdash; no <code>jq</code> needed. The JSON carries the view's full name, which names the model.</li>
-    <li><b>Views that reference each other</b>: when a metric view uses another metric view as its <code>source</code> or in a join, drop or paste <b>every one of them together</b>. They are converted dependency-first and matched by full name, so a referencing view reads the other metric view instead of treating it as a plain table. Name dropped files <code>catalog.schema.view.yaml</code> (or use the JSON). To paste several at once, use a JSON array of the table objects, or YAML documents separated by <code>---</code> lines. A source or join that looks like a metric view but was not supplied is read as a physical table with a <code>POSSIBLE_METRIC_VIEW</code> warning.</li>
+    <li><b>Views that reference each other</b>: when a metric view uses another metric view as its <code>source</code> or in a join, drop or paste <b>every one of them together</b>. They are converted dependency-first and matched by full name, so a referencing view reads the other metric view instead of treating it as a plain table. <b>A reference resolves only when the referenced view has its full <code>catalog.schema.view</code> name</b>, which comes from (1) a file named <code>catalog.schema.view.yaml</code>, (2) the Unity Catalog JSON (it carries <code>full_name</code>), or (3) the <b>Full name</b> box that appears above the output for any view that has no name &mdash; type it there and the conversion reruns, no need to rename files. Plain YAML carries no name, so YAML pasted (even several documents separated by <code>---</code>) or dropped under another file name does <b>not</b> resolve references until its full name is supplied. A source or join that looks like a metric view but was not supplied under its full name is read as a physical table with a <code>POSSIBLE_METRIC_VIEW</code> warning.</li>
+    <li><b>Model names</b>: a view with a full name is named after it. A view without one (for example <code>d_customer.yaml</code>) takes its file name (&ldquo;D Customer&rdquo;); pasted YAML with no name stays &ldquo;Metric View&rdquo;, so rename it in the Save dialog. The file-name fallback is cosmetic: it is not used to match references.</li>
+    <li>To paste several views at once, use a JSON array of the table objects, or YAML documents separated by <code>---</code> lines.</li>
     <li>When more than one view is converted a picker above the output chooses which one is shown, copied, loaded or saved.</li>
 </ul>
 
