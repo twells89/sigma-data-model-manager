@@ -9,6 +9,19 @@ Single-file browser app: `index.html` contains all HTML, CSS, and JavaScript.
 The JS is organized as a series of converter modules (LookML, dbt, Snowflake,
 Tableau, Power BI → Sigma data model JSON).
 
+Two converters are thin adapters over engines built in the sigma-data-model-mcp
+repo and inlined into `index.html` as generated, marker-delimited `<script>`
+blocks (never edit between the markers; refresh with the sync scripts, `--check`
+fails when stale):
+- **Snowflake semantic views** — `SemanticTools` global, `BEGIN/END semantic-tools`,
+  `scripts/sync-semantic-tools.mjs`, pinned in `vendor/semantic-tools/`. JS: `snow*`.
+- **Databricks metric views** — `DbxMetricView` global, `BEGIN/END dbx-metric-view`
+  (right after the semantic-tools block), `scripts/sync-dbx-metric-view.mjs <mcp-repo> [--check]`,
+  pinned in `vendor/dbx-metric-view/PROVENANCE.json`. JS: `dbx*` (panel `subPanelDbx`,
+  option `dbx`; converts all dropped/pasted views in ONE engine call so views that
+  reference each other resolve; `window:` measures are always refused). Tests:
+  `node test/databricks-metric-view.jsdom.test.mjs`.
+
 ## Key functions and their invariants
 
 ### `lookIsComplexSql(sql)`
@@ -84,7 +97,7 @@ These bug classes have shipped to production and broken Sigma POSTs. `/review-co
 
 ## In-tool documentation locations
 - **Help modal content**: `HELP_CONTENT` JS object (~line 16830). One key per converter tab:
-  `overview`, `tableau`, `pbi`, `lookml`, `dbt`, `snow`, `alteryx`, `contract`, `omni`, `ai`, `api`, `mcp`.
+  `overview`, `tableau`, `pbi`, `lookml`, `dbt`, `snow`, `dbx`, `alteryx`, `contract`, `omni`, `ai`, `api`, `mcp`.
   Each tab has "What Gets Converted", "Known Limitations", and optional "Expression Conversion" sections.
 - **Inline tooltips**: `title=` attributes on buttons and controls throughout the HTML.
 - **Placeholders**: `placeholder=` on form inputs and textareas.

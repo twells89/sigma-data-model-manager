@@ -14,3 +14,6 @@ tableau-local/
 # semantic-tools engine sync (inlines the MCP repo's IIFE build into index.html) — keep tracked despite *.mjs ignore
 !scripts/
 !scripts/sync-semantic-tools.mjs
+
+# Databricks metric view engine sync (inlines the MCP repo's IIFE build into index.html) — keep tracked despite *.mjs ignore
+!scripts/sync-dbx-metric-view.mjs
