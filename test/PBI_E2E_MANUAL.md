@@ -29,8 +29,9 @@ queries via sigma-mcp-v2). Steps:
 ## 3. Post to Sigma and verify it is directly postable
 1. Inject a real `folderId` and `connectionId` (these are caller-supplied; the
    converter intentionally does NOT emit them).
-2. POST the output to `/v2/workbooks/spec` (or the data-model create endpoint
-   the page uses on **Save to Sigma**).
+2. POST the output to the data-model create endpoint the page uses on
+   **Save to Sigma** (`/v2/dataModels/spec`; the old `/v2/workbooks/spec` is a
+   deprecated workbook endpoint and not where a data model goes).
 3. Assert the create call returns 200 and the model has zero error columns.
 
 ## 4. Query through sigma-mcp-v2
